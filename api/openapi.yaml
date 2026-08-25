@@ -3,4 +3,6 @@ info:
   title: RelayShelf API
   version: 0.0.0
   description: HTTP contract authority for RelayShelf.
+servers:
+  - url: /api/v1
 paths: {}
