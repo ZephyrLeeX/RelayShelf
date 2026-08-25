@@ -17,7 +17,9 @@ import (
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/database"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/httpx"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/id"
+	"github.com/ZephyrLeeX/RelayShelf/internal/platform/staging"
 	"github.com/ZephyrLeeX/RelayShelf/internal/tags"
+	"github.com/ZephyrLeeX/RelayShelf/internal/uploads"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -29,10 +31,12 @@ type healthResponse struct {
 type authEndpoints struct{ *auth.Handler }
 type messageEndpoints struct{ *messages.Handler }
 type tagEndpoints struct{ *tags.Handler }
+type uploadEndpoints struct{ *uploads.Handler }
 type apiHandler struct {
 	*authEndpoints
 	*messageEndpoints
 	*tagEndpoints
+	*uploadEndpoints
 }
 
 var _ httpapi.ServerInterface = (*apiHandler)(nil)
@@ -128,7 +132,21 @@ func main() {
 		tagRepo := tags.NewPostgreSQLRepository(db)
 		tagService := tags.NewService(tagRepo, id.UUIDv7{}, now)
 		tagHandler := tags.NewHandler(tagService)
-		handler := &apiHandler{authEndpoints: &authEndpoints{authHandler}, messageEndpoints: &messageEndpoints{messageHandler}, tagEndpoints: &tagEndpoints{tagHandler}}
+		stagingManager, stagingErr := staging.New(cfg.StagingRoot)
+		if stagingErr != nil {
+			log.Printf("upload staging unavailable")
+			os.Exit(1)
+		}
+		uploadRepo := uploads.NewPostgreSQLRepository(db)
+		uploadService := uploads.NewService(uploadRepo, stagingManager, staging.NewStatFSProbe(cfg.StagingRoot), id.UUIDv7{}, now, uploads.NewLockRegistry(), cfg.MaxActiveChunkWrites, cfg.UploadStagingMaxBytes, cfg.StagingMinFreeBytes, cfg.StagingMinFreePercent)
+		if cleanupErr := uploadService.ExpireDueUploads(ctx, 100); cleanupErr != nil {
+			log.Printf("bounded upload expiration cleanup incomplete")
+		}
+		if reconcileErr := uploadService.ReconcileStaging(ctx, 1000); reconcileErr != nil {
+			log.Printf("bounded upload staging reconciliation incomplete")
+		}
+		uploadHandler := uploads.NewHandler(uploadService)
+		handler := &apiHandler{authEndpoints: &authEndpoints{authHandler}, messageEndpoints: &messageEndpoints{messageHandler}, tagEndpoints: &tagEndpoints{tagHandler}, uploadEndpoints: &uploadEndpoints{uploadHandler}}
 		router := newHTTPRouter(authMiddleware.Host, auth.Router(handler, authMiddleware), health(http.StatusOK), ready(db))
 
 		address := os.Getenv("LISTEN_ADDR")

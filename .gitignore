@@ -20,6 +20,6 @@ internal/webui/dist/
 .DS_Store
 
 # Runtime / local data
-staging/
+/staging/
 postgres/
 .tmp/

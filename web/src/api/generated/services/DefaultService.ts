@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { AuthBootstrap } from '../models/AuthBootstrap';
 import type { CreateMessageRequest } from '../models/CreateMessageRequest';
+import type { CreateUploadRequest } from '../models/CreateUploadRequest';
 import type { Device } from '../models/Device';
 import type { DirectSendRequest } from '../models/DirectSendRequest';
 import type { EditMessageRequest } from '../models/EditMessageRequest';
@@ -24,6 +25,7 @@ import type { Session } from '../models/Session';
 import type { Tag } from '../models/Tag';
 import type { TagRequest } from '../models/TagRequest';
 import type { UpdateTagRequest } from '../models/UpdateTagRequest';
+import type { UploadSession } from '../models/UploadSession';
 import type { VersionRequest } from '../models/VersionRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
@@ -164,6 +166,103 @@ export class DefaultService {
                 401: `API error`,
                 403: `API error`,
                 404: `API error`,
+                422: `API error`,
+            },
+        });
+    }
+    /**
+     * @param requestBody
+     * @returns UploadSession Created upload session
+     * @throws ApiError
+     */
+    public static createUpload(
+        requestBody: CreateUploadRequest,
+    ): CancelablePromise<UploadSession> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/uploads',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                401: `API error`,
+                403: `API error`,
+                422: `API error`,
+                503: `API error`,
+            },
+        });
+    }
+    /**
+     * @param uploadId
+     * @returns UploadSession Current upload status
+     * @throws ApiError
+     */
+    public static getUpload(
+        uploadId: string,
+    ): CancelablePromise<UploadSession> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/uploads/{uploadId}',
+            path: {
+                'uploadId': uploadId,
+            },
+            errors: {
+                401: `API error`,
+                404: `API error`,
+            },
+        });
+    }
+    /**
+     * @param uploadId
+     * @param partNumber
+     * @param requestBody
+     * @returns void
+     * @throws ApiError
+     */
+    public static putUploadPart(
+        uploadId: string,
+        partNumber: number,
+        requestBody: Blob,
+    ): CancelablePromise<void> {
+        return __request(OpenAPI, {
+            method: 'PUT',
+            url: '/uploads/{uploadId}/parts/{partNumber}',
+            path: {
+                'uploadId': uploadId,
+                'partNumber': partNumber,
+            },
+            body: requestBody,
+            mediaType: 'application/octet-stream',
+            errors: {
+                401: `API error`,
+                404: `API error`,
+                409: `API error`,
+                410: `API error`,
+                415: `API error`,
+                422: `API error`,
+                503: `API error`,
+            },
+        });
+    }
+    /**
+     * @param uploadId
+     * @returns UploadSession Upload already completed
+     * @throws ApiError
+     */
+    public static completeUpload(
+        uploadId: string,
+    ): CancelablePromise<UploadSession> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/uploads/{uploadId}/complete',
+            path: {
+                'uploadId': uploadId,
+            },
+            errors: {
+                401: `API error`,
+                403: `API error`,
+                404: `API error`,
+                409: `API error`,
+                410: `API error`,
                 422: `API error`,
             },
         });

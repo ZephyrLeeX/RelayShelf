@@ -50,6 +50,36 @@ func (e Lifecycle) Valid() bool {
 	}
 }
 
+// Defines values for UploadStatus.
+const (
+	COMPLETED  UploadStatus = "COMPLETED"
+	COMPLETING UploadStatus = "COMPLETING"
+	CREATED    UploadStatus = "CREATED"
+	EXPIRED    UploadStatus = "EXPIRED"
+	FAILED     UploadStatus = "FAILED"
+	UPLOADING  UploadStatus = "UPLOADING"
+)
+
+// Valid indicates whether the value is a known member of the UploadStatus enum.
+func (e UploadStatus) Valid() bool {
+	switch e {
+	case COMPLETED:
+		return true
+	case COMPLETING:
+		return true
+	case CREATED:
+		return true
+	case EXPIRED:
+		return true
+	case FAILED:
+		return true
+	case UPLOADING:
+		return true
+	default:
+		return false
+	}
+}
+
 // AuthBootstrap defines model for AuthBootstrap.
 type AuthBootstrap struct {
 	CsrfToken string  `json:"csrfToken"`
@@ -68,6 +98,13 @@ type CreateMessageRequest struct {
 	Lifecycle  *Lifecycle            `json:"lifecycle,omitempty"`
 	Sensitive  *bool                 `json:"sensitive,omitempty"`
 	TagIds     *[]openapi_types.UUID `json:"tagIds,omitempty"`
+}
+
+// CreateUploadRequest defines model for CreateUploadRequest.
+type CreateUploadRequest struct {
+	ClientMime       *string `json:"clientMime,omitempty"`
+	ExpectedSize     int64   `json:"expectedSize"`
+	OriginalFilename string  `json:"originalFilename"`
 }
 
 // Device defines model for Device.
@@ -252,6 +289,24 @@ type UpdateTagRequest struct {
 	Name  *string `json:"name,omitempty"`
 }
 
+// UploadSession defines model for UploadSession.
+type UploadSession struct {
+	ChunkSize        int64              `json:"chunkSize"`
+	ClientMime       *string            `json:"clientMime,omitempty"`
+	CompletedParts   []int              `json:"completedParts"`
+	CreatedAt        time.Time          `json:"createdAt"`
+	ExpectedSize     int64              `json:"expectedSize"`
+	ExpiresAt        time.Time          `json:"expiresAt"`
+	Id               openapi_types.UUID `json:"id"`
+	OriginalFilename string             `json:"originalFilename"`
+	PartCount        int                `json:"partCount"`
+	Status           UploadStatus       `json:"status"`
+	UpdatedAt        time.Time          `json:"updatedAt"`
+}
+
+// UploadStatus defines model for UploadStatus.
+type UploadStatus string
+
 // User defines model for User.
 type User struct {
 	DisplayName string             `json:"displayName"`
@@ -280,11 +335,17 @@ type Limit = int
 // MessageId defines model for MessageId.
 type MessageId = openapi_types.UUID
 
+// PartNumber defines model for PartNumber.
+type PartNumber = int
+
 // SessionId defines model for SessionId.
 type SessionId = openapi_types.UUID
 
 // TagId defines model for TagId.
 type TagId = openapi_types.UUID
+
+// UploadId defines model for UploadId.
+type UploadId = openapi_types.UUID
 
 // ListMessagesParams defines parameters for ListMessages.
 type ListMessagesParams struct {
@@ -363,6 +424,9 @@ type UpdateTagJSONRequestBody = UpdateTagRequest
 
 // RestoreMessageJSONRequestBody defines body for RestoreMessage for application/json ContentType.
 type RestoreMessageJSONRequestBody = VersionRequest
+
+// CreateUploadJSONRequestBody defines body for CreateUpload for application/json ContentType.
+type CreateUploadJSONRequestBody = CreateUploadRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
@@ -450,6 +514,18 @@ type ServerInterface interface {
 
 	// (POST /trash/{messageId}/restore)
 	RestoreMessage(w http.ResponseWriter, r *http.Request, messageId MessageId)
+
+	// (POST /uploads)
+	CreateUpload(w http.ResponseWriter, r *http.Request)
+
+	// (GET /uploads/{uploadId})
+	GetUpload(w http.ResponseWriter, r *http.Request, uploadId UploadId)
+
+	// (POST /uploads/{uploadId}/complete)
+	CompleteUpload(w http.ResponseWriter, r *http.Request, uploadId UploadId)
+
+	// (PUT /uploads/{uploadId}/parts/{partNumber})
+	PutUploadPart(w http.ResponseWriter, r *http.Request, uploadId UploadId, partNumber PartNumber)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
@@ -593,6 +669,26 @@ func (_ Unimplemented) PermanentlyDeleteMessage(w http.ResponseWriter, r *http.R
 
 // (POST /trash/{messageId}/restore)
 func (_ Unimplemented) RestoreMessage(w http.ResponseWriter, r *http.Request, messageId MessageId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /uploads)
+func (_ Unimplemented) CreateUpload(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /uploads/{uploadId})
+func (_ Unimplemented) GetUpload(w http.ResponseWriter, r *http.Request, uploadId UploadId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /uploads/{uploadId}/complete)
+func (_ Unimplemented) CompleteUpload(w http.ResponseWriter, r *http.Request, uploadId UploadId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PUT /uploads/{uploadId}/parts/{partNumber})
+func (_ Unimplemented) PutUploadPart(w http.ResponseWriter, r *http.Request, uploadId UploadId, partNumber PartNumber) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1382,6 +1478,107 @@ func (siw *ServerInterfaceWrapper) RestoreMessage(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// CreateUpload operation middleware
+func (siw *ServerInterfaceWrapper) CreateUpload(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateUpload(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetUpload operation middleware
+func (siw *ServerInterfaceWrapper) GetUpload(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "uploadId" -------------
+	var uploadId UploadId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "uploadId", chi.URLParam(r, "uploadId"), &uploadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "uploadId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetUpload(w, r, uploadId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CompleteUpload operation middleware
+func (siw *ServerInterfaceWrapper) CompleteUpload(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "uploadId" -------------
+	var uploadId UploadId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "uploadId", chi.URLParam(r, "uploadId"), &uploadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "uploadId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CompleteUpload(w, r, uploadId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutUploadPart operation middleware
+func (siw *ServerInterfaceWrapper) PutUploadPart(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "uploadId" -------------
+	var uploadId UploadId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "uploadId", chi.URLParam(r, "uploadId"), &uploadId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "uploadId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "partNumber" -------------
+	var partNumber PartNumber
+
+	err = runtime.BindStyledParameterWithOptions("simple", "partNumber", chi.URLParam(r, "partNumber"), &partNumber, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "partNumber", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutUploadPart(w, r, uploadId, partNumber)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 type UnescapedCookieParamError struct {
 	ParamName string
 	Err       error
@@ -1518,6 +1715,18 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Patch(options.BaseURL+"/devices/{deviceId}", wrapper.RenameDevice)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/uploads", wrapper.CreateUpload)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/uploads/{uploadId}", wrapper.GetUpload)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/uploads/{uploadId}/parts/{partNumber}", wrapper.PutUploadPart)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/uploads/{uploadId}/complete", wrapper.CompleteUpload)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/messages", wrapper.ListMessages)

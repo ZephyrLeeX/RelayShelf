@@ -1,7 +1,7 @@
 openapi: 3.1.1
 info:
   title: RelayShelf API
-  version: 0.3.0
+  version: 0.4.0
   description: HTTP contract authority for RelayShelf.
 servers:
   - url: /api/v1
@@ -108,6 +108,65 @@ paths:
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /uploads:
+    post:
+      operationId: createUpload
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateUploadRequest' }
+      responses:
+        '201': { description: Created upload session, content: { application/json: { schema: { $ref: '#/components/schemas/UploadSession' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /uploads/{uploadId}:
+    get:
+      operationId: getUpload
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/UploadId' }]
+      responses:
+        '200': { description: Current upload status, content: { application/json: { schema: { $ref: '#/components/schemas/UploadSession' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /uploads/{uploadId}/parts/{partNumber}:
+    put:
+      operationId: putUploadPart
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/UploadId' }
+        - { $ref: '#/components/parameters/PartNumber' }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '204': { description: Part durably stored }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '410': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /uploads/{uploadId}/complete:
+    post:
+      operationId: completeUpload
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/UploadId' }]
+      responses:
+        '200': { description: Upload already completed, content: { application/json: { schema: { $ref: '#/components/schemas/UploadSession' } } } }
+        '202': { description: Upload locked for Phase 5 finalization, content: { application/json: { schema: { $ref: '#/components/schemas/UploadSession' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '410': { $ref: '#/components/responses/Error' }
         '422': { $ref: '#/components/responses/Error' }
   /messages:
     post:
@@ -281,6 +340,16 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    UploadId:
+      name: uploadId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    PartNumber:
+      name: partNumber
+      in: path
+      required: true
+      schema: { type: integer, minimum: 0 }
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -363,6 +432,33 @@ components:
     Lifecycle:
       type: string
       enum: [TEMPORARY, PERMANENT]
+    UploadStatus:
+      type: string
+      enum: [CREATED, UPLOADING, COMPLETING, COMPLETED, FAILED, EXPIRED]
+    CreateUploadRequest:
+      type: object
+      additionalProperties: false
+      required: [originalFilename, expectedSize]
+      properties:
+        originalFilename: { type: string, minLength: 1, maxLength: 255 }
+        expectedSize: { type: integer, format: int64, minimum: 0 }
+        clientMime: { type: [string, 'null'], maxLength: 255 }
+    UploadSession:
+      type: object
+      additionalProperties: false
+      required: [id, originalFilename, expectedSize, chunkSize, partCount, status, expiresAt, completedParts, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        originalFilename: { type: string }
+        expectedSize: { type: integer, format: int64 }
+        clientMime: { type: [string, 'null'] }
+        chunkSize: { type: integer, format: int64 }
+        partCount: { type: integer, minimum: 0 }
+        status: { $ref: '#/components/schemas/UploadStatus' }
+        expiresAt: { type: string, format: date-time }
+        completedParts: { type: array, items: { type: integer, minimum: 0 }, uniqueItems: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
     CreateMessageRequest:
       type: object
       additionalProperties: false
