@@ -5,8 +5,9 @@
 import type { BodyFormat } from './BodyFormat';
 export type DirectSendRequest = {
     recipientUserId: string;
-    body: string;
+    body?: string | null;
     bodyFormat?: BodyFormat;
     sensitive?: boolean;
+    uploadIds?: Array<string>;
 };
 

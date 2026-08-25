@@ -6,5 +6,6 @@ import type { Message } from './Message';
 export type MessageSummary = (Message & {
     bodyPreview: string | null;
     bodyTruncated: boolean;
+    attachmentCount: number;
 });
 

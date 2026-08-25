@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AttachmentSummary } from './AttachmentSummary';
 import type { BodyFormat } from './BodyFormat';
 import type { Lifecycle } from './Lifecycle';
 import type { Tag } from './Tag';
@@ -23,5 +24,6 @@ export type Message = {
     createdAt: string;
     updatedAt: string;
     tags: Array<Tag>;
+    attachments: Array<AttachmentSummary>;
 };
 

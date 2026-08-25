@@ -13,4 +13,6 @@ var (
 	ErrIdempotencyKeyReused      = errors.New("idempotency key reused")
 	ErrRecipientUnavailable      = errors.New("recipient unavailable")
 	ErrCrypto                    = errors.New("sensitive body unavailable")
+	ErrContentRequired           = errors.New("message content required")
+	ErrUploadAlreadyConsumed     = errors.New("upload already consumed")
 )

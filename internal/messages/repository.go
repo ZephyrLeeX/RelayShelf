@@ -132,6 +132,10 @@ func (r *PostgreSQLRepository) Get(ctx context.Context, ownerID, id uuid.UUID) (
 	}
 	m := domainMessage(row)
 	m.Tags, err = loadTags(ctx, r.queries, id)
+	if err == nil {
+		m.Attachments, err = r.loadAttachments(ctx, r.pool, id, 0)
+		m.AttachmentTotal = len(m.Attachments)
+	}
 	return m, err
 }
 
@@ -283,6 +287,13 @@ func (r *PostgreSQLRepository) List(ctx context.Context, ownerID uuid.UUID, filt
 		m := domainMessage(row)
 		m.Tags, err = loadTags(ctx, r.queries, m.ID)
 		if err != nil {
+			return nil, err
+		}
+		m.Attachments, err = r.loadAttachments(ctx, r.pool, m.ID, 3)
+		if err != nil {
+			return nil, err
+		}
+		if err = r.pool.QueryRow(ctx, `SELECT count(*) FROM message_attachments WHERE message_id=$1`, m.ID).Scan(&m.AttachmentTotal); err != nil {
 			return nil, err
 		}
 		out = append(out, m)

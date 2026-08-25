@@ -40,6 +40,18 @@ type Message struct {
 	Version                        int64
 	CreatedAt, UpdatedAt           time.Time
 	Tags                           []Tag
+	Attachments                    []Attachment
+	AttachmentTotal                int
+}
+
+type Attachment struct {
+	ID               uuid.UUID
+	OriginalFilename string
+	ClientMime       *string
+	DetectedMime     string
+	SizeBytes        int64
+	DisplayOrder     int
+	FileObjectID     uuid.UUID
 }
 
 type MessageDeliveryReceipt struct {
@@ -50,8 +62,9 @@ type MessageDeliveryReceipt struct {
 
 type Summary struct {
 	Message
-	BodyPreview   *string
-	BodyTruncated bool
+	BodyPreview     *string
+	BodyTruncated   bool
+	AttachmentCount int
 }
 
 type Page struct {
@@ -63,11 +76,13 @@ type CreateCommand struct {
 	Body, BodyFormat, Lifecycle, IdempotencyKey string
 	Sensitive                                   bool
 	TagIDs                                      []uuid.UUID
+	UploadIDs                                   []uuid.UUID
 }
 
 type EditCommand struct {
 	ExpectedVersion                int64
 	Body, BodyFormat               *string
+	BodyClear                      bool
 	DetectedType, DetectedLanguage OptionalString
 }
 
@@ -88,16 +103,11 @@ type DirectSendCommand struct {
 	RecipientID                      uuid.UUID
 	Body, BodyFormat, IdempotencyKey string
 	Sensitive                        bool
+	UploadIDs                        []uuid.UUID
 }
 
 type ForwardCommand struct {
 	SourceID, RecipientID uuid.UUID
 	ExpectedVersion       int64
 	IdempotencyKey        string
-}
-
-// AttachmentCopier is the Phase 5 extension point. The text-only Phase 3
-// implementation intentionally has no implementation and never accesses files.
-type AttachmentCopier interface {
-	CopyForForward(sourceMessageID, destinationMessageID uuid.UUID) error
 }

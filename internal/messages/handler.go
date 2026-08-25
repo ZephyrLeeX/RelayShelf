@@ -57,6 +57,10 @@ func mapError(w http.ResponseWriter, r *http.Request, err error) {
 		auth.WriteError(w, r, http.StatusUnprocessableEntity, "RECIPIENT_UNAVAILABLE", "recipient is unavailable")
 	case errors.Is(err, ErrValidation):
 		auth.WriteError(w, r, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "invalid request")
+	case errors.Is(err, ErrContentRequired):
+		auth.WriteError(w, r, http.StatusUnprocessableEntity, "MESSAGE_CONTENT_REQUIRED", "a body or attachment is required")
+	case errors.Is(err, ErrUploadAlreadyConsumed):
+		auth.WriteError(w, r, http.StatusConflict, "UPLOAD_ALREADY_CONSUMED", "upload was already consumed")
 	default:
 		auth.WriteError(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
 	}
@@ -77,11 +81,18 @@ func messageDTO(m Message) httpapi.Message {
 	if m.Sensitive {
 		body = nil
 	}
-	return httpapi.Message{Id: m.ID, Body: body, BodyFormat: httpapi.BodyFormat(m.BodyFormat), DetectedType: m.DetectedType, DetectedLanguage: m.DetectedLanguage, Sensitive: m.Sensitive, Lifecycle: httpapi.Lifecycle(m.Lifecycle), Favorite: m.Favorite, ExpiresAt: m.ExpiresAt, TrashedAt: m.TrashedAt, PurgeAt: m.PurgeAt, SourceUserId: m.SourceUserID, SourceMessageId: m.SourceMessageID, Version: m.Version, CreatedAt: m.CreatedAt.UTC(), UpdatedAt: m.UpdatedAt.UTC(), Tags: tags}
+	attachments := make([]httpapi.AttachmentSummary, 0, len(m.Attachments))
+	for _, a := range m.Attachments {
+		attachments = append(attachments, attachmentDTO(a))
+	}
+	return httpapi.Message{Id: m.ID, Body: body, BodyFormat: httpapi.BodyFormat(m.BodyFormat), DetectedType: m.DetectedType, DetectedLanguage: m.DetectedLanguage, Sensitive: m.Sensitive, Lifecycle: httpapi.Lifecycle(m.Lifecycle), Favorite: m.Favorite, ExpiresAt: m.ExpiresAt, TrashedAt: m.TrashedAt, PurgeAt: m.PurgeAt, SourceUserId: m.SourceUserID, SourceMessageId: m.SourceMessageID, Version: m.Version, CreatedAt: m.CreatedAt.UTC(), UpdatedAt: m.UpdatedAt.UTC(), Tags: tags, Attachments: attachments}
+}
+func attachmentDTO(a Attachment) httpapi.AttachmentSummary {
+	return httpapi.AttachmentSummary{Id: a.ID, OriginalFilename: a.OriginalFilename, ClientMime: a.ClientMime, DetectedMime: a.DetectedMime, SizeBytes: a.SizeBytes, DisplayOrder: a.DisplayOrder}
 }
 func summaryDTO(s Summary) httpapi.MessageSummary {
 	m := messageDTO(s.Message)
-	return httpapi.MessageSummary{Id: m.Id, Body: nil, BodyPreview: s.BodyPreview, BodyTruncated: s.BodyTruncated, BodyFormat: m.BodyFormat, DetectedType: m.DetectedType, DetectedLanguage: m.DetectedLanguage, Sensitive: m.Sensitive, Lifecycle: m.Lifecycle, Favorite: m.Favorite, ExpiresAt: m.ExpiresAt, TrashedAt: m.TrashedAt, PurgeAt: m.PurgeAt, SourceUserId: m.SourceUserId, SourceMessageId: m.SourceMessageId, Version: m.Version, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, Tags: m.Tags}
+	return httpapi.MessageSummary{Id: m.Id, Body: nil, BodyPreview: s.BodyPreview, BodyTruncated: s.BodyTruncated, BodyFormat: m.BodyFormat, DetectedType: m.DetectedType, DetectedLanguage: m.DetectedLanguage, Sensitive: m.Sensitive, Lifecycle: m.Lifecycle, Favorite: m.Favorite, ExpiresAt: m.ExpiresAt, TrashedAt: m.TrashedAt, PurgeAt: m.PurgeAt, SourceUserId: m.SourceUserId, SourceMessageId: m.SourceMessageId, Version: m.Version, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, Tags: m.Tags, Attachments: m.Attachments, AttachmentCount: s.AttachmentCount}
 }
 
 func defaults(format *httpapi.BodyFormat, lifecycle *httpapi.Lifecycle, sensitive *bool) (string, string, bool) {
@@ -113,7 +124,17 @@ func (h *Handler) CreateMessage(w http.ResponseWriter, r *http.Request, params h
 			ids = append(ids, uuid.UUID(value))
 		}
 	}
-	m, err := h.service.Create(r.Context(), a.User.ID, a.Device.ID, CreateCommand{Body: body.Body, BodyFormat: format, Lifecycle: lifecycle, Sensitive: sensitive, TagIDs: ids, IdempotencyKey: params.IdempotencyKey})
+	uploadIDs := []uuid.UUID{}
+	if body.UploadIds != nil {
+		for _, value := range *body.UploadIds {
+			uploadIDs = append(uploadIDs, uuid.UUID(value))
+		}
+	}
+	messageBody := ""
+	if body.Body != nil {
+		messageBody = *body.Body
+	}
+	m, err := h.service.Create(r.Context(), a.User.ID, a.Device.ID, CreateCommand{Body: messageBody, BodyFormat: format, Lifecycle: lifecycle, Sensitive: sensitive, TagIDs: ids, UploadIDs: uploadIDs, IdempotencyKey: params.IdempotencyKey})
 	if err != nil {
 		mapError(w, r, err)
 		return
@@ -166,20 +187,56 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, lifecycle *httpap
 	writeJSON(w, http.StatusOK, httpapi.MessageList{Items: items, NextCursor: page.NextCursor})
 }
 func (h *Handler) EditMessage(w http.ResponseWriter, r *http.Request, messageID httpapi.MessageId) {
-	var body httpapi.EditMessageRequest
+	var body struct {
+		ExpectedVersion  int64               `json:"expectedVersion"`
+		Body             json.RawMessage     `json:"body"`
+		BodyFormat       *httpapi.BodyFormat `json:"bodyFormat"`
+		DetectedType     json.RawMessage     `json:"detectedType"`
+		DetectedLanguage json.RawMessage     `json:"detectedLanguage"`
+	}
 	if !decode(w, r, &body) {
 		return
 	}
-	command := EditCommand{ExpectedVersion: body.ExpectedVersion, Body: body.Body}
+	command := EditCommand{ExpectedVersion: body.ExpectedVersion}
+	if len(body.Body) > 0 {
+		if string(body.Body) == "null" {
+			command.BodyClear = true
+		} else {
+			var value string
+			if json.Unmarshal(body.Body, &value) != nil {
+				mapError(w, r, ErrValidation)
+				return
+			}
+			command.Body = &value
+		}
+	}
 	if body.BodyFormat != nil {
 		value := string(*body.BodyFormat)
 		command.BodyFormat = &value
 	}
-	if body.DetectedType != nil {
-		command.DetectedType = OptionalString{Set: true, Value: body.DetectedType}
+	if len(body.DetectedType) > 0 {
+		var value *string
+		if string(body.DetectedType) != "null" {
+			var text string
+			if json.Unmarshal(body.DetectedType, &text) != nil {
+				mapError(w, r, ErrValidation)
+				return
+			}
+			value = &text
+		}
+		command.DetectedType = OptionalString{Set: true, Value: value}
 	}
-	if body.DetectedLanguage != nil {
-		command.DetectedLanguage = OptionalString{Set: true, Value: body.DetectedLanguage}
+	if len(body.DetectedLanguage) > 0 {
+		var value *string
+		if string(body.DetectedLanguage) != "null" {
+			var text string
+			if json.Unmarshal(body.DetectedLanguage, &text) != nil {
+				mapError(w, r, ErrValidation)
+				return
+			}
+			value = &text
+		}
+		command.DetectedLanguage = OptionalString{Set: true, Value: value}
 	}
 	m, err := h.service.Edit(r.Context(), actor(r).User.ID, uuid.UUID(messageID), command)
 	h.respondMessage(w, r, m, err)
@@ -268,12 +325,43 @@ func (h *Handler) DirectSendMessage(w http.ResponseWriter, r *http.Request, para
 	}
 	format, _, sensitive := defaults(body.BodyFormat, nil, body.Sensitive)
 	a := actor(r)
-	receipt, err := h.service.DirectSend(r.Context(), a.User.ID, a.Device.ID, DirectSendCommand{RecipientID: uuid.UUID(body.RecipientUserId), Body: body.Body, BodyFormat: format, Sensitive: sensitive, IdempotencyKey: params.IdempotencyKey})
+	uploadIDs := []uuid.UUID{}
+	if body.UploadIds != nil {
+		for _, value := range *body.UploadIds {
+			uploadIDs = append(uploadIDs, uuid.UUID(value))
+		}
+	}
+	messageBody := ""
+	if body.Body != nil {
+		messageBody = *body.Body
+	}
+	receipt, err := h.service.DirectSend(r.Context(), a.User.ID, a.Device.ID, DirectSendCommand{RecipientID: uuid.UUID(body.RecipientUserId), Body: messageBody, BodyFormat: format, Sensitive: sensitive, UploadIDs: uploadIDs, IdempotencyKey: params.IdempotencyKey})
 	if err != nil {
 		mapError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, receiptDTO(receipt))
+}
+
+func (h *Handler) AddMessageAttachments(w http.ResponseWriter, r *http.Request, messageID httpapi.MessageId) {
+	var body httpapi.AddAttachmentsRequest
+	if !decode(w, r, &body) {
+		return
+	}
+	ids := make([]uuid.UUID, 0, len(body.UploadIds))
+	for _, v := range body.UploadIds {
+		ids = append(ids, uuid.UUID(v))
+	}
+	m, err := h.service.AddAttachments(r.Context(), actor(r).User.ID, uuid.UUID(messageID), body.ExpectedVersion, ids)
+	h.respondMessage(w, r, m, err)
+}
+func (h *Handler) RemoveMessageAttachment(w http.ResponseWriter, r *http.Request, messageID httpapi.MessageId, attachmentID httpapi.AttachmentId) {
+	var body httpapi.VersionRequest
+	if !decode(w, r, &body) {
+		return
+	}
+	m, err := h.service.RemoveAttachment(r.Context(), actor(r).User.ID, uuid.UUID(messageID), uuid.UUID(attachmentID), body.ExpectedVersion)
+	h.respondMessage(w, r, m, err)
 }
 func (h *Handler) ForwardMessage(w http.ResponseWriter, r *http.Request, messageID httpapi.MessageId, params httpapi.ForwardMessageParams) {
 	var body httpapi.ForwardRequest

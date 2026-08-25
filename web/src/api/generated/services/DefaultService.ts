@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AddAttachmentsRequest } from '../models/AddAttachmentsRequest';
 import type { AuthBootstrap } from '../models/AuthBootstrap';
 import type { CreateMessageRequest } from '../models/CreateMessageRequest';
 import type { CreateUploadRequest } from '../models/CreateUploadRequest';
@@ -245,7 +246,7 @@ export class DefaultService {
     }
     /**
      * @param uploadId
-     * @returns UploadSession Upload already completed
+     * @returns UploadSession Upload finalized or already completed
      * @throws ApiError
      */
     public static completeUpload(
@@ -264,6 +265,8 @@ export class DefaultService {
                 409: `API error`,
                 410: `API error`,
                 422: `API error`,
+                503: `API error`,
+                507: `API error`,
             },
         });
     }
@@ -412,6 +415,81 @@ export class DefaultService {
                 404: `API error`,
                 409: `API error`,
                 422: `API error`,
+            },
+        });
+    }
+    /**
+     * @param messageId
+     * @param requestBody
+     * @returns Message Updated message
+     * @throws ApiError
+     */
+    public static addMessageAttachments(
+        messageId: string,
+        requestBody: AddAttachmentsRequest,
+    ): CancelablePromise<Message> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/messages/{messageId}/attachments',
+            path: {
+                'messageId': messageId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                404: `API error`,
+                409: `API error`,
+                422: `API error`,
+            },
+        });
+    }
+    /**
+     * @param messageId
+     * @param attachmentId
+     * @param requestBody
+     * @returns Message Updated message
+     * @throws ApiError
+     */
+    public static removeMessageAttachment(
+        messageId: string,
+        attachmentId: string,
+        requestBody: VersionRequest,
+    ): CancelablePromise<Message> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/messages/{messageId}/attachments/{attachmentId}',
+            path: {
+                'messageId': messageId,
+                'attachmentId': attachmentId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                404: `API error`,
+                409: `API error`,
+                422: `API error`,
+            },
+        });
+    }
+    /**
+     * @param attachmentId
+     * @returns binary Full attachment
+     * @throws ApiError
+     */
+    public static downloadAttachment(
+        attachmentId: string,
+    ): CancelablePromise<Blob> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/attachments/{attachmentId}/download',
+            path: {
+                'attachmentId': attachmentId,
+            },
+            errors: {
+                304: `Not modified`,
+                404: `API error`,
+                416: `API error`,
+                503: `API error`,
             },
         });
     }

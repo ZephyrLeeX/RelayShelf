@@ -5,10 +5,11 @@
 import type { BodyFormat } from './BodyFormat';
 import type { Lifecycle } from './Lifecycle';
 export type CreateMessageRequest = {
-    body: string;
+    body?: string | null;
     bodyFormat?: BodyFormat;
     lifecycle?: Lifecycle;
     sensitive?: boolean;
     tagIds?: Array<string>;
+    uploadIds?: Array<string>;
 };
 

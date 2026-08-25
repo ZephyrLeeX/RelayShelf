@@ -1,7 +1,7 @@
 openapi: 3.1.1
 info:
   title: RelayShelf API
-  version: 0.4.0
+  version: 0.5.0
   description: HTTP contract authority for RelayShelf.
 servers:
   - url: /api/v1
@@ -160,14 +160,15 @@ paths:
       security: [{ cookieAuth: [] }]
       parameters: [{ $ref: '#/components/parameters/UploadId' }]
       responses:
-        '200': { description: Upload already completed, content: { application/json: { schema: { $ref: '#/components/schemas/UploadSession' } } } }
-        '202': { description: Upload locked for Phase 5 finalization, content: { application/json: { schema: { $ref: '#/components/schemas/UploadSession' } } } }
+        '200': { description: Upload finalized or already completed, content: { application/json: { schema: { $ref: '#/components/schemas/UploadSession' } } } }
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '410': { $ref: '#/components/responses/Error' }
         '422': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+        '507': { $ref: '#/components/responses/Error' }
   /messages:
     post:
       operationId: createMessage
@@ -228,6 +229,32 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '422': { $ref: '#/components/responses/Error' }
+  /messages/{messageId}/attachments:
+    post:
+      operationId: addMessageAttachments
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/MessageId' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AddAttachmentsRequest' } } } }
+      responses: { '200': { description: Updated message, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }, '404': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' }, '422': { $ref: '#/components/responses/Error' } }
+  /messages/{messageId}/attachments/{attachmentId}:
+    delete:
+      operationId: removeMessageAttachment
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/MessageId' }, { $ref: '#/components/parameters/AttachmentId' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/VersionRequest' } } } }
+      responses: { '200': { description: Updated message, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }, '404': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' }, '422': { $ref: '#/components/responses/Error' } }
+  /attachments/{attachmentId}/download:
+    get:
+      operationId: downloadAttachment
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/AttachmentId' }]
+      responses:
+        '200': { description: Full attachment, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
+        '206': { description: Attachment byte range, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
+        '304': { description: Not modified }
+        '404': { $ref: '#/components/responses/Error' }
+        '416': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
   /messages/{messageId}/make-permanent:
     post:
       operationId: makeMessagePermanent
@@ -342,6 +369,11 @@ components:
       schema: { type: string, format: uuid }
     UploadId:
       name: uploadId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    AttachmentId:
+      name: attachmentId
       in: path
       required: true
       schema: { type: string, format: uuid }
@@ -462,20 +494,20 @@ components:
     CreateMessageRequest:
       type: object
       additionalProperties: false
-      required: [body]
       properties:
-        body: { type: string, minLength: 1, maxLength: 1048576 }
+        body: { type: [string, 'null'], minLength: 1, maxLength: 1048576 }
         bodyFormat: { $ref: '#/components/schemas/BodyFormat', default: TEXT }
         lifecycle: { $ref: '#/components/schemas/Lifecycle', default: TEMPORARY }
         sensitive: { type: boolean, default: false }
         tagIds: { type: array, items: { type: string, format: uuid }, uniqueItems: true, default: [] }
+        uploadIds: { type: array, items: { type: string, format: uuid }, uniqueItems: true, default: [] }
     EditMessageRequest:
       type: object
       additionalProperties: false
       required: [expectedVersion]
       properties:
         expectedVersion: { type: integer, format: int64, minimum: 1 }
-        body: { type: string, minLength: 1, maxLength: 1048576 }
+        body: { type: [string, 'null'], minLength: 1, maxLength: 1048576 }
         bodyFormat: { $ref: '#/components/schemas/BodyFormat' }
         detectedType: { type: [string, 'null'], maxLength: 64 }
         detectedLanguage: { type: [string, 'null'], maxLength: 64 }
@@ -507,12 +539,20 @@ components:
     DirectSendRequest:
       type: object
       additionalProperties: false
-      required: [recipientUserId, body]
+      required: [recipientUserId]
       properties:
         recipientUserId: { type: string, format: uuid }
-        body: { type: string, minLength: 1, maxLength: 1048576 }
+        body: { type: [string, 'null'], minLength: 1, maxLength: 1048576 }
         bodyFormat: { $ref: '#/components/schemas/BodyFormat', default: TEXT }
         sensitive: { type: boolean, default: false }
+        uploadIds: { type: array, items: { type: string, format: uuid }, uniqueItems: true, default: [] }
+    AddAttachmentsRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion, uploadIds]
+      properties:
+        expectedVersion: { type: integer, format: int64, minimum: 1 }
+        uploadIds: { type: array, minItems: 1, items: { type: string, format: uuid }, uniqueItems: true }
     ForwardRequest:
       type: object
       additionalProperties: false
@@ -539,7 +579,7 @@ components:
         updatedAt: { type: string, format: date-time }
     Message:
       type: object
-      required: [id, body, bodyFormat, sensitive, lifecycle, favorite, version, createdAt, updatedAt, tags]
+      required: [id, body, bodyFormat, sensitive, lifecycle, favorite, version, createdAt, updatedAt, tags, attachments]
       properties:
         id: { type: string, format: uuid }
         body: { type: [string, 'null'] }
@@ -558,6 +598,18 @@ components:
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
         tags: { type: array, items: { $ref: '#/components/schemas/Tag' } }
+        attachments: { type: array, items: { $ref: '#/components/schemas/AttachmentSummary' } }
+    AttachmentSummary:
+      type: object
+      additionalProperties: false
+      required: [id, originalFilename, clientMime, detectedMime, sizeBytes, displayOrder]
+      properties:
+        id: { type: string, format: uuid }
+        originalFilename: { type: string }
+        clientMime: { type: [string, 'null'] }
+        detectedMime: { type: string }
+        sizeBytes: { type: integer, format: int64 }
+        displayOrder: { type: integer }
     MessageDeliveryReceipt:
       type: object
       additionalProperties: false
@@ -570,10 +622,11 @@ components:
       allOf:
         - { $ref: '#/components/schemas/Message' }
         - type: object
-          required: [bodyPreview, bodyTruncated]
+          required: [bodyPreview, bodyTruncated, attachmentCount]
           properties:
             bodyPreview: { type: [string, 'null'] }
             bodyTruncated: { type: boolean }
+            attachmentCount: { type: integer, minimum: 0 }
     MessageList:
       type: object
       required: [items, nextCursor]

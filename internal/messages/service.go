@@ -42,6 +42,9 @@ func (s *Service) newMessage(ownerID, deviceID uuid.UUID, body, format, lifecycl
 		m.ExpiresAt = &value
 	}
 	if sensitive {
+		if body == "" {
+			return Message{}, ErrValidation
+		}
 		ciphertext, nonce, version, encryptErr := s.cipher.Encrypt(m.ID, m.OwnerID, []byte(body))
 		if encryptErr != nil {
 			return Message{}, encryptErr
@@ -49,14 +52,14 @@ func (s *Service) newMessage(ownerID, deviceID uuid.UUID, body, format, lifecycl
 		m.BodyCiphertext = ciphertext
 		m.BodyNonce = nonce
 		m.BodyEncryptionVersion = &version
-	} else {
+	} else if body != "" {
 		m.BodyPlaintext = &body
 	}
 	return m, nil
 }
 
 func (s *Service) Create(ctx context.Context, ownerID, deviceID uuid.UUID, c CreateCommand) (Message, error) {
-	if !validBody(c.Body) || !validFormat(c.BodyFormat) || !validLifecycle(c.Lifecycle) || !validIdempotencyKey(c.IdempotencyKey) {
+	if (c.Body != "" && !validBody(c.Body)) || (c.Body == "" && len(c.UploadIDs) == 0) || (c.Body == "" && c.Sensitive) || !validFormat(c.BodyFormat) || !validLifecycle(c.Lifecycle) || !validIdempotencyKey(c.IdempotencyKey) {
 		return Message{}, ErrValidation
 	}
 	hash := hashCreate(c)
@@ -85,6 +88,9 @@ func (s *Service) Create(ctx context.Context, ownerID, deviceID uuid.UUID, c Cre
 		if err = insertMessage(ctx, tx, result); err != nil {
 			return err
 		}
+		if err = s.bindUploads(ctx, tx, ownerID, result.ID, c.UploadIDs, 0, now); err != nil {
+			return err
+		}
 		if err = replaceTags(ctx, tx, result.ID, c.TagIDs); err != nil {
 			return err
 		}
@@ -98,6 +104,9 @@ func (s *Service) Create(ctx context.Context, ownerID, deviceID uuid.UUID, c Cre
 		return Message{}, err
 	}
 	result.Tags, err = loadTags(ctx, s.repo.queries, result.ID)
+	if err == nil {
+		result.Attachments, err = s.repo.loadAttachments(ctx, s.repo.pool, result.ID, 0)
+	}
 	return result, err
 }
 
@@ -138,7 +147,7 @@ func (s *Service) List(ctx context.Context, ownerID uuid.UUID, filter ListFilter
 		rows = rows[:filter.Limit]
 	}
 	for _, m := range rows {
-		summary := Summary{Message: m}
+		summary := Summary{Message: m, AttachmentCount: m.AttachmentTotal}
 		summary.BodyPlaintext = nil
 		if !m.Sensitive && m.BodyPlaintext != nil {
 			summary.BodyPreview, summary.BodyTruncated = preview(*m.BodyPlaintext)
@@ -187,7 +196,7 @@ func (s *Service) mutate(ctx context.Context, ownerID, messageID uuid.UUID, expe
 }
 
 func (s *Service) Edit(ctx context.Context, ownerID, messageID uuid.UUID, c EditCommand) (Message, error) {
-	if c.Body == nil && c.BodyFormat == nil && !c.DetectedType.Set && !c.DetectedLanguage.Set {
+	if c.Body == nil && !c.BodyClear && c.BodyFormat == nil && !c.DetectedType.Set && !c.DetectedLanguage.Set {
 		return Message{}, ErrValidation
 	}
 	if c.Body != nil && !validBody(*c.Body) {
@@ -208,7 +217,23 @@ func (s *Service) Edit(ctx context.Context, ownerID, messageID uuid.UUID, c Edit
 		if m.Sensitive && c.Body != nil {
 			return false, ErrValidation
 		}
+		if m.Sensitive && c.BodyClear {
+			return false, ErrValidation
+		}
 		changed := false
+		if c.BodyClear {
+			var count int
+			if err := s.repo.pool.QueryRow(ctx, `SELECT count(*) FROM message_attachments WHERE message_id=$1`, m.ID).Scan(&count); err != nil {
+				return false, err
+			}
+			if count == 0 {
+				return false, ErrContentRequired
+			}
+			if m.BodyPlaintext != nil {
+				m.BodyPlaintext = nil
+				changed = true
+			}
+		}
 		if c.Body != nil && m.BodyPlaintext != nil && *c.Body != *m.BodyPlaintext {
 			m.BodyPlaintext = c.Body
 			changed = true
@@ -462,7 +487,7 @@ func (s *Service) EditSensitive(ctx context.Context, ownerID, messageID uuid.UUI
 }
 
 func (s *Service) DirectSend(ctx context.Context, senderID, deviceID uuid.UUID, c DirectSendCommand) (MessageDeliveryReceipt, error) {
-	if !validBody(c.Body) || !validFormat(c.BodyFormat) || !validIdempotencyKey(c.IdempotencyKey) {
+	if (c.Body != "" && !validBody(c.Body)) || (c.Body == "" && len(c.UploadIDs) == 0) || (c.Body == "" && c.Sensitive) || !validFormat(c.BodyFormat) || !validIdempotencyKey(c.IdempotencyKey) {
 		return MessageDeliveryReceipt{}, ErrValidation
 	}
 	hash := hashDirect(c)
@@ -493,6 +518,9 @@ func (s *Service) DirectSend(ctx context.Context, senderID, deviceID uuid.UUID, 
 			return err
 		}
 		if err = insertMessage(ctx, tx, result); err != nil {
+			return err
+		}
+		if err = s.bindUploads(ctx, tx, senderID, result.ID, c.UploadIDs, 0, now); err != nil {
 			return err
 		}
 		idemID, err := s.ids.New()
@@ -557,7 +585,13 @@ func (s *Service) Forward(ctx context.Context, senderID, deviceID uuid.UUID, c F
 		} else if source.BodyPlaintext != nil {
 			body = *source.BodyPlaintext
 		} else {
-			return ErrValidation
+			var count int
+			if err = tx.QueryRow(ctx, `SELECT count(*) FROM message_attachments WHERE message_id=$1`, source.ID).Scan(&count); err != nil {
+				return err
+			}
+			if count == 0 {
+				return ErrContentRequired
+			}
 		}
 		temp, _, err := settings(ctx, tx)
 		if err != nil {
@@ -570,6 +604,9 @@ func (s *Service) Forward(ctx context.Context, senderID, deviceID uuid.UUID, c F
 			return err
 		}
 		if err = insertMessage(ctx, tx, result); err != nil {
+			return err
+		}
+		if err = s.copyAttachments(ctx, tx, source.ID, result.ID, now); err != nil {
 			return err
 		}
 		idemID, err := s.ids.New()

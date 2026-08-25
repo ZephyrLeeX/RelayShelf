@@ -80,6 +80,22 @@ func (e UploadStatus) Valid() bool {
 	}
 }
 
+// AddAttachmentsRequest defines model for AddAttachmentsRequest.
+type AddAttachmentsRequest struct {
+	ExpectedVersion int64                `json:"expectedVersion"`
+	UploadIds       []openapi_types.UUID `json:"uploadIds"`
+}
+
+// AttachmentSummary defines model for AttachmentSummary.
+type AttachmentSummary struct {
+	ClientMime       *string            `json:"clientMime"`
+	DetectedMime     string             `json:"detectedMime"`
+	DisplayOrder     int                `json:"displayOrder"`
+	Id               openapi_types.UUID `json:"id"`
+	OriginalFilename string             `json:"originalFilename"`
+	SizeBytes        int64              `json:"sizeBytes"`
+}
+
 // AuthBootstrap defines model for AuthBootstrap.
 type AuthBootstrap struct {
 	CsrfToken string  `json:"csrfToken"`
@@ -93,11 +109,12 @@ type BodyFormat string
 
 // CreateMessageRequest defines model for CreateMessageRequest.
 type CreateMessageRequest struct {
-	Body       string                `json:"body"`
+	Body       *string               `json:"body,omitempty"`
 	BodyFormat *BodyFormat           `json:"bodyFormat,omitempty"`
 	Lifecycle  *Lifecycle            `json:"lifecycle,omitempty"`
 	Sensitive  *bool                 `json:"sensitive,omitempty"`
 	TagIds     *[]openapi_types.UUID `json:"tagIds,omitempty"`
+	UploadIds  *[]openapi_types.UUID `json:"uploadIds,omitempty"`
 }
 
 // CreateUploadRequest defines model for CreateUploadRequest.
@@ -118,10 +135,11 @@ type Device struct {
 
 // DirectSendRequest defines model for DirectSendRequest.
 type DirectSendRequest struct {
-	Body            string             `json:"body"`
-	BodyFormat      *BodyFormat        `json:"bodyFormat,omitempty"`
-	RecipientUserId openapi_types.UUID `json:"recipientUserId"`
-	Sensitive       *bool              `json:"sensitive,omitempty"`
+	Body            *string               `json:"body,omitempty"`
+	BodyFormat      *BodyFormat           `json:"bodyFormat,omitempty"`
+	RecipientUserId openapi_types.UUID    `json:"recipientUserId"`
+	Sensitive       *bool                 `json:"sensitive,omitempty"`
+	UploadIds       *[]openapi_types.UUID `json:"uploadIds,omitempty"`
 }
 
 // EditMessageRequest defines model for EditMessageRequest.
@@ -172,6 +190,7 @@ type LoginRequest struct {
 
 // Message defines model for Message.
 type Message struct {
+	Attachments      []AttachmentSummary `json:"attachments"`
 	Body             *string             `json:"body"`
 	BodyFormat       BodyFormat          `json:"bodyFormat"`
 	CreatedAt        time.Time           `json:"createdAt"`
@@ -206,6 +225,8 @@ type MessageList struct {
 
 // MessageSummary defines model for MessageSummary.
 type MessageSummary struct {
+	AttachmentCount  int                 `json:"attachmentCount"`
+	Attachments      []AttachmentSummary `json:"attachments"`
 	Body             *string             `json:"body"`
 	BodyFormat       BodyFormat          `json:"bodyFormat"`
 	BodyPreview      *string             `json:"bodyPreview"`
@@ -320,6 +341,9 @@ type VersionRequest struct {
 	ExpectedVersion int64 `json:"expectedVersion"`
 }
 
+// AttachmentId defines model for AttachmentId.
+type AttachmentId = openapi_types.UUID
+
 // Cursor defines model for Cursor.
 type Cursor = string
 
@@ -395,6 +419,12 @@ type DirectSendMessageJSONRequestBody = DirectSendRequest
 // EditMessageJSONRequestBody defines body for EditMessage for application/json ContentType.
 type EditMessageJSONRequestBody = EditMessageRequest
 
+// AddMessageAttachmentsJSONRequestBody defines body for AddMessageAttachments for application/json ContentType.
+type AddMessageAttachmentsJSONRequestBody = AddAttachmentsRequest
+
+// RemoveMessageAttachmentJSONRequestBody defines body for RemoveMessageAttachment for application/json ContentType.
+type RemoveMessageAttachmentJSONRequestBody = VersionRequest
+
 // SetMessageFavoriteJSONRequestBody defines body for SetMessageFavorite for application/json ContentType.
 type SetMessageFavoriteJSONRequestBody = FavoriteRequest
 
@@ -431,6 +461,9 @@ type CreateUploadJSONRequestBody = CreateUploadRequest
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 
+	// (GET /attachments/{attachmentId}/download)
+	DownloadAttachment(w http.ResponseWriter, r *http.Request, attachmentId AttachmentId)
+
 	// (POST /auth/login)
 	Login(w http.ResponseWriter, r *http.Request)
 
@@ -463,6 +496,12 @@ type ServerInterface interface {
 
 	// (PATCH /messages/{messageId})
 	EditMessage(w http.ResponseWriter, r *http.Request, messageId MessageId)
+
+	// (POST /messages/{messageId}/attachments)
+	AddMessageAttachments(w http.ResponseWriter, r *http.Request, messageId MessageId)
+
+	// (DELETE /messages/{messageId}/attachments/{attachmentId})
+	RemoveMessageAttachment(w http.ResponseWriter, r *http.Request, messageId MessageId, attachmentId AttachmentId)
 
 	// (POST /messages/{messageId}/favorite)
 	SetMessageFavorite(w http.ResponseWriter, r *http.Request, messageId MessageId)
@@ -532,6 +571,11 @@ type ServerInterface interface {
 
 type Unimplemented struct{}
 
+// (GET /attachments/{attachmentId}/download)
+func (_ Unimplemented) DownloadAttachment(w http.ResponseWriter, r *http.Request, attachmentId AttachmentId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // (POST /auth/login)
 func (_ Unimplemented) Login(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -584,6 +628,16 @@ func (_ Unimplemented) GetMessage(w http.ResponseWriter, r *http.Request, messag
 
 // (PATCH /messages/{messageId})
 func (_ Unimplemented) EditMessage(w http.ResponseWriter, r *http.Request, messageId MessageId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /messages/{messageId}/attachments)
+func (_ Unimplemented) AddMessageAttachments(w http.ResponseWriter, r *http.Request, messageId MessageId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (DELETE /messages/{messageId}/attachments/{attachmentId})
+func (_ Unimplemented) RemoveMessageAttachment(w http.ResponseWriter, r *http.Request, messageId MessageId, attachmentId AttachmentId) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -700,6 +754,32 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// DownloadAttachment operation middleware
+func (siw *ServerInterfaceWrapper) DownloadAttachment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "attachmentId" -------------
+	var attachmentId AttachmentId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "attachmentId", chi.URLParam(r, "attachmentId"), &attachmentId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "attachmentId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DownloadAttachment(w, r, attachmentId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // Login operation middleware
 func (siw *ServerInterfaceWrapper) Login(w http.ResponseWriter, r *http.Request) {
@@ -1015,6 +1095,67 @@ func (siw *ServerInterfaceWrapper) EditMessage(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.EditMessage(w, r, messageId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AddMessageAttachments operation middleware
+func (siw *ServerInterfaceWrapper) AddMessageAttachments(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "messageId" -------------
+	var messageId MessageId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "messageId", chi.URLParam(r, "messageId"), &messageId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "messageId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AddMessageAttachments(w, r, messageId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RemoveMessageAttachment operation middleware
+func (siw *ServerInterfaceWrapper) RemoveMessageAttachment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "messageId" -------------
+	var messageId MessageId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "messageId", chi.URLParam(r, "messageId"), &messageId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "messageId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "attachmentId" -------------
+	var attachmentId AttachmentId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "attachmentId", chi.URLParam(r, "attachmentId"), &attachmentId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "attachmentId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RemoveMessageAttachment(w, r, messageId, attachmentId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1745,6 +1886,15 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/messages/{messageId}/tags", wrapper.ReplaceMessageTags)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/messages/{messageId}/attachments", wrapper.AddMessageAttachments)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/messages/{messageId}/attachments/{attachmentId}", wrapper.RemoveMessageAttachment)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/attachments/{attachmentId}/download", wrapper.DownloadAttachment)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/messages/{messageId}/make-permanent", wrapper.MakeMessagePermanent)

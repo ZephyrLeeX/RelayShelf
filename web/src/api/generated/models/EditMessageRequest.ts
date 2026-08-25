@@ -5,7 +5,7 @@
 import type { BodyFormat } from './BodyFormat';
 export type EditMessageRequest = {
     expectedVersion: number;
-    body?: string;
+    body?: string | null;
     bodyFormat?: BodyFormat;
     detectedType?: string | null;
     detectedLanguage?: string | null;

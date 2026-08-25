@@ -7,6 +7,9 @@ export { CancelablePromise, CancelError } from './core/CancelablePromise';
 export { OpenAPI } from './core/OpenAPI';
 export type { OpenAPIConfig } from './core/OpenAPI';
 
+export type { AddAttachmentsRequest } from './models/AddAttachmentsRequest';
+export type { AttachmentId } from './models/AttachmentId';
+export type { AttachmentSummary } from './models/AttachmentSummary';
 export type { AuthBootstrap } from './models/AuthBootstrap';
 export { BodyFormat } from './models/BodyFormat';
 export type { CreateMessageRequest } from './models/CreateMessageRequest';

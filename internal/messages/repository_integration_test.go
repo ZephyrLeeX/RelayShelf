@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -75,6 +76,112 @@ func (f *fixture) authenticatedRequest(method, path string, body []byte) *http.R
 	request := httptest.NewRequest(method, path, bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	return request.WithContext(auth.ContextWithAuthentication(request.Context(), auth.Authentication{User: auth.User{ID: f.alice}, Device: auth.Device{ID: f.aliceDevice}}))
+}
+
+func (f *fixture) completedUpload(t *testing.T, owner uuid.UUID, name string, content byte) uuid.UUID {
+	t.Helper()
+	fileID, uploadID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	hash := bytes.Repeat([]byte{content}, 32)
+	if _, err := f.db.Exec(context.Background(), `INSERT INTO file_objects(id,sha256,size_bytes,detected_mime,storage_backend,storage_key,status,created_at,updated_at,ready_at) VALUES($1,$2,1,'application/octet-stream','filesystem',$3,'READY',$4,$4,$4)`, fileID, hash, "objects/"+fileID.String(), f.clock.now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.Exec(context.Background(), `INSERT INTO upload_sessions(id,user_id,original_filename,expected_size,chunk_size,status,file_object_id,expires_at,completed_at,created_at,updated_at) VALUES($1,$2,$3,1,8388608,'COMPLETED',$4,$5,$6,$6,$6)`, uploadID, owner, name, fileID, f.clock.now.Add(time.Hour), f.clock.now); err != nil {
+		t.Fatal(err)
+	}
+	return uploadID
+}
+
+func TestPhase5AttachmentBindingConsumptionForwardAndMutation(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	u1 := f.completedUpload(t, f.alice, "one.bin", 0x11)
+	fileOnly, err := f.service.Create(ctx, f.alice, f.aliceDevice, messages.CreateCommand{BodyFormat: messages.Text, Lifecycle: messages.Temporary, UploadIDs: []uuid.UUID{u1}, IdempotencyKey: "file-only"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fileOnly.BodyPlaintext != nil || len(fileOnly.Attachments) != 1 {
+		t.Fatalf("file-only=%+v", fileOnly)
+	}
+	replay, err := f.service.Create(ctx, f.alice, f.aliceDevice, messages.CreateCommand{BodyFormat: messages.Text, Lifecycle: messages.Temporary, UploadIDs: []uuid.UUID{u1}, IdempotencyKey: "file-only"})
+	if err != nil || replay.ID != fileOnly.ID {
+		t.Fatalf("replay=%+v %v", replay, err)
+	}
+	if _, err = f.service.Create(ctx, f.alice, f.aliceDevice, messages.CreateCommand{Body: "x", BodyFormat: messages.Text, Lifecycle: messages.Temporary, UploadIDs: []uuid.UUID{u1}, IdempotencyKey: "consume-again"}); !errors.Is(err, messages.ErrUploadAlreadyConsumed) {
+		t.Fatalf("double consume=%v", err)
+	}
+	if _, err = f.service.RemoveAttachment(ctx, f.alice, fileOnly.ID, fileOnly.Attachments[0].ID, fileOnly.Version); !errors.Is(err, messages.ErrContentRequired) {
+		t.Fatalf("remove last=%v", err)
+	}
+	u2 := f.completedUpload(t, f.alice, "two.bin", 0x22)
+	updated, err := f.service.AddAttachments(ctx, f.alice, fileOnly.ID, fileOnly.Version, []uuid.UUID{u2})
+	if err != nil || updated.Version != fileOnly.Version+1 || len(updated.Attachments) != 2 {
+		t.Fatalf("add=%+v %v", updated, err)
+	}
+	updated, err = f.service.RemoveAttachment(ctx, f.alice, fileOnly.ID, updated.Attachments[0].ID, updated.Version)
+	if err != nil || updated.Version != fileOnly.Version+2 || len(updated.Attachments) != 1 {
+		t.Fatalf("remove=%+v %v", updated, err)
+	}
+	receipt, err := f.service.Forward(ctx, f.alice, f.aliceDevice, messages.ForwardCommand{SourceID: fileOnly.ID, RecipientID: f.bob, ExpectedVersion: updated.Version, IdempotencyKey: "forward-file"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := f.service.Detail(ctx, f.bob, receipt.MessageID)
+	if err != nil || len(bob.Attachments) != 1 || bob.Attachments[0].ID == updated.Attachments[0].ID || bob.Attachments[0].FileObjectID != updated.Attachments[0].FileObjectID {
+		t.Fatalf("forward=%+v %v", bob, err)
+	}
+	u3 := f.completedUpload(t, f.alice, "race.bin", 0x33)
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	var wg sync.WaitGroup
+	for _, key := range []string{"race-a", "race-b"} {
+		wg.Add(1)
+		go func(key string) {
+			defer wg.Done()
+			<-start
+			_, createErr := f.service.Create(ctx, f.alice, f.aliceDevice, messages.CreateCommand{Body: "race", BodyFormat: messages.Text, Lifecycle: messages.Temporary, UploadIDs: []uuid.UUID{u3}, IdempotencyKey: key})
+			results <- createErr
+		}(key)
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	success, consumed := 0, 0
+	for createErr := range results {
+		if createErr == nil {
+			success++
+		} else if errors.Is(createErr, messages.ErrUploadAlreadyConsumed) {
+			consumed++
+		} else {
+			t.Fatalf("race error=%v", createErr)
+		}
+	}
+	if success != 1 || consumed != 1 {
+		t.Fatalf("race success=%d consumed=%d", success, consumed)
+	}
+	many := []uuid.UUID{}
+	for i, b := range []byte{0x41, 0x42, 0x43, 0x44} {
+		many = append(many, f.completedUpload(t, f.alice, fmt.Sprintf("many-%d.bin", i), b))
+	}
+	manyMessage, err := f.service.Create(ctx, f.alice, f.aliceDevice, messages.CreateCommand{BodyFormat: messages.Text, Lifecycle: messages.Temporary, UploadIDs: many, IdempotencyKey: "many"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := f.service.List(ctx, f.alice, messages.ListFilter{Limit: 100}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, summary := range page.Items {
+		if summary.ID == manyMessage.ID {
+			found = true
+			if summary.AttachmentCount != 4 || len(summary.Attachments) != 3 {
+				t.Fatalf("summary count=%d previews=%d", summary.AttachmentCount, len(summary.Attachments))
+			}
+		}
+	}
+	if !found {
+		t.Fatal("many attachment summary missing")
+	}
 }
 
 func TestMessageCreateOwnerBodyVersionAndSensitiveAtRest(t *testing.T) {

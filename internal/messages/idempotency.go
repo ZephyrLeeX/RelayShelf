@@ -56,6 +56,9 @@ func hashCreate(c CreateCommand) [32]byte {
 	for _, value := range ids {
 		h.uuid(value)
 	}
+	for _, value := range c.UploadIDs {
+		h.uuid(value)
+	}
 	return h.sum()
 }
 func hashDirect(c DirectSendCommand) [32]byte {
@@ -64,6 +67,9 @@ func hashDirect(c DirectSendCommand) [32]byte {
 	h.string(c.Body)
 	h.string(c.BodyFormat)
 	h.boolean(c.Sensitive)
+	for _, value := range c.UploadIDs {
+		h.uuid(value)
+	}
 	return h.sum()
 }
 func hashForward(c ForwardCommand) [32]byte {
