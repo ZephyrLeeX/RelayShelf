@@ -189,5 +189,3 @@ func apiSession(s Session, current bool) httpapi.Session {
 	}
 	return httpapi.Session{Id: s.ID, DeviceId: s.DeviceID, CreatedAt: s.CreatedAt.UTC(), LastSeenAt: s.LastSeenAt.UTC(), ExpiresAt: s.ExpiresAt.UTC(), AbsoluteExpiresAt: s.AbsoluteExpiresAt.UTC(), LastIp: ip, Current: current}
 }
-
-var _ httpapi.ServerInterface = (*Handler)(nil)

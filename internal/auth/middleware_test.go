@@ -107,6 +107,15 @@ func TestRequestActivityPipeline(t *testing.T) {
 
 	repo.touchCount, repo.authLookups = 0, 0
 	repo.auth = authn
+	if status := request(http.MethodPost, "/api/v1/messages", "https://example.test", "invalid"); status != http.StatusForbidden {
+		t.Fatalf("Phase 3 unsafe route bypassed CSRF: status=%d", status)
+	}
+	if repo.touchCount != 0 || repo.authLookups != 1 {
+		t.Fatalf("Phase 3 rejection touches=%d lookups=%d", repo.touchCount, repo.authLookups)
+	}
+
+	repo.touchCount, repo.authLookups = 0, 0
+	repo.auth = authn
 	if status := request(http.MethodGet, "/api/v1/auth/session", "", ""); status != http.StatusOK {
 		t.Fatalf("safe interactive GET status=%d", status)
 	}

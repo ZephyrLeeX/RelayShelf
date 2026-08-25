@@ -10,11 +10,14 @@ import (
 	"time"
 
 	"github.com/ZephyrLeeX/RelayShelf/internal/auth"
+	"github.com/ZephyrLeeX/RelayShelf/internal/httpapi"
+	"github.com/ZephyrLeeX/RelayShelf/internal/messages"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/clock"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/config"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/database"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/httpx"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/id"
+	"github.com/ZephyrLeeX/RelayShelf/internal/tags"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -22,6 +25,17 @@ import (
 type healthResponse struct {
 	Status string `json:"status"`
 }
+
+type authEndpoints struct{ *auth.Handler }
+type messageEndpoints struct{ *messages.Handler }
+type tagEndpoints struct{ *tags.Handler }
+type apiHandler struct {
+	*authEndpoints
+	*messageEndpoints
+	*tagEndpoints
+}
+
+var _ httpapi.ServerInterface = (*apiHandler)(nil)
 
 func health(status int) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
@@ -103,7 +117,19 @@ func main() {
 		cookies := auth.NewCookiePolicy(cfg.PublicOrigin)
 		authMiddleware := auth.NewMiddleware(authService, cookies, csrf, cfg.PublicOrigin, httpx.NewResolver(cfg.TrustedProxies))
 		authHandler := auth.NewHandler(authService, csrf, cookies)
-		router := newHTTPRouter(authMiddleware.Host, auth.Router(authHandler, authMiddleware), health(http.StatusOK), ready(db))
+		bodyCipher, cipherErr := messages.NewAESGCMCipher(cfg.AppEncryptionKey.Bytes())
+		if cipherErr != nil {
+			log.Printf("message encryption unavailable")
+			os.Exit(1)
+		}
+		messageRepo := messages.NewPostgreSQLRepository(db)
+		messageService := messages.NewService(messageRepo, id.UUIDv7{}, now, bodyCipher)
+		messageHandler := messages.NewHandler(messageService)
+		tagRepo := tags.NewPostgreSQLRepository(db)
+		tagService := tags.NewService(tagRepo, id.UUIDv7{}, now)
+		tagHandler := tags.NewHandler(tagService)
+		handler := &apiHandler{authEndpoints: &authEndpoints{authHandler}, messageEndpoints: &messageEndpoints{messageHandler}, tagEndpoints: &tagEndpoints{tagHandler}}
+		router := newHTTPRouter(authMiddleware.Host, auth.Router(handler, authMiddleware), health(http.StatusOK), ready(db))
 
 		address := os.Getenv("LISTEN_ADDR")
 		if address == "" {

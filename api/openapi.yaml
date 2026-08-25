@@ -1,7 +1,7 @@
 openapi: 3.1.1
 info:
   title: RelayShelf API
-  version: 0.2.0
+  version: 0.3.0
   description: HTTP contract authority for RelayShelf.
 servers:
   - url: /api/v1
@@ -109,6 +109,154 @@ paths:
         '403': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
         '422': { $ref: '#/components/responses/Error' }
+  /messages:
+    post:
+      operationId: createMessage
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateMessageRequest' } } } }
+      responses:
+        '201': { description: Created message, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+    get:
+      operationId: listMessages
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { name: lifecycle, in: query, schema: { $ref: '#/components/schemas/Lifecycle' } }
+        - { name: favorite, in: query, schema: { type: boolean } }
+        - { name: tagId, in: query, schema: { type: array, items: { type: string, format: uuid } }, style: form, explode: true }
+        - { $ref: '#/components/parameters/Cursor' }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        '200': { description: Active messages, content: { application/json: { schema: { $ref: '#/components/schemas/MessageList' } } } }
+        '422': { $ref: '#/components/responses/Error' }
+  /messages/direct-send:
+    post:
+      operationId: directSendMessage
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/DirectSendRequest' } } } }
+      responses:
+        '201': { description: Recipient message, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /messages/{messageId}:
+    parameters: [{ $ref: '#/components/parameters/MessageId' }]
+    get:
+      operationId: getMessage
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200': { description: Message detail, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+    patch:
+      operationId: editMessage
+      security: [{ cookieAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/EditMessageRequest' } } } }
+      responses:
+        '200': { description: Updated message, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /messages/{messageId}/tags:
+    put:
+      operationId: replaceMessageTags
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/MessageId' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ReplaceMessageTagsRequest' } } } }
+      responses:
+        '200': { description: Updated message, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /messages/{messageId}/make-permanent:
+    post:
+      operationId: makeMessagePermanent
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/MessageId' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/VersionRequest' } } } }
+      responses: { '200': { description: Permanent message, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }, '404': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' } }
+  /messages/{messageId}/favorite:
+    post:
+      operationId: setMessageFavorite
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/MessageId' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/FavoriteRequest' } } } }
+      responses: { '200': { description: Updated message, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }, '404': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' }, '422': { $ref: '#/components/responses/Error' } }
+  /messages/{messageId}/trash:
+    post:
+      operationId: trashMessage
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/MessageId' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/VersionRequest' } } } }
+      responses: { '200': { description: Trashed message, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }, '404': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' } }
+  /messages/{messageId}/sensitive:
+    post:
+      operationId: setMessageSensitive
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/MessageId' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SensitiveRequest' } } } }
+      responses: { '200': { description: Updated message metadata, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }, '404': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' } }
+  /messages/{messageId}/sensitive-body:
+    parameters: [{ $ref: '#/components/parameters/MessageId' }]
+    get:
+      operationId: revealSensitiveBody
+      security: [{ cookieAuth: [] }]
+      responses: { '200': { description: Sensitive plaintext, headers: { Cache-Control: { schema: { type: string } } }, content: { application/json: { schema: { $ref: '#/components/schemas/SensitiveBody' } } } }, '404': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' } }
+    put:
+      operationId: editSensitiveBody
+      security: [{ cookieAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/EditSensitiveBodyRequest' } } } }
+      responses: { '200': { description: Updated safe metadata, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }, '404': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' }, '422': { $ref: '#/components/responses/Error' } }
+  /messages/{messageId}/forward:
+    post:
+      operationId: forwardMessage
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/MessageId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ForwardRequest' } } } }
+      responses: { '201': { description: Recipient message, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }, '404': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' }, '422': { $ref: '#/components/responses/Error' } }
+  /trash:
+    get:
+      operationId: listTrash
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }]
+      responses: { '200': { description: Trashed messages, content: { application/json: { schema: { $ref: '#/components/schemas/MessageList' } } } }, '422': { $ref: '#/components/responses/Error' } }
+  /trash/{messageId}/restore:
+    post:
+      operationId: restoreMessage
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/MessageId' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/VersionRequest' } } } }
+      responses: { '200': { description: Restored message, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }, '404': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' } }
+  /trash/{messageId}:
+    delete:
+      operationId: permanentlyDeleteMessage
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/MessageId' }]
+      responses: { '204': { description: Permanently deleted }, '404': { $ref: '#/components/responses/Error' } }
+  /tags:
+    get:
+      operationId: listTags
+      security: [{ cookieAuth: [] }]
+      responses: { '200': { description: User tags, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Tag' } } } } } }
+    post:
+      operationId: createTag
+      security: [{ cookieAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/TagRequest' } } } }
+      responses: { '201': { description: Created tag, content: { application/json: { schema: { $ref: '#/components/schemas/Tag' } } } }, '409': { $ref: '#/components/responses/Error' }, '422': { $ref: '#/components/responses/Error' } }
+  /tags/{tagId}:
+    parameters: [{ $ref: '#/components/parameters/TagId' }]
+    patch:
+      operationId: updateTag
+      security: [{ cookieAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/UpdateTagRequest' } } } }
+      responses: { '200': { description: Updated tag, content: { application/json: { schema: { $ref: '#/components/schemas/Tag' } } } }, '404': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' }, '422': { $ref: '#/components/responses/Error' } }
+    delete:
+      operationId: deleteTag
+      security: [{ cookieAuth: [] }]
+      responses: { '204': { description: Deleted tag }, '404': { $ref: '#/components/responses/Error' } }
 components:
   securitySchemes:
     cookieAuth: { type: apiKey, in: cookie, name: __Host-session }
@@ -123,6 +271,29 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    MessageId:
+      name: messageId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    TagId:
+      name: tagId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128, pattern: '^[\x20-\x7E]+$' }
+    Cursor:
+      name: cursor
+      in: query
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 30 }
   responses:
     Error:
       description: API error
@@ -186,6 +357,129 @@ components:
         device: { $ref: '#/components/schemas/Device' }
         session: { $ref: '#/components/schemas/Session' }
         csrfToken: { type: string }
+    BodyFormat:
+      type: string
+      enum: [TEXT, MARKDOWN]
+    Lifecycle:
+      type: string
+      enum: [TEMPORARY, PERMANENT]
+    CreateMessageRequest:
+      type: object
+      additionalProperties: false
+      required: [body]
+      properties:
+        body: { type: string, minLength: 1, maxLength: 1048576 }
+        bodyFormat: { $ref: '#/components/schemas/BodyFormat', default: TEXT }
+        lifecycle: { $ref: '#/components/schemas/Lifecycle', default: TEMPORARY }
+        sensitive: { type: boolean, default: false }
+        tagIds: { type: array, items: { type: string, format: uuid }, uniqueItems: true, default: [] }
+    EditMessageRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion]
+      properties:
+        expectedVersion: { type: integer, format: int64, minimum: 1 }
+        body: { type: string, minLength: 1, maxLength: 1048576 }
+        bodyFormat: { $ref: '#/components/schemas/BodyFormat' }
+        detectedType: { type: [string, 'null'], maxLength: 64 }
+        detectedLanguage: { type: [string, 'null'], maxLength: 64 }
+    VersionRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion]
+      properties: { expectedVersion: { type: integer, format: int64, minimum: 1 } }
+    FavoriteRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion, favorite]
+      properties: { expectedVersion: { type: integer, format: int64, minimum: 1 }, favorite: { type: boolean } }
+    SensitiveRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion, sensitive]
+      properties: { expectedVersion: { type: integer, format: int64, minimum: 1 }, sensitive: { type: boolean } }
+    ReplaceMessageTagsRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion, tagIds]
+      properties: { expectedVersion: { type: integer, format: int64, minimum: 1 }, tagIds: { type: array, items: { type: string, format: uuid }, uniqueItems: true } }
+    EditSensitiveBodyRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion, body]
+      properties: { expectedVersion: { type: integer, format: int64, minimum: 1 }, body: { type: string, minLength: 1, maxLength: 1048576 } }
+    DirectSendRequest:
+      type: object
+      additionalProperties: false
+      required: [recipientUserId, body]
+      properties:
+        recipientUserId: { type: string, format: uuid }
+        body: { type: string, minLength: 1, maxLength: 1048576 }
+        bodyFormat: { $ref: '#/components/schemas/BodyFormat', default: TEXT }
+        sensitive: { type: boolean, default: false }
+    ForwardRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion, recipientUserId]
+      properties: { expectedVersion: { type: integer, format: int64, minimum: 1 }, recipientUserId: { type: string, format: uuid } }
+    TagRequest:
+      type: object
+      additionalProperties: false
+      required: [name, color]
+      properties: { name: { type: string, minLength: 1, maxLength: 64 }, color: { type: string, pattern: '^#[0-9A-Fa-f]{6}$' } }
+    UpdateTagRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties: { name: { type: string, minLength: 1, maxLength: 64 }, color: { type: string, pattern: '^#[0-9A-Fa-f]{6}$' } }
+    Tag:
+      type: object
+      required: [id, name, color, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        color: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    Message:
+      type: object
+      required: [id, body, bodyFormat, sensitive, lifecycle, favorite, version, createdAt, updatedAt, tags]
+      properties:
+        id: { type: string, format: uuid }
+        body: { type: [string, 'null'] }
+        bodyFormat: { $ref: '#/components/schemas/BodyFormat' }
+        detectedType: { type: [string, 'null'] }
+        detectedLanguage: { type: [string, 'null'] }
+        sensitive: { type: boolean }
+        lifecycle: { $ref: '#/components/schemas/Lifecycle' }
+        favorite: { type: boolean }
+        expiresAt: { type: [string, 'null'], format: date-time }
+        trashedAt: { type: [string, 'null'], format: date-time }
+        purgeAt: { type: [string, 'null'], format: date-time }
+        sourceUserId: { type: [string, 'null'], format: uuid }
+        sourceMessageId: { type: [string, 'null'], format: uuid }
+        version: { type: integer, format: int64 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        tags: { type: array, items: { $ref: '#/components/schemas/Tag' } }
+    MessageSummary:
+      allOf:
+        - { $ref: '#/components/schemas/Message' }
+        - type: object
+          required: [bodyPreview, bodyTruncated]
+          properties:
+            bodyPreview: { type: [string, 'null'] }
+            bodyTruncated: { type: boolean }
+    MessageList:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/MessageSummary' } }
+        nextCursor: { type: [string, 'null'] }
+    SensitiveBody:
+      type: object
+      required: [body, version]
+      properties: { body: { type: string }, version: { type: integer, format: int64 } }
     Error:
       type: object
       required: [code, message, traceId, details]

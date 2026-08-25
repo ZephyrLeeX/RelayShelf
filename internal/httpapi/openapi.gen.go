@@ -4,6 +4,7 @@
 package httpapi
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -13,12 +14,60 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for BodyFormat.
+const (
+	MARKDOWN BodyFormat = "MARKDOWN"
+	TEXT     BodyFormat = "TEXT"
+)
+
+// Valid indicates whether the value is a known member of the BodyFormat enum.
+func (e BodyFormat) Valid() bool {
+	switch e {
+	case MARKDOWN:
+		return true
+	case TEXT:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for Lifecycle.
+const (
+	PERMANENT Lifecycle = "PERMANENT"
+	TEMPORARY Lifecycle = "TEMPORARY"
+)
+
+// Valid indicates whether the value is a known member of the Lifecycle enum.
+func (e Lifecycle) Valid() bool {
+	switch e {
+	case PERMANENT:
+		return true
+	case TEMPORARY:
+		return true
+	default:
+		return false
+	}
+}
+
 // AuthBootstrap defines model for AuthBootstrap.
 type AuthBootstrap struct {
 	CsrfToken string  `json:"csrfToken"`
 	Device    Device  `json:"device"`
 	Session   Session `json:"session"`
 	User      User    `json:"user"`
+}
+
+// BodyFormat defines model for BodyFormat.
+type BodyFormat string
+
+// CreateMessageRequest defines model for CreateMessageRequest.
+type CreateMessageRequest struct {
+	Body       string                `json:"body"`
+	BodyFormat *BodyFormat           `json:"bodyFormat,omitempty"`
+	Lifecycle  *Lifecycle            `json:"lifecycle,omitempty"`
+	Sensitive  *bool                 `json:"sensitive,omitempty"`
+	TagIds     *[]openapi_types.UUID `json:"tagIds,omitempty"`
 }
 
 // Device defines model for Device.
@@ -30,6 +79,29 @@ type Device struct {
 	UserAgent   string             `json:"userAgent"`
 }
 
+// DirectSendRequest defines model for DirectSendRequest.
+type DirectSendRequest struct {
+	Body            string             `json:"body"`
+	BodyFormat      *BodyFormat        `json:"bodyFormat,omitempty"`
+	RecipientUserId openapi_types.UUID `json:"recipientUserId"`
+	Sensitive       *bool              `json:"sensitive,omitempty"`
+}
+
+// EditMessageRequest defines model for EditMessageRequest.
+type EditMessageRequest struct {
+	Body             *string     `json:"body,omitempty"`
+	BodyFormat       *BodyFormat `json:"bodyFormat,omitempty"`
+	DetectedLanguage *string     `json:"detectedLanguage,omitempty"`
+	DetectedType     *string     `json:"detectedType,omitempty"`
+	ExpectedVersion  int64       `json:"expectedVersion"`
+}
+
+// EditSensitiveBodyRequest defines model for EditSensitiveBodyRequest.
+type EditSensitiveBodyRequest struct {
+	Body            string `json:"body"`
+	ExpectedVersion int64  `json:"expectedVersion"`
+}
+
 // Error defines model for Error.
 type Error struct {
 	Code    string      `json:"code"`
@@ -38,12 +110,77 @@ type Error struct {
 	TraceId string      `json:"traceId"`
 }
 
+// FavoriteRequest defines model for FavoriteRequest.
+type FavoriteRequest struct {
+	ExpectedVersion int64 `json:"expectedVersion"`
+	Favorite        bool  `json:"favorite"`
+}
+
+// ForwardRequest defines model for ForwardRequest.
+type ForwardRequest struct {
+	ExpectedVersion int64              `json:"expectedVersion"`
+	RecipientUserId openapi_types.UUID `json:"recipientUserId"`
+}
+
+// Lifecycle defines model for Lifecycle.
+type Lifecycle string
+
 // LoginRequest defines model for LoginRequest.
 type LoginRequest struct {
 	DeviceId   *openapi_types.UUID `json:"deviceId,omitempty"`
 	DeviceName *string             `json:"deviceName,omitempty"`
 	Password   string              `json:"password"`
 	Username   string              `json:"username"`
+}
+
+// Message defines model for Message.
+type Message struct {
+	Body             *string             `json:"body"`
+	BodyFormat       BodyFormat          `json:"bodyFormat"`
+	CreatedAt        time.Time           `json:"createdAt"`
+	DetectedLanguage *string             `json:"detectedLanguage,omitempty"`
+	DetectedType     *string             `json:"detectedType,omitempty"`
+	ExpiresAt        *time.Time          `json:"expiresAt,omitempty"`
+	Favorite         bool                `json:"favorite"`
+	Id               openapi_types.UUID  `json:"id"`
+	Lifecycle        Lifecycle           `json:"lifecycle"`
+	PurgeAt          *time.Time          `json:"purgeAt,omitempty"`
+	Sensitive        bool                `json:"sensitive"`
+	SourceMessageId  *openapi_types.UUID `json:"sourceMessageId,omitempty"`
+	SourceUserId     *openapi_types.UUID `json:"sourceUserId,omitempty"`
+	Tags             []Tag               `json:"tags"`
+	TrashedAt        *time.Time          `json:"trashedAt,omitempty"`
+	UpdatedAt        time.Time           `json:"updatedAt"`
+	Version          int64               `json:"version"`
+}
+
+// MessageList defines model for MessageList.
+type MessageList struct {
+	Items      []MessageSummary `json:"items"`
+	NextCursor *string          `json:"nextCursor"`
+}
+
+// MessageSummary defines model for MessageSummary.
+type MessageSummary struct {
+	Body             *string             `json:"body"`
+	BodyFormat       BodyFormat          `json:"bodyFormat"`
+	BodyPreview      *string             `json:"bodyPreview"`
+	BodyTruncated    bool                `json:"bodyTruncated"`
+	CreatedAt        time.Time           `json:"createdAt"`
+	DetectedLanguage *string             `json:"detectedLanguage,omitempty"`
+	DetectedType     *string             `json:"detectedType,omitempty"`
+	ExpiresAt        *time.Time          `json:"expiresAt,omitempty"`
+	Favorite         bool                `json:"favorite"`
+	Id               openapi_types.UUID  `json:"id"`
+	Lifecycle        Lifecycle           `json:"lifecycle"`
+	PurgeAt          *time.Time          `json:"purgeAt,omitempty"`
+	Sensitive        bool                `json:"sensitive"`
+	SourceMessageId  *openapi_types.UUID `json:"sourceMessageId,omitempty"`
+	SourceUserId     *openapi_types.UUID `json:"sourceUserId,omitempty"`
+	Tags             []Tag               `json:"tags"`
+	TrashedAt        *time.Time          `json:"trashedAt,omitempty"`
+	UpdatedAt        time.Time           `json:"updatedAt"`
+	Version          int64               `json:"version"`
 }
 
 // PasswordChangeRequest defines model for PasswordChangeRequest.
@@ -55,6 +192,24 @@ type PasswordChangeRequest struct {
 // RenameDeviceRequest defines model for RenameDeviceRequest.
 type RenameDeviceRequest struct {
 	Name string `json:"name"`
+}
+
+// ReplaceMessageTagsRequest defines model for ReplaceMessageTagsRequest.
+type ReplaceMessageTagsRequest struct {
+	ExpectedVersion int64                `json:"expectedVersion"`
+	TagIds          []openapi_types.UUID `json:"tagIds"`
+}
+
+// SensitiveBody defines model for SensitiveBody.
+type SensitiveBody struct {
+	Body    string `json:"body"`
+	Version int64  `json:"version"`
+}
+
+// SensitiveRequest defines model for SensitiveRequest.
+type SensitiveRequest struct {
+	ExpectedVersion int64 `json:"expectedVersion"`
+	Sensitive       bool  `json:"sensitive"`
 }
 
 // Session defines model for Session.
@@ -69,6 +224,27 @@ type Session struct {
 	LastSeenAt        time.Time          `json:"lastSeenAt"`
 }
 
+// Tag defines model for Tag.
+type Tag struct {
+	Color     string             `json:"color"`
+	CreatedAt time.Time          `json:"createdAt"`
+	Id        openapi_types.UUID `json:"id"`
+	Name      string             `json:"name"`
+	UpdatedAt time.Time          `json:"updatedAt"`
+}
+
+// TagRequest defines model for TagRequest.
+type TagRequest struct {
+	Color string `json:"color"`
+	Name  string `json:"name"`
+}
+
+// UpdateTagRequest defines model for UpdateTagRequest.
+type UpdateTagRequest struct {
+	Color *string `json:"color,omitempty"`
+	Name  *string `json:"name,omitempty"`
+}
+
 // User defines model for User.
 type User struct {
 	DisplayName string             `json:"displayName"`
@@ -77,11 +253,61 @@ type User struct {
 	Username    string             `json:"username"`
 }
 
+// VersionRequest defines model for VersionRequest.
+type VersionRequest struct {
+	ExpectedVersion int64 `json:"expectedVersion"`
+}
+
+// Cursor defines model for Cursor.
+type Cursor = string
+
 // DeviceId defines model for DeviceId.
 type DeviceId = openapi_types.UUID
 
+// IdempotencyKey defines model for IdempotencyKey.
+type IdempotencyKey = string
+
+// Limit defines model for Limit.
+type Limit = int
+
+// MessageId defines model for MessageId.
+type MessageId = openapi_types.UUID
+
 // SessionId defines model for SessionId.
 type SessionId = openapi_types.UUID
+
+// TagId defines model for TagId.
+type TagId = openapi_types.UUID
+
+// ListMessagesParams defines parameters for ListMessages.
+type ListMessagesParams struct {
+	Lifecycle *Lifecycle            `form:"lifecycle,omitempty" json:"lifecycle,omitempty"`
+	Favorite  *bool                 `form:"favorite,omitempty" json:"favorite,omitempty"`
+	TagId     *[]openapi_types.UUID `form:"tagId,omitempty" json:"tagId,omitempty"`
+	Cursor    *Cursor               `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit     *Limit                `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// CreateMessageParams defines parameters for CreateMessage.
+type CreateMessageParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
+// DirectSendMessageParams defines parameters for DirectSendMessage.
+type DirectSendMessageParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
+// ForwardMessageParams defines parameters for ForwardMessage.
+type ForwardMessageParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
+// ListTrashParams defines parameters for ListTrash.
+type ListTrashParams struct {
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
+}
 
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody = LoginRequest
@@ -91,6 +317,45 @@ type ChangePasswordJSONRequestBody = PasswordChangeRequest
 
 // RenameDeviceJSONRequestBody defines body for RenameDevice for application/json ContentType.
 type RenameDeviceJSONRequestBody = RenameDeviceRequest
+
+// CreateMessageJSONRequestBody defines body for CreateMessage for application/json ContentType.
+type CreateMessageJSONRequestBody = CreateMessageRequest
+
+// DirectSendMessageJSONRequestBody defines body for DirectSendMessage for application/json ContentType.
+type DirectSendMessageJSONRequestBody = DirectSendRequest
+
+// EditMessageJSONRequestBody defines body for EditMessage for application/json ContentType.
+type EditMessageJSONRequestBody = EditMessageRequest
+
+// SetMessageFavoriteJSONRequestBody defines body for SetMessageFavorite for application/json ContentType.
+type SetMessageFavoriteJSONRequestBody = FavoriteRequest
+
+// ForwardMessageJSONRequestBody defines body for ForwardMessage for application/json ContentType.
+type ForwardMessageJSONRequestBody = ForwardRequest
+
+// MakeMessagePermanentJSONRequestBody defines body for MakeMessagePermanent for application/json ContentType.
+type MakeMessagePermanentJSONRequestBody = VersionRequest
+
+// SetMessageSensitiveJSONRequestBody defines body for SetMessageSensitive for application/json ContentType.
+type SetMessageSensitiveJSONRequestBody = SensitiveRequest
+
+// EditSensitiveBodyJSONRequestBody defines body for EditSensitiveBody for application/json ContentType.
+type EditSensitiveBodyJSONRequestBody = EditSensitiveBodyRequest
+
+// ReplaceMessageTagsJSONRequestBody defines body for ReplaceMessageTags for application/json ContentType.
+type ReplaceMessageTagsJSONRequestBody = ReplaceMessageTagsRequest
+
+// TrashMessageJSONRequestBody defines body for TrashMessage for application/json ContentType.
+type TrashMessageJSONRequestBody = VersionRequest
+
+// CreateTagJSONRequestBody defines body for CreateTag for application/json ContentType.
+type CreateTagJSONRequestBody = TagRequest
+
+// UpdateTagJSONRequestBody defines body for UpdateTag for application/json ContentType.
+type UpdateTagJSONRequestBody = UpdateTagRequest
+
+// RestoreMessageJSONRequestBody defines body for RestoreMessage for application/json ContentType.
+type RestoreMessageJSONRequestBody = VersionRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
@@ -113,11 +378,71 @@ type ServerInterface interface {
 	// (PATCH /devices/{deviceId})
 	RenameDevice(w http.ResponseWriter, r *http.Request, deviceId DeviceId)
 
+	// (GET /messages)
+	ListMessages(w http.ResponseWriter, r *http.Request, params ListMessagesParams)
+
+	// (POST /messages)
+	CreateMessage(w http.ResponseWriter, r *http.Request, params CreateMessageParams)
+
+	// (POST /messages/direct-send)
+	DirectSendMessage(w http.ResponseWriter, r *http.Request, params DirectSendMessageParams)
+
+	// (GET /messages/{messageId})
+	GetMessage(w http.ResponseWriter, r *http.Request, messageId MessageId)
+
+	// (PATCH /messages/{messageId})
+	EditMessage(w http.ResponseWriter, r *http.Request, messageId MessageId)
+
+	// (POST /messages/{messageId}/favorite)
+	SetMessageFavorite(w http.ResponseWriter, r *http.Request, messageId MessageId)
+
+	// (POST /messages/{messageId}/forward)
+	ForwardMessage(w http.ResponseWriter, r *http.Request, messageId MessageId, params ForwardMessageParams)
+
+	// (POST /messages/{messageId}/make-permanent)
+	MakeMessagePermanent(w http.ResponseWriter, r *http.Request, messageId MessageId)
+
+	// (POST /messages/{messageId}/sensitive)
+	SetMessageSensitive(w http.ResponseWriter, r *http.Request, messageId MessageId)
+
+	// (GET /messages/{messageId}/sensitive-body)
+	RevealSensitiveBody(w http.ResponseWriter, r *http.Request, messageId MessageId)
+
+	// (PUT /messages/{messageId}/sensitive-body)
+	EditSensitiveBody(w http.ResponseWriter, r *http.Request, messageId MessageId)
+
+	// (PUT /messages/{messageId}/tags)
+	ReplaceMessageTags(w http.ResponseWriter, r *http.Request, messageId MessageId)
+
+	// (POST /messages/{messageId}/trash)
+	TrashMessage(w http.ResponseWriter, r *http.Request, messageId MessageId)
+
 	// (GET /sessions)
 	ListSessions(w http.ResponseWriter, r *http.Request)
 
 	// (DELETE /sessions/{sessionId})
 	RevokeSession(w http.ResponseWriter, r *http.Request, sessionId SessionId)
+
+	// (GET /tags)
+	ListTags(w http.ResponseWriter, r *http.Request)
+
+	// (POST /tags)
+	CreateTag(w http.ResponseWriter, r *http.Request)
+
+	// (DELETE /tags/{tagId})
+	DeleteTag(w http.ResponseWriter, r *http.Request, tagId TagId)
+
+	// (PATCH /tags/{tagId})
+	UpdateTag(w http.ResponseWriter, r *http.Request, tagId TagId)
+
+	// (GET /trash)
+	ListTrash(w http.ResponseWriter, r *http.Request, params ListTrashParams)
+
+	// (DELETE /trash/{messageId})
+	PermanentlyDeleteMessage(w http.ResponseWriter, r *http.Request, messageId MessageId)
+
+	// (POST /trash/{messageId}/restore)
+	RestoreMessage(w http.ResponseWriter, r *http.Request, messageId MessageId)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
@@ -154,6 +479,71 @@ func (_ Unimplemented) RenameDevice(w http.ResponseWriter, r *http.Request, devi
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// (GET /messages)
+func (_ Unimplemented) ListMessages(w http.ResponseWriter, r *http.Request, params ListMessagesParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /messages)
+func (_ Unimplemented) CreateMessage(w http.ResponseWriter, r *http.Request, params CreateMessageParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /messages/direct-send)
+func (_ Unimplemented) DirectSendMessage(w http.ResponseWriter, r *http.Request, params DirectSendMessageParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /messages/{messageId})
+func (_ Unimplemented) GetMessage(w http.ResponseWriter, r *http.Request, messageId MessageId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PATCH /messages/{messageId})
+func (_ Unimplemented) EditMessage(w http.ResponseWriter, r *http.Request, messageId MessageId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /messages/{messageId}/favorite)
+func (_ Unimplemented) SetMessageFavorite(w http.ResponseWriter, r *http.Request, messageId MessageId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /messages/{messageId}/forward)
+func (_ Unimplemented) ForwardMessage(w http.ResponseWriter, r *http.Request, messageId MessageId, params ForwardMessageParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /messages/{messageId}/make-permanent)
+func (_ Unimplemented) MakeMessagePermanent(w http.ResponseWriter, r *http.Request, messageId MessageId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /messages/{messageId}/sensitive)
+func (_ Unimplemented) SetMessageSensitive(w http.ResponseWriter, r *http.Request, messageId MessageId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /messages/{messageId}/sensitive-body)
+func (_ Unimplemented) RevealSensitiveBody(w http.ResponseWriter, r *http.Request, messageId MessageId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PUT /messages/{messageId}/sensitive-body)
+func (_ Unimplemented) EditSensitiveBody(w http.ResponseWriter, r *http.Request, messageId MessageId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PUT /messages/{messageId}/tags)
+func (_ Unimplemented) ReplaceMessageTags(w http.ResponseWriter, r *http.Request, messageId MessageId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /messages/{messageId}/trash)
+func (_ Unimplemented) TrashMessage(w http.ResponseWriter, r *http.Request, messageId MessageId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // (GET /sessions)
 func (_ Unimplemented) ListSessions(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -161,6 +551,41 @@ func (_ Unimplemented) ListSessions(w http.ResponseWriter, r *http.Request) {
 
 // (DELETE /sessions/{sessionId})
 func (_ Unimplemented) RevokeSession(w http.ResponseWriter, r *http.Request, sessionId SessionId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /tags)
+func (_ Unimplemented) ListTags(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /tags)
+func (_ Unimplemented) CreateTag(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (DELETE /tags/{tagId})
+func (_ Unimplemented) DeleteTag(w http.ResponseWriter, r *http.Request, tagId TagId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PATCH /tags/{tagId})
+func (_ Unimplemented) UpdateTag(w http.ResponseWriter, r *http.Request, tagId TagId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /trash)
+func (_ Unimplemented) ListTrash(w http.ResponseWriter, r *http.Request, params ListTrashParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (DELETE /trash/{messageId})
+func (_ Unimplemented) PermanentlyDeleteMessage(w http.ResponseWriter, r *http.Request, messageId MessageId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /trash/{messageId}/restore)
+func (_ Unimplemented) RestoreMessage(w http.ResponseWriter, r *http.Request, messageId MessageId) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -269,6 +694,469 @@ func (siw *ServerInterfaceWrapper) RenameDevice(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// ListMessages operation middleware
+func (siw *ServerInterfaceWrapper) ListMessages(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListMessagesParams
+
+	// ------------- Optional query parameter "lifecycle" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "lifecycle", r.URL.Query(), &params.Lifecycle, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "lifecycle"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "lifecycle", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "favorite" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "favorite", r.URL.Query(), &params.Favorite, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "favorite"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "favorite", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "tagId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "tagId", r.URL.Query(), &params.TagId, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "tagId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tagId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListMessages(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateMessage operation middleware
+func (siw *ServerInterfaceWrapper) CreateMessage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateMessageParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("Header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateMessage(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DirectSendMessage operation middleware
+func (siw *ServerInterfaceWrapper) DirectSendMessage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DirectSendMessageParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("Header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DirectSendMessage(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMessage operation middleware
+func (siw *ServerInterfaceWrapper) GetMessage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "messageId" -------------
+	var messageId MessageId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "messageId", chi.URLParam(r, "messageId"), &messageId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "messageId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMessage(w, r, messageId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// EditMessage operation middleware
+func (siw *ServerInterfaceWrapper) EditMessage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "messageId" -------------
+	var messageId MessageId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "messageId", chi.URLParam(r, "messageId"), &messageId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "messageId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.EditMessage(w, r, messageId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetMessageFavorite operation middleware
+func (siw *ServerInterfaceWrapper) SetMessageFavorite(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "messageId" -------------
+	var messageId MessageId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "messageId", chi.URLParam(r, "messageId"), &messageId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "messageId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetMessageFavorite(w, r, messageId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ForwardMessage operation middleware
+func (siw *ServerInterfaceWrapper) ForwardMessage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "messageId" -------------
+	var messageId MessageId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "messageId", chi.URLParam(r, "messageId"), &messageId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "messageId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ForwardMessageParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("Header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ForwardMessage(w, r, messageId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// MakeMessagePermanent operation middleware
+func (siw *ServerInterfaceWrapper) MakeMessagePermanent(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "messageId" -------------
+	var messageId MessageId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "messageId", chi.URLParam(r, "messageId"), &messageId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "messageId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.MakeMessagePermanent(w, r, messageId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetMessageSensitive operation middleware
+func (siw *ServerInterfaceWrapper) SetMessageSensitive(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "messageId" -------------
+	var messageId MessageId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "messageId", chi.URLParam(r, "messageId"), &messageId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "messageId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetMessageSensitive(w, r, messageId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevealSensitiveBody operation middleware
+func (siw *ServerInterfaceWrapper) RevealSensitiveBody(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "messageId" -------------
+	var messageId MessageId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "messageId", chi.URLParam(r, "messageId"), &messageId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "messageId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevealSensitiveBody(w, r, messageId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// EditSensitiveBody operation middleware
+func (siw *ServerInterfaceWrapper) EditSensitiveBody(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "messageId" -------------
+	var messageId MessageId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "messageId", chi.URLParam(r, "messageId"), &messageId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "messageId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.EditSensitiveBody(w, r, messageId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReplaceMessageTags operation middleware
+func (siw *ServerInterfaceWrapper) ReplaceMessageTags(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "messageId" -------------
+	var messageId MessageId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "messageId", chi.URLParam(r, "messageId"), &messageId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "messageId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReplaceMessageTags(w, r, messageId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// TrashMessage operation middleware
+func (siw *ServerInterfaceWrapper) TrashMessage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "messageId" -------------
+	var messageId MessageId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "messageId", chi.URLParam(r, "messageId"), &messageId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "messageId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.TrashMessage(w, r, messageId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListSessions operation middleware
 func (siw *ServerInterfaceWrapper) ListSessions(w http.ResponseWriter, r *http.Request) {
 
@@ -300,6 +1188,184 @@ func (siw *ServerInterfaceWrapper) RevokeSession(w http.ResponseWriter, r *http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RevokeSession(w, r, sessionId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListTags operation middleware
+func (siw *ServerInterfaceWrapper) ListTags(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListTags(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateTag operation middleware
+func (siw *ServerInterfaceWrapper) CreateTag(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateTag(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteTag operation middleware
+func (siw *ServerInterfaceWrapper) DeleteTag(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "tagId" -------------
+	var tagId TagId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "tagId", chi.URLParam(r, "tagId"), &tagId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tagId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteTag(w, r, tagId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateTag operation middleware
+func (siw *ServerInterfaceWrapper) UpdateTag(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "tagId" -------------
+	var tagId TagId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "tagId", chi.URLParam(r, "tagId"), &tagId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tagId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateTag(w, r, tagId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListTrash operation middleware
+func (siw *ServerInterfaceWrapper) ListTrash(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListTrashParams
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListTrash(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PermanentlyDeleteMessage operation middleware
+func (siw *ServerInterfaceWrapper) PermanentlyDeleteMessage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "messageId" -------------
+	var messageId MessageId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "messageId", chi.URLParam(r, "messageId"), &messageId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "messageId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PermanentlyDeleteMessage(w, r, messageId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RestoreMessage operation middleware
+func (siw *ServerInterfaceWrapper) RestoreMessage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "messageId" -------------
+	var messageId MessageId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "messageId", chi.URLParam(r, "messageId"), &messageId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "messageId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RestoreMessage(w, r, messageId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -445,6 +1511,66 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Patch(options.BaseURL+"/devices/{deviceId}", wrapper.RenameDevice)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/messages", wrapper.ListMessages)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/messages", wrapper.CreateMessage)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/messages/direct-send", wrapper.DirectSendMessage)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/messages/{messageId}", wrapper.GetMessage)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/messages/{messageId}", wrapper.EditMessage)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/messages/{messageId}/tags", wrapper.ReplaceMessageTags)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/messages/{messageId}/make-permanent", wrapper.MakeMessagePermanent)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/messages/{messageId}/favorite", wrapper.SetMessageFavorite)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/messages/{messageId}/trash", wrapper.TrashMessage)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/messages/{messageId}/sensitive", wrapper.SetMessageSensitive)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/messages/{messageId}/sensitive-body", wrapper.RevealSensitiveBody)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/messages/{messageId}/sensitive-body", wrapper.EditSensitiveBody)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/messages/{messageId}/forward", wrapper.ForwardMessage)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/trash", wrapper.ListTrash)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/trash/{messageId}/restore", wrapper.RestoreMessage)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/trash/{messageId}", wrapper.PermanentlyDeleteMessage)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/tags", wrapper.ListTags)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/tags", wrapper.CreateTag)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/tags/{tagId}", wrapper.DeleteTag)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/tags/{tagId}", wrapper.UpdateTag)
 	})
 
 	return r

@@ -18,6 +18,13 @@ func FromContext(ctx context.Context) (AuthContext, bool) {
 	return value, ok
 }
 
+// ContextWithAuthentication is used by module routers and focused handler
+// tests to install an already verified authentication. It does not perform or
+// bypass authentication; callers must only pass a value verified by Middleware.
+func ContextWithAuthentication(ctx context.Context, authentication Authentication) context.Context {
+	return context.WithValue(ctx, authContextKey{}, AuthContext{Authentication: authentication})
+}
+
 type Middleware struct {
 	service  *Service
 	cookies  CookiePolicy

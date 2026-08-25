@@ -6,8 +6,12 @@ import (
 	"github.com/ZephyrLeeX/RelayShelf/internal/httpapi"
 )
 
-func Router(handler *Handler, middleware *Middleware) http.Handler {
-	api := httpapi.HandlerWithOptions(handler, httpapi.ChiServerOptions{BaseURL: "/api/v1", ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, _ error) {
+func Router(handler any, middleware *Middleware) http.Handler {
+	server, ok := handler.(httpapi.ServerInterface)
+	if !ok {
+		server = authServer{Handler: handler.(*Handler)}
+	}
+	api := httpapi.HandlerWithOptions(server, httpapi.ChiServerOptions{BaseURL: "/api/v1", ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, _ error) {
 		WriteError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "invalid request")
 	}})
 	safe := middleware.Authenticate(true)(api)
@@ -25,4 +29,29 @@ func Router(handler *Handler, middleware *Middleware) http.Handler {
 		unsafe.ServeHTTP(w, r)
 	})
 	return dispatch
+}
+
+// authServer keeps focused auth tests independent from later API modules.
+type authServer struct {
+	httpapi.Unimplemented
+	Handler *Handler
+}
+
+func (s authServer) Login(w http.ResponseWriter, r *http.Request)  { s.Handler.Login(w, r) }
+func (s authServer) Logout(w http.ResponseWriter, r *http.Request) { s.Handler.Logout(w, r) }
+func (s authServer) GetAuthSession(w http.ResponseWriter, r *http.Request) {
+	s.Handler.GetAuthSession(w, r)
+}
+func (s authServer) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	s.Handler.ChangePassword(w, r)
+}
+func (s authServer) ListSessions(w http.ResponseWriter, r *http.Request) {
+	s.Handler.ListSessions(w, r)
+}
+func (s authServer) RevokeSession(w http.ResponseWriter, r *http.Request, id httpapi.SessionId) {
+	s.Handler.RevokeSession(w, r, id)
+}
+func (s authServer) ListDevices(w http.ResponseWriter, r *http.Request) { s.Handler.ListDevices(w, r) }
+func (s authServer) RenameDevice(w http.ResponseWriter, r *http.Request, id httpapi.DeviceId) {
+	s.Handler.RenameDevice(w, r, id)
 }
