@@ -1,0 +1,6 @@
+package: httpapi
+generate:
+  chi-server: true
+  models: true
+output-options:
+  skip-prune: true
