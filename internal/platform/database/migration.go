@@ -114,20 +114,30 @@ func Migrate(ctx context.Context, db *pgxpool.Pool) error {
 		if m.Version <= current {
 			continue
 		}
-		tx, err := conn.Begin(ctx)
-		if err != nil {
+		if err := ApplyMigration(ctx, conn, m); err != nil {
 			return err
 		}
-		if _, err = tx.Exec(ctx, m.SQL); err == nil {
-			_, err = tx.Exec(ctx, "INSERT INTO schema_migrations (version) VALUES ($1)", m.Version)
-		}
-		if err != nil {
-			_ = tx.Rollback(ctx)
-			return fmt.Errorf("apply migration %s: %w", m.Name, err)
-		}
-		if err = tx.Commit(ctx); err != nil {
-			return fmt.Errorf("commit migration %s: %w", m.Name, err)
-		}
+	}
+	return nil
+}
+
+// ApplyMigration executes one migration and records its version atomically.
+// It is exposed within the repository's internal namespace so integration tests
+// can verify the rollback guarantee with deliberately invalid SQL.
+func ApplyMigration(ctx context.Context, conn *pgxpool.Conn, m Migration) error {
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, m.SQL); err == nil {
+		_, err = tx.Exec(ctx, "INSERT INTO schema_migrations (version) VALUES ($1)", m.Version)
+	}
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		return fmt.Errorf("apply migration %s: %w", m.Name, err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit migration %s: %w", m.Name, err)
 	}
 	return nil
 }

@@ -14,7 +14,7 @@ type AuditLog struct {
 	ID          pgtype.UUID
 	ActorUserID pgtype.UUID
 	EventType   string
-	TargetType  string
+	TargetType  pgtype.Text
 	TargetID    pgtype.UUID
 	Ip          *netip.Addr
 	UserAgent   pgtype.Text
@@ -82,7 +82,7 @@ type IdempotencyKey struct {
 	Operation        string
 	Key              string
 	RequestHash      []byte
-	ResourceType     string
+	ResourceType     pgtype.Text
 	ResourceID       pgtype.UUID
 	ResponseMetadata []byte
 	CreatedAt        pgtype.Timestamptz
