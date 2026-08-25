@@ -6,17 +6,163 @@ package httpapi
 import (
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
+
+// AuthBootstrap defines model for AuthBootstrap.
+type AuthBootstrap struct {
+	CsrfToken string  `json:"csrfToken"`
+	Device    Device  `json:"device"`
+	Session   Session `json:"session"`
+	User      User    `json:"user"`
+}
+
+// Device defines model for Device.
+type Device struct {
+	FirstSeenAt time.Time          `json:"firstSeenAt"`
+	Id          openapi_types.UUID `json:"id"`
+	LastSeenAt  time.Time          `json:"lastSeenAt"`
+	Name        string             `json:"name"`
+	UserAgent   string             `json:"userAgent"`
+}
+
+// Error defines model for Error.
+type Error struct {
+	Code    string      `json:"code"`
+	Details interface{} `json:"details"`
+	Message string      `json:"message"`
+	TraceId string      `json:"traceId"`
+}
+
+// LoginRequest defines model for LoginRequest.
+type LoginRequest struct {
+	DeviceId   *openapi_types.UUID `json:"deviceId,omitempty"`
+	DeviceName *string             `json:"deviceName,omitempty"`
+	Password   string              `json:"password"`
+	Username   string              `json:"username"`
+}
+
+// PasswordChangeRequest defines model for PasswordChangeRequest.
+type PasswordChangeRequest struct {
+	CurrentPassword string `json:"currentPassword"`
+	NewPassword     string `json:"newPassword"`
+}
+
+// RenameDeviceRequest defines model for RenameDeviceRequest.
+type RenameDeviceRequest struct {
+	Name string `json:"name"`
+}
+
+// Session defines model for Session.
+type Session struct {
+	AbsoluteExpiresAt time.Time          `json:"absoluteExpiresAt"`
+	CreatedAt         time.Time          `json:"createdAt"`
+	Current           bool               `json:"current"`
+	DeviceId          openapi_types.UUID `json:"deviceId"`
+	ExpiresAt         time.Time          `json:"expiresAt"`
+	Id                openapi_types.UUID `json:"id"`
+	LastIp            *string            `json:"lastIp,omitempty"`
+	LastSeenAt        time.Time          `json:"lastSeenAt"`
+}
+
+// User defines model for User.
+type User struct {
+	DisplayName string             `json:"displayName"`
+	Id          openapi_types.UUID `json:"id"`
+	IsAdmin     bool               `json:"isAdmin"`
+	Username    string             `json:"username"`
+}
+
+// DeviceId defines model for DeviceId.
+type DeviceId = openapi_types.UUID
+
+// SessionId defines model for SessionId.
+type SessionId = openapi_types.UUID
+
+// LoginJSONRequestBody defines body for Login for application/json ContentType.
+type LoginJSONRequestBody = LoginRequest
+
+// ChangePasswordJSONRequestBody defines body for ChangePassword for application/json ContentType.
+type ChangePasswordJSONRequestBody = PasswordChangeRequest
+
+// RenameDeviceJSONRequestBody defines body for RenameDevice for application/json ContentType.
+type RenameDeviceJSONRequestBody = RenameDeviceRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+
+	// (POST /auth/login)
+	Login(w http.ResponseWriter, r *http.Request)
+
+	// (POST /auth/logout)
+	Logout(w http.ResponseWriter, r *http.Request)
+
+	// (POST /auth/password/change)
+	ChangePassword(w http.ResponseWriter, r *http.Request)
+
+	// (GET /auth/session)
+	GetAuthSession(w http.ResponseWriter, r *http.Request)
+
+	// (GET /devices)
+	ListDevices(w http.ResponseWriter, r *http.Request)
+
+	// (PATCH /devices/{deviceId})
+	RenameDevice(w http.ResponseWriter, r *http.Request, deviceId DeviceId)
+
+	// (GET /sessions)
+	ListSessions(w http.ResponseWriter, r *http.Request)
+
+	// (DELETE /sessions/{sessionId})
+	RevokeSession(w http.ResponseWriter, r *http.Request, sessionId SessionId)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
 
 type Unimplemented struct{}
+
+// (POST /auth/login)
+func (_ Unimplemented) Login(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /auth/logout)
+func (_ Unimplemented) Logout(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /auth/password/change)
+func (_ Unimplemented) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /auth/session)
+func (_ Unimplemented) GetAuthSession(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /devices)
+func (_ Unimplemented) ListDevices(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PATCH /devices/{deviceId})
+func (_ Unimplemented) RenameDevice(w http.ResponseWriter, r *http.Request, deviceId DeviceId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /sessions)
+func (_ Unimplemented) ListSessions(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (DELETE /sessions/{sessionId})
+func (_ Unimplemented) RevokeSession(w http.ResponseWriter, r *http.Request, sessionId SessionId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
 
 // ServerInterfaceWrapper converts contexts to parameters.
 type ServerInterfaceWrapper struct {
@@ -26,6 +172,142 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// Login operation middleware
+func (siw *ServerInterfaceWrapper) Login(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.Login(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// Logout operation middleware
+func (siw *ServerInterfaceWrapper) Logout(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.Logout(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ChangePassword operation middleware
+func (siw *ServerInterfaceWrapper) ChangePassword(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ChangePassword(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAuthSession operation middleware
+func (siw *ServerInterfaceWrapper) GetAuthSession(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAuthSession(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListDevices operation middleware
+func (siw *ServerInterfaceWrapper) ListDevices(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListDevices(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RenameDevice operation middleware
+func (siw *ServerInterfaceWrapper) RenameDevice(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "deviceId" -------------
+	var deviceId DeviceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "deviceId", chi.URLParam(r, "deviceId"), &deviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "deviceId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RenameDevice(w, r, deviceId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListSessions operation middleware
+func (siw *ServerInterfaceWrapper) ListSessions(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListSessions(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokeSession operation middleware
+func (siw *ServerInterfaceWrapper) RevokeSession(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "sessionId" -------------
+	var sessionId SessionId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "sessionId", chi.URLParam(r, "sessionId"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sessionId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeSession(w, r, sessionId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 type UnescapedCookieParamError struct {
 	ParamName string
@@ -134,6 +416,36 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 			http.Error(w, err.Error(), http.StatusBadRequest)
 		}
 	}
+	wrapper := ServerInterfaceWrapper{
+		Handler:            si,
+		HandlerMiddlewares: options.Middlewares,
+		ErrorHandlerFunc:   options.ErrorHandlerFunc,
+	}
+
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/auth/login", wrapper.Login)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/auth/logout", wrapper.Logout)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/auth/session", wrapper.GetAuthSession)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/auth/password/change", wrapper.ChangePassword)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/sessions", wrapper.ListSessions)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/sessions/{sessionId}", wrapper.RevokeSession)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/devices", wrapper.ListDevices)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/devices/{deviceId}", wrapper.RenameDevice)
+	})
 
 	return r
 }

@@ -9,8 +9,12 @@ import (
 	"os"
 	"time"
 
+	"github.com/ZephyrLeeX/RelayShelf/internal/auth"
+	"github.com/ZephyrLeeX/RelayShelf/internal/platform/clock"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/config"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/database"
+	"github.com/ZephyrLeeX/RelayShelf/internal/platform/httpx"
+	"github.com/ZephyrLeeX/RelayShelf/internal/platform/id"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -78,9 +82,20 @@ func main() {
 			log.Printf("schema incompatible: %v", err)
 			os.Exit(1)
 		}
+		now := clock.Real{}
+		authRepo := auth.NewPostgreSQLRepository(db)
+		hasher := auth.NewPasswordHasher(auth.DefaultArgon2Params)
+		limiter := auth.NewRateLimiter(now, auth.DefaultRateLimitEntries)
+		authService := auth.NewService(authRepo, hasher, id.UUIDv7{}, now, limiter)
+		csrf := auth.NewCSRF(cfg.CSRFSecret.Bytes())
+		cookies := auth.NewCookiePolicy(cfg.PublicOrigin)
+		authMiddleware := auth.NewMiddleware(authService, cookies, csrf, cfg.PublicOrigin, httpx.NewResolver(cfg.TrustedProxies))
+		authHandler := auth.NewHandler(authService, csrf, cookies)
 		router := chi.NewRouter()
+		router.Use(httpx.Trace, httpx.SecurityHeaders, httpx.RequestLog(log.Default()), authMiddleware.Host)
 		router.Get("/health/live", health(http.StatusOK))
 		router.Get("/health/ready", ready(db))
+		router.Handle("/api/v1/*", auth.Router(authHandler, authMiddleware))
 
 		address := os.Getenv("LISTEN_ADDR")
 		if address == "" {

@@ -1,8 +1,196 @@
 openapi: 3.1.1
 info:
   title: RelayShelf API
-  version: 0.0.0
+  version: 0.2.0
   description: HTTP contract authority for RelayShelf.
 servers:
   - url: /api/v1
-paths: {}
+paths:
+  /auth/login:
+    post:
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Authenticated session bootstrap
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthBootstrap' }
+        '401': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /auth/logout:
+    post:
+      operationId: logout
+      security: [{ cookieAuth: [] }]
+      responses:
+        '204': { description: Session revoked }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /auth/session:
+    get:
+      operationId: getAuthSession
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200':
+          description: Current session bootstrap
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthBootstrap' }
+        '401': { $ref: '#/components/responses/Error' }
+  /auth/password/change:
+    post:
+      operationId: changePassword
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PasswordChangeRequest' }
+      responses:
+        '204': { description: Password changed and other sessions revoked }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /sessions:
+    get:
+      operationId: listSessions
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200':
+          description: Current user's sessions
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Session' } }
+        '401': { $ref: '#/components/responses/Error' }
+  /sessions/{sessionId}:
+    delete:
+      operationId: revokeSession
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/SessionId' }
+      responses:
+        '204': { description: Session revoked }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /devices:
+    get:
+      operationId: listDevices
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200':
+          description: Current user's devices
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Device' } }
+        '401': { $ref: '#/components/responses/Error' }
+  /devices/{deviceId}:
+    patch:
+      operationId: renameDevice
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/DeviceId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RenameDeviceRequest' }
+      responses:
+        '200':
+          description: Renamed device
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Device' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+components:
+  securitySchemes:
+    cookieAuth: { type: apiKey, in: cookie, name: __Host-session }
+  parameters:
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    DeviceId:
+      name: deviceId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  responses:
+    Error:
+      description: API error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, maxLength: 64 }
+        password: { type: string, minLength: 10, maxLength: 1024 }
+        deviceId: { type: string, format: uuid }
+        deviceName: { type: string, maxLength: 100 }
+    PasswordChangeRequest:
+      type: object
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword: { type: string, maxLength: 1024 }
+        newPassword: { type: string, minLength: 10, maxLength: 1024 }
+    RenameDeviceRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+    User:
+      type: object
+      required: [id, username, displayName, isAdmin]
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        displayName: { type: string }
+        isAdmin: { type: boolean }
+    Device:
+      type: object
+      required: [id, name, userAgent, firstSeenAt, lastSeenAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        userAgent: { type: string }
+        firstSeenAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time }
+    Session:
+      type: object
+      required: [id, deviceId, createdAt, lastSeenAt, expiresAt, absoluteExpiresAt, current]
+      properties:
+        id: { type: string, format: uuid }
+        deviceId: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        absoluteExpiresAt: { type: string, format: date-time }
+        lastIp: { type: string }
+        current: { type: boolean }
+    AuthBootstrap:
+      type: object
+      required: [user, device, session, csrfToken]
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+        device: { $ref: '#/components/schemas/Device' }
+        session: { $ref: '#/components/schemas/Session' }
+        csrfToken: { type: string }
+    Error:
+      type: object
+      required: [code, message, traceId, details]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        traceId: { type: string }
+        details: {}

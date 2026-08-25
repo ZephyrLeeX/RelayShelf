@@ -2,6 +2,7 @@
 set -euo pipefail
 
 container_runtime="${CONTAINER_RUNTIME:-podman}"
+go_test_flags="${GO_TEST_FLAGS:--race}"
 container_name="relayshelf-postgres-test-$$"
 port="${POSTGRES_TEST_PORT:-55432}"
 
@@ -14,7 +15,7 @@ trap cleanup EXIT
 
 for _ in $(seq 1 30); do
   if "$container_runtime" exec "$container_name" pg_isready -U test -d relayshelf_test >/dev/null 2>&1; then
-    DATABASE_URL="postgres://test:test@127.0.0.1:${port}/relayshelf_test?sslmode=disable" go test -tags=integration ./internal/platform/database
+    DATABASE_URL="postgres://test:test@127.0.0.1:${port}/relayshelf_test?sslmode=disable" go test ${go_test_flags} -tags=integration ./internal/...
     exit 0
   fi
   sleep 1

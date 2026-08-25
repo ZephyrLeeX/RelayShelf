@@ -1,0 +1,10 @@
+package users
+
+import "errors"
+
+var (
+	ErrInvalidUsername = errors.New("invalid username")
+	ErrInvalidPassword = errors.New("invalid password")
+	ErrNotFound        = errors.New("user not found")
+	ErrUsernameTaken   = errors.New("username already exists")
+)
