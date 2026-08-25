@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ZephyrLeeX/RelayShelf/internal/auth"
+	"github.com/ZephyrLeeX/RelayShelf/internal/files"
 	"github.com/ZephyrLeeX/RelayShelf/internal/httpapi"
 	"github.com/ZephyrLeeX/RelayShelf/internal/messages"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/clock"
@@ -18,6 +19,7 @@ import (
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/httpx"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/id"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/staging"
+	"github.com/ZephyrLeeX/RelayShelf/internal/storage"
 	"github.com/ZephyrLeeX/RelayShelf/internal/tags"
 	"github.com/ZephyrLeeX/RelayShelf/internal/uploads"
 	"github.com/go-chi/chi/v5"
@@ -32,11 +34,13 @@ type authEndpoints struct{ *auth.Handler }
 type messageEndpoints struct{ *messages.Handler }
 type tagEndpoints struct{ *tags.Handler }
 type uploadEndpoints struct{ *uploads.Handler }
+type fileEndpoints struct{ *files.Handler }
 type apiHandler struct {
 	*authEndpoints
 	*messageEndpoints
 	*tagEndpoints
 	*uploadEndpoints
+	*fileEndpoints
 }
 
 var _ httpapi.ServerInterface = (*apiHandler)(nil)
@@ -81,6 +85,10 @@ func main() {
 	if len(os.Args) > 1 {
 		command = os.Args[1]
 	}
+	if command == "storage" && len(os.Args) > 2 && os.Args[2] == "check" {
+		storageCheck()
+		return
+	}
 	var cfg config.Config
 	var err error
 	if command == "migrate" {
@@ -113,6 +121,14 @@ func main() {
 			os.Exit(1)
 		}
 		now := clock.Real{}
+		storageAdapter, storageErr := storage.NewFilesystemStorageAdapter(cfg.StorageRoot)
+		if storageErr == nil {
+			_, storageErr = storage.Check(ctx, storageAdapter)
+		}
+		if storageErr != nil {
+			log.Printf("storage unavailable at startup")
+			os.Exit(1)
+		}
 		authRepo := auth.NewPostgreSQLRepository(db)
 		hasher := auth.NewPasswordHasher(auth.DefaultArgon2Params)
 		limiter := auth.NewRateLimiter(now, auth.DefaultRateLimitEntries)
@@ -139,6 +155,7 @@ func main() {
 		}
 		uploadRepo := uploads.NewPostgreSQLRepository(db)
 		uploadService := uploads.NewService(uploadRepo, stagingManager, staging.NewStatFSProbe(cfg.StagingRoot), id.UUIDv7{}, now, uploads.NewLockRegistry(), cfg.MaxActiveChunkWrites, cfg.UploadStagingMaxBytes, cfg.StagingMinFreeBytes, cfg.StagingMinFreePercent)
+		uploadService.SetFinalizer(uploads.NewFileFinalizer(db, storageAdapter, id.UUIDv7{}, now, cfg.FileFinalizeConcurrency))
 		if cleanupErr := uploadService.ExpireDueUploads(ctx, 100); cleanupErr != nil {
 			log.Printf("bounded upload expiration cleanup incomplete")
 		}
@@ -146,7 +163,17 @@ func main() {
 			log.Printf("bounded upload staging reconciliation incomplete")
 		}
 		uploadHandler := uploads.NewHandler(uploadService)
-		handler := &apiHandler{authEndpoints: &authEndpoints{authHandler}, messageEndpoints: &messageEndpoints{messageHandler}, tagEndpoints: &tagEndpoints{tagHandler}, uploadEndpoints: &uploadEndpoints{uploadHandler}}
+		fileService := files.NewService(db, storageAdapter)
+		if reconcileErr := fileService.Reconcile(ctx, 100); reconcileErr != nil {
+			log.Printf("file object reconciliation failed")
+			os.Exit(1)
+		}
+		if integrityErr := fileService.VerifyReady(ctx, 100); integrityErr != nil {
+			log.Printf("storage integrity check failed")
+			os.Exit(1)
+		}
+		fileHandler := files.NewHandler(fileService)
+		handler := &apiHandler{authEndpoints: &authEndpoints{authHandler}, messageEndpoints: &messageEndpoints{messageHandler}, tagEndpoints: &tagEndpoints{tagHandler}, uploadEndpoints: &uploadEndpoints{uploadHandler}, fileEndpoints: &fileEndpoints{fileHandler}}
 		router := newHTTPRouter(authMiddleware.Host, auth.Router(handler, authMiddleware), health(http.StatusOK), ready(db))
 
 		address := os.Getenv("LISTEN_ADDR")
@@ -158,7 +185,26 @@ func main() {
 			log.Fatal(err)
 		}
 	default:
-		log.Printf("unknown command %q (use serve or migrate)", command)
+		log.Printf("unknown command %q (use serve, migrate, or storage check)", command)
 		os.Exit(2)
 	}
+}
+
+func storageCheck() {
+	cfg, err := config.LoadStorageConfig()
+	if err != nil {
+		log.Printf("Storage check: FAIL (%v)", err)
+		os.Exit(1)
+	}
+	adapter, err := storage.NewFilesystemStorageAdapter(cfg.StorageRoot)
+	if err == nil {
+		var result storage.CheckResult
+		result, err = storage.Check(context.Background(), adapter)
+		if err == nil {
+			log.Printf("Storage check: PASS\nRoot: %s\nRead: PASS\nWrite: PASS\nfsync: PASS\nAtomic rename: PASS\nDelete: PASS\nSame filesystem: PASS\nAvailable bytes: %d\nTotal bytes: %d", result.Root, result.Space.AvailableBytes, result.Space.TotalBytes)
+			return
+		}
+	}
+	log.Printf("Storage check: FAIL (%v)", err)
+	os.Exit(1)
 }
