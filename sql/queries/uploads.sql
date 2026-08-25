@@ -32,8 +32,9 @@ SELECT * FROM upload_sessions WHERE id = $1 AND user_id = $2 FOR UPDATE;
 -- name: LockUploadSessionForMaintenance :one
 SELECT * FROM upload_sessions WHERE id = $1 FOR UPDATE;
 
--- name: GetActiveUploadSession :one
-SELECT * FROM upload_sessions WHERE id = $1 AND status IN ('CREATED','UPLOADING','COMPLETING','FAILED');
+-- name: GetActiveUploadIDs :many
+SELECT id FROM upload_sessions
+WHERE id = ANY($1::uuid[]) AND status IN ('CREATED','UPLOADING','COMPLETING','FAILED');
 
 -- name: ListCompletedParts :many
 SELECT * FROM upload_parts WHERE upload_session_id = $1 ORDER BY part_number ASC;
@@ -55,13 +56,17 @@ WHERE id = $1 AND user_id = $2 AND status IN ('CREATED','UPLOADING');
 UPDATE upload_sessions SET status = 'COMPLETING', updated_at = $3
 WHERE id = $1 AND user_id = $2 AND status IN ('CREATED','UPLOADING');
 
--- name: FindExpiredUploads :many
+-- name: FindDueActiveUploads :many
 SELECT * FROM upload_sessions
-WHERE (status IN ('CREATED','UPLOADING','FAILED') AND expires_at <= $1)
-   OR (status = 'EXPIRED' AND EXISTS (
-     SELECT 1 FROM upload_parts p WHERE p.upload_session_id = upload_sessions.id
-   ))
+WHERE status IN ('CREATED','UPLOADING','FAILED') AND expires_at <= $1
 ORDER BY expires_at, id LIMIT $2;
+
+-- name: FindExpiredCleanupCandidates :many
+SELECT id FROM upload_sessions
+WHERE status = 'EXPIRED' AND EXISTS (
+  SELECT 1 FROM upload_parts p WHERE p.upload_session_id = upload_sessions.id
+)
+ORDER BY expires_at, id;
 
 -- name: MarkUploadExpired :execrows
 UPDATE upload_sessions SET status = 'EXPIRED', updated_at = $2

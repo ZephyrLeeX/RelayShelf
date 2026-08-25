@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -90,5 +91,36 @@ func TestUploadHandlerRejectsUnknownCreateFieldsAndWrongMedia(t *testing.T) {
 	handler.PutUploadPart(putRec, put, id, 0)
 	if putRec.Code != http.StatusUnsupportedMediaType || strings.Contains(putRec.Body.String(), "x\"") {
 		t.Fatalf("put=%d %s", putRec.Code, putRec.Body.String())
+	}
+}
+
+func TestUploadHandlerMapsWriteAtFailureAndRetrySucceeds(t *testing.T) {
+	c := &testClock{now: time.Now().UTC()}
+	owner, id := uuid.New(), uuid.New()
+	repo, stage := newMemoryRepo(), newMemoryStaging()
+	putSession(repo, stage, id, owner, 4, c)
+	stage.writeErr[id] = syscall.ENOSPC
+	handler := NewHandler(testService(repo, stage, c, 8, id))
+
+	request := authenticated(httptest.NewRequest(http.MethodPut, "/api/v1/uploads/"+id.String()+"/parts/0", strings.NewReader("data")), owner)
+	request.Header.Set("Content-Type", "application/octet-stream")
+	request.ContentLength = 4
+	recorder := httptest.NewRecorder()
+	handler.PutUploadPart(recorder, request, id, 0)
+	if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), "UPLOAD_STAGING_UNAVAILABLE") {
+		t.Fatalf("put=%d %s", recorder.Code, recorder.Body.String())
+	}
+	if len(repo.parts[id]) != 0 {
+		t.Fatal("WriteAt failure created a part marker")
+	}
+
+	delete(stage.writeErr, id)
+	retry := authenticated(httptest.NewRequest(http.MethodPut, "/api/v1/uploads/"+id.String()+"/parts/0", strings.NewReader("data")), owner)
+	retry.Header.Set("Content-Type", "application/octet-stream")
+	retry.ContentLength = 4
+	retryRecorder := httptest.NewRecorder()
+	handler.PutUploadPart(retryRecorder, retry, id, 0)
+	if retryRecorder.Code != http.StatusNoContent || len(repo.parts[id]) != 1 {
+		t.Fatalf("retry=%d %s markers=%d", retryRecorder.Code, retryRecorder.Body.String(), len(repo.parts[id]))
 	}
 }

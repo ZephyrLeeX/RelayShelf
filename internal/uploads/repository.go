@@ -23,10 +23,11 @@ type Repository interface {
 	InvalidatePart(context.Context, uuid.UUID, int) error
 	CommitPart(context.Context, uuid.UUID, uuid.UUID, int, int64, time.Time) error
 	Complete(context.Context, uuid.UUID, uuid.UUID, time.Time, func(Session, []Part) error) (Session, error)
-	FindExpired(context.Context, time.Time, int32) ([]uuid.UUID, error)
+	FindDueActiveUploads(context.Context, time.Time, int32) ([]uuid.UUID, error)
+	FindExpiredCleanupCandidates(context.Context) ([]uuid.UUID, error)
 	MarkExpired(context.Context, uuid.UUID, time.Time) (Session, bool, error)
 	DeleteParts(context.Context, uuid.UUID) error
-	ActiveExists(context.Context, uuid.UUID) (bool, error)
+	ActiveUploadIDs(context.Context, []uuid.UUID) (map[uuid.UUID]struct{}, error)
 }
 
 type FailureHooks struct {
@@ -221,14 +222,26 @@ func (r *PostgreSQLRepository) Complete(ctx context.Context, ownerID, id uuid.UU
 	return s, nil
 }
 
-func (r *PostgreSQLRepository) FindExpired(ctx context.Context, now time.Time, batch int32) ([]uuid.UUID, error) {
-	rows, err := generated.New(r.pool).FindExpiredUploads(ctx, generated.FindExpiredUploadsParams{ExpiresAt: pgTime(now), Limit: batch})
+func (r *PostgreSQLRepository) FindDueActiveUploads(ctx context.Context, now time.Time, batch int32) ([]uuid.UUID, error) {
+	rows, err := generated.New(r.pool).FindDueActiveUploads(ctx, generated.FindDueActiveUploadsParams{ExpiresAt: pgTime(now), Limit: batch})
 	if err != nil {
 		return nil, err
 	}
 	out := make([]uuid.UUID, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, uuid.UUID(row.ID.Bytes))
+	}
+	return out, nil
+}
+
+func (r *PostgreSQLRepository) FindExpiredCleanupCandidates(ctx context.Context) ([]uuid.UUID, error) {
+	rows, err := generated.New(r.pool).FindExpiredCleanupCandidates(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]uuid.UUID, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, uuid.UUID(row.Bytes))
 	}
 	return out, nil
 }
@@ -275,10 +288,25 @@ func (r *PostgreSQLRepository) DeleteParts(ctx context.Context, id uuid.UUID) er
 	return generated.New(r.pool).DeleteUploadParts(ctx, pgUUID(id))
 }
 
-func (r *PostgreSQLRepository) ActiveExists(ctx context.Context, id uuid.UUID) (bool, error) {
-	_, err := generated.New(r.pool).GetActiveUploadSession(ctx, pgUUID(id))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
+func (r *PostgreSQLRepository) ActiveUploadIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]struct{}, error) {
+	active := make(map[uuid.UUID]struct{}, len(ids))
+	if len(ids) == 0 {
+		return active, nil
 	}
-	return err == nil, err
+	rows, err := generated.New(r.pool).GetActiveUploadIDs(ctx, uuidArray(ids))
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		active[uuid.UUID(row.Bytes)] = struct{}{}
+	}
+	return active, nil
+}
+
+func uuidArray(ids []uuid.UUID) []pgtype.UUID {
+	out := make([]pgtype.UUID, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, pgUUID(id))
+	}
+	return out
 }

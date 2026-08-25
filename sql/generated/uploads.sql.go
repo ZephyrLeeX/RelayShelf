@@ -98,22 +98,19 @@ func (q *Queries) DeleteUploadParts(ctx context.Context, uploadSessionID pgtype.
 	return err
 }
 
-const findExpiredUploads = `-- name: FindExpiredUploads :many
+const findDueActiveUploads = `-- name: FindDueActiveUploads :many
 SELECT id, user_id, original_filename, expected_size, client_mime, chunk_size, status, file_object_id, expires_at, consumed_at, consumed_message_id, created_at, updated_at, completed_at FROM upload_sessions
-WHERE (status IN ('CREATED','UPLOADING','FAILED') AND expires_at <= $1)
-   OR (status = 'EXPIRED' AND EXISTS (
-     SELECT 1 FROM upload_parts p WHERE p.upload_session_id = upload_sessions.id
-   ))
+WHERE status IN ('CREATED','UPLOADING','FAILED') AND expires_at <= $1
 ORDER BY expires_at, id LIMIT $2
 `
 
-type FindExpiredUploadsParams struct {
+type FindDueActiveUploadsParams struct {
 	ExpiresAt pgtype.Timestamptz
 	Limit     int32
 }
 
-func (q *Queries) FindExpiredUploads(ctx context.Context, arg FindExpiredUploadsParams) ([]UploadSession, error) {
-	rows, err := q.db.Query(ctx, findExpiredUploads, arg.ExpiresAt, arg.Limit)
+func (q *Queries) FindDueActiveUploads(ctx context.Context, arg FindDueActiveUploadsParams) ([]UploadSession, error) {
+	rows, err := q.db.Query(ctx, findDueActiveUploads, arg.ExpiresAt, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -147,30 +144,57 @@ func (q *Queries) FindExpiredUploads(ctx context.Context, arg FindExpiredUploads
 	return items, nil
 }
 
-const getActiveUploadSession = `-- name: GetActiveUploadSession :one
-SELECT id, user_id, original_filename, expected_size, client_mime, chunk_size, status, file_object_id, expires_at, consumed_at, consumed_message_id, created_at, updated_at, completed_at FROM upload_sessions WHERE id = $1 AND status IN ('CREATED','UPLOADING','COMPLETING','FAILED')
+const findExpiredCleanupCandidates = `-- name: FindExpiredCleanupCandidates :many
+SELECT id FROM upload_sessions
+WHERE status = 'EXPIRED' AND EXISTS (
+  SELECT 1 FROM upload_parts p WHERE p.upload_session_id = upload_sessions.id
+)
+ORDER BY expires_at, id
 `
 
-func (q *Queries) GetActiveUploadSession(ctx context.Context, id pgtype.UUID) (UploadSession, error) {
-	row := q.db.QueryRow(ctx, getActiveUploadSession, id)
-	var i UploadSession
-	err := row.Scan(
-		&i.ID,
-		&i.UserID,
-		&i.OriginalFilename,
-		&i.ExpectedSize,
-		&i.ClientMime,
-		&i.ChunkSize,
-		&i.Status,
-		&i.FileObjectID,
-		&i.ExpiresAt,
-		&i.ConsumedAt,
-		&i.ConsumedMessageID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.CompletedAt,
-	)
-	return i, err
+func (q *Queries) FindExpiredCleanupCandidates(ctx context.Context) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, findExpiredCleanupCandidates)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getActiveUploadIDs = `-- name: GetActiveUploadIDs :many
+SELECT id FROM upload_sessions
+WHERE id = ANY($1::uuid[]) AND status IN ('CREATED','UPLOADING','COMPLETING','FAILED')
+`
+
+func (q *Queries) GetActiveUploadIDs(ctx context.Context, dollar_1 []pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, getActiveUploadIDs, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getOwnedUploadSession = `-- name: GetOwnedUploadSession :one

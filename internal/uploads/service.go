@@ -3,6 +3,7 @@ package uploads
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"strings"
@@ -185,6 +186,9 @@ type offsetWriter struct {
 func (w *offsetWriter) Write(data []byte) (int, error) {
 	n, err := w.file.WriteAt(data, w.offset)
 	w.offset += int64(n)
+	if err != nil {
+		return n, fmt.Errorf("%w: write staging file: %v", ErrStagingUnavailable, err)
+	}
 	return n, err
 }
 
@@ -227,28 +231,43 @@ func (s *Service) ExpireDueUploads(ctx context.Context, batch int32) error {
 	if batch <= 0 {
 		return nil
 	}
-	if err := s.ReconcileStaging(ctx, int(batch)); err != nil {
-		return err
-	}
-	ids, err := s.repo.FindExpired(ctx, s.clock.Now(), batch)
+	var cleanupErrors []error
+	now := s.clock.Now()
+	due, err := s.repo.FindDueActiveUploads(ctx, now, batch)
 	if err != nil {
-		return err
-	}
-	for _, uploadID := range ids {
-		unlock := s.locks.Exclusive(uploadID)
-		_, clean, markErr := s.repo.MarkExpired(ctx, uploadID, s.clock.Now())
-		if markErr == nil && clean {
-			markErr = s.staging.Delete(uploadID)
-			if markErr == nil {
-				markErr = s.repo.DeleteParts(ctx, uploadID)
+		cleanupErrors = append(cleanupErrors, fmt.Errorf("find due uploads: %w", err))
+	} else {
+		for _, uploadID := range due {
+			unlock := s.locks.Exclusive(uploadID)
+			_, _, markErr := s.repo.MarkExpired(ctx, uploadID, now)
+			unlock()
+			if markErr != nil {
+				cleanupErrors = append(cleanupErrors, fmt.Errorf("mark upload %s expired: %w", uploadID, markErr))
 			}
 		}
-		unlock()
-		if markErr != nil {
-			return markErr
+	}
+
+	candidates, err := s.repo.FindExpiredCleanupCandidates(ctx)
+	if err != nil {
+		cleanupErrors = append(cleanupErrors, fmt.Errorf("find expired cleanup candidates: %w", err))
+	} else {
+		for _, uploadID := range candidates {
+			unlock := s.locks.Exclusive(uploadID)
+			cleanErr := s.staging.Delete(uploadID)
+			if cleanErr == nil {
+				cleanErr = s.repo.DeleteParts(ctx, uploadID)
+			}
+			unlock()
+			if cleanErr != nil {
+				cleanupErrors = append(cleanupErrors, fmt.Errorf("clean expired upload %s: %w", uploadID, cleanErr))
+			}
 		}
 	}
-	return nil
+
+	if err = s.ReconcileStaging(ctx, int(batch)); err != nil {
+		cleanupErrors = append(cleanupErrors, fmt.Errorf("reconcile staging: %w", err))
+	}
+	return errors.Join(cleanupErrors...)
 }
 
 func (s *Service) ReconcileStaging(ctx context.Context, limit int) error {
@@ -258,22 +277,27 @@ func (s *Service) ReconcileStaging(ctx context.Context, limit int) error {
 	if err != nil {
 		return err
 	}
-	for index, uploadID := range ids {
-		if limit > 0 && index >= limit {
+	active, err := s.repo.ActiveUploadIDs(ctx, ids)
+	if err != nil {
+		return err
+	}
+	cleaned := 0
+	var cleanupErrors []error
+	for _, uploadID := range ids {
+		if _, ok := active[uploadID]; ok {
+			continue
+		}
+		if limit > 0 && cleaned >= limit {
 			break
 		}
-		active, activeErr := s.repo.ActiveExists(ctx, uploadID)
-		if activeErr != nil {
-			return activeErr
+		unlock := s.locks.Exclusive(uploadID)
+		deleteErr := s.staging.Delete(uploadID)
+		unlock()
+		if deleteErr != nil {
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("delete orphan staging %s: %w", uploadID, deleteErr))
+			continue
 		}
-		if !active {
-			unlock := s.locks.Exclusive(uploadID)
-			err = s.staging.Delete(uploadID)
-			unlock()
-			if err != nil {
-				return err
-			}
-		}
+		cleaned++
 	}
-	return nil
+	return errors.Join(cleanupErrors...)
 }
