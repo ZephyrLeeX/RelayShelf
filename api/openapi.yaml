@@ -138,7 +138,7 @@ paths:
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/DirectSendRequest' } } } }
       responses:
-        '201': { description: Recipient message, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }
+        '201': { description: Immutable delivery receipt, content: { application/json: { schema: { $ref: '#/components/schemas/MessageDeliveryReceipt' } } } }
         '409': { $ref: '#/components/responses/Error' }
         '422': { $ref: '#/components/responses/Error' }
   /messages/{messageId}:
@@ -216,7 +216,7 @@ paths:
         - { $ref: '#/components/parameters/MessageId' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ForwardRequest' } } } }
-      responses: { '201': { description: Recipient message, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }, '404': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' }, '422': { $ref: '#/components/responses/Error' } }
+      responses: { '201': { description: Immutable delivery receipt, content: { application/json: { schema: { $ref: '#/components/schemas/MessageDeliveryReceipt' } } } }, '404': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' }, '422': { $ref: '#/components/responses/Error' } }
   /trash:
     get:
       operationId: listTrash
@@ -462,6 +462,14 @@ components:
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
         tags: { type: array, items: { $ref: '#/components/schemas/Tag' } }
+    MessageDeliveryReceipt:
+      type: object
+      additionalProperties: false
+      required: [messageId, createdAt, expiresAt]
+      properties:
+        messageId: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
     MessageSummary:
       allOf:
         - { $ref: '#/components/schemas/Message' }

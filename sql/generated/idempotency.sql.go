@@ -27,7 +27,7 @@ func (q *Queries) DeleteIdempotencyClaim(ctx context.Context, arg DeleteIdempote
 }
 
 const getIdempotencyClaim = `-- name: GetIdempotencyClaim :one
-SELECT request_hash,resource_id,expires_at FROM idempotency_keys
+SELECT request_hash,resource_id,response_metadata,expires_at FROM idempotency_keys
 WHERE user_id=$1 AND operation=$2 AND key=$3 FOR UPDATE
 `
 
@@ -38,15 +38,21 @@ type GetIdempotencyClaimParams struct {
 }
 
 type GetIdempotencyClaimRow struct {
-	RequestHash []byte
-	ResourceID  pgtype.UUID
-	ExpiresAt   pgtype.Timestamptz
+	RequestHash      []byte
+	ResourceID       pgtype.UUID
+	ResponseMetadata []byte
+	ExpiresAt        pgtype.Timestamptz
 }
 
 func (q *Queries) GetIdempotencyClaim(ctx context.Context, arg GetIdempotencyClaimParams) (GetIdempotencyClaimRow, error) {
 	row := q.db.QueryRow(ctx, getIdempotencyClaim, arg.UserID, arg.Operation, arg.Key)
 	var i GetIdempotencyClaimRow
-	err := row.Scan(&i.RequestHash, &i.ResourceID, &i.ExpiresAt)
+	err := row.Scan(
+		&i.RequestHash,
+		&i.ResourceID,
+		&i.ResponseMetadata,
+		&i.ExpiresAt,
+	)
 	return i, err
 }
 

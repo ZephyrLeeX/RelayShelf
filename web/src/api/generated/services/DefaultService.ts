@@ -13,6 +13,7 @@ import type { ForwardRequest } from '../models/ForwardRequest';
 import type { Lifecycle } from '../models/Lifecycle';
 import type { LoginRequest } from '../models/LoginRequest';
 import type { Message } from '../models/Message';
+import type { MessageDeliveryReceipt } from '../models/MessageDeliveryReceipt';
 import type { MessageList } from '../models/MessageList';
 import type { PasswordChangeRequest } from '../models/PasswordChangeRequest';
 import type { RenameDeviceRequest } from '../models/RenameDeviceRequest';
@@ -225,13 +226,13 @@ export class DefaultService {
     /**
      * @param idempotencyKey
      * @param requestBody
-     * @returns Message Recipient message
+     * @returns MessageDeliveryReceipt Immutable delivery receipt
      * @throws ApiError
      */
     public static directSendMessage(
         idempotencyKey: string,
         requestBody: DirectSendRequest,
-    ): CancelablePromise<Message> {
+    ): CancelablePromise<MessageDeliveryReceipt> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/messages/direct-send',
@@ -461,14 +462,14 @@ export class DefaultService {
      * @param messageId
      * @param idempotencyKey
      * @param requestBody
-     * @returns Message Recipient message
+     * @returns MessageDeliveryReceipt Immutable delivery receipt
      * @throws ApiError
      */
     public static forwardMessage(
         messageId: string,
         idempotencyKey: string,
         requestBody: ForwardRequest,
-    ): CancelablePromise<Message> {
+    ): CancelablePromise<MessageDeliveryReceipt> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/messages/{messageId}/forward',

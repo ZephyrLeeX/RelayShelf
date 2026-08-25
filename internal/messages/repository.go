@@ -111,13 +111,6 @@ func loadOwned(ctx context.Context, tx pgx.Tx, ownerID, id uuid.UUID, lock bool)
 	}
 	return domainMessage(row), err
 }
-func loadByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (Message, error) {
-	row, err := generated.New(tx).GetMessageByID(ctx, pgu(id))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Message{}, ErrNotFound
-	}
-	return domainMessage(row), err
-}
 func loadTags(ctx context.Context, q *generated.Queries, id uuid.UUID) ([]Tag, error) {
 	rows, err := q.ListMessageTags(ctx, pgu(id))
 	if err != nil {
@@ -205,8 +198,9 @@ func replaceTags(ctx context.Context, tx pgx.Tx, messageID uuid.UUID, ids []uuid
 }
 
 type idemResult struct {
-	Found      bool
-	ResourceID uuid.UUID
+	Found            bool
+	ResourceID       uuid.UUID
+	ResponseMetadata []byte
 }
 
 func claimIdempotency(ctx context.Context, tx pgx.Tx, userID uuid.UUID, operation, key string, hash [32]byte, now time.Time) (idemResult, error) {
@@ -235,11 +229,28 @@ func claimIdempotency(ctx context.Context, tx pgx.Tx, userID uuid.UUID, operatio
 	if !row.ResourceID.Valid {
 		return idemResult{}, errors.New("idempotency result missing resource")
 	}
-	return idemResult{Found: true, ResourceID: uuid.UUID(row.ResourceID.Bytes)}, nil
+	return idemResult{Found: true, ResourceID: uuid.UUID(row.ResourceID.Bytes), ResponseMetadata: row.ResponseMetadata}, nil
 }
-func completeIdempotency(ctx context.Context, tx pgx.Tx, id, userID uuid.UUID, operation, key string, hash [32]byte, resourceID uuid.UUID, now time.Time) error {
-	metadata, _ := json.Marshal(map[string]string{"messageId": resourceID.String(), "createdAt": now.UTC().Format(time.RFC3339Nano)})
+
+func completeIdempotency(ctx context.Context, tx pgx.Tx, id, userID uuid.UUID, operation, key string, hash [32]byte, resourceID uuid.UUID, metadata []byte, now time.Time) error {
 	return generated.New(tx).InsertIdempotencyResult(ctx, generated.InsertIdempotencyResultParams{ID: pgu(id), UserID: pgu(userID), Operation: operation, Key: key, RequestHash: hash[:], ResourceID: pgu(resourceID), ResponseMetadata: metadata, CreatedAt: pgt(now), ExpiresAt: pgt(now.Add(24 * time.Hour))})
+}
+
+func resourceMetadata(resourceID uuid.UUID, now time.Time) []byte {
+	metadata, _ := json.Marshal(map[string]string{"messageId": resourceID.String(), "createdAt": now.UTC().Format(time.RFC3339Nano)})
+	return metadata
+}
+
+func deliveryMetadata(receipt MessageDeliveryReceipt) ([]byte, error) {
+	return json.Marshal(receipt)
+}
+
+func deliveryReceipt(idem idemResult) (MessageDeliveryReceipt, error) {
+	var receipt MessageDeliveryReceipt
+	if err := json.Unmarshal(idem.ResponseMetadata, &receipt); err != nil || receipt.MessageID == uuid.Nil || receipt.CreatedAt.IsZero() || receipt.ExpiresAt.IsZero() || receipt.MessageID != idem.ResourceID {
+		return MessageDeliveryReceipt{}, errors.New("invalid idempotency delivery receipt")
+	}
+	return receipt, nil
 }
 
 func (r *PostgreSQLRepository) List(ctx context.Context, ownerID uuid.UUID, filter ListFilter, trash bool, now time.Time) ([]Message, error) {

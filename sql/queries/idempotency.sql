@@ -2,7 +2,7 @@
 SELECT pg_advisory_xact_lock(hashtextextended($1,0));
 
 -- name: GetIdempotencyClaim :one
-SELECT request_hash,resource_id,expires_at FROM idempotency_keys
+SELECT request_hash,resource_id,response_metadata,expires_at FROM idempotency_keys
 WHERE user_id=$1 AND operation=$2 AND key=$3 FOR UPDATE;
 
 -- name: DeleteIdempotencyClaim :exec

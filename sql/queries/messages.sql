@@ -1,9 +1,6 @@
 -- name: GetOwnedMessage :one
 SELECT * FROM messages WHERE id = $1 AND owner_id = $2;
 
--- name: GetMessageByID :one
-SELECT * FROM messages WHERE id = $1;
-
 -- name: LockOwnedMessage :one
 SELECT * FROM messages WHERE id = $1 AND owner_id = $2 FOR UPDATE;
 
@@ -39,7 +36,7 @@ INSERT INTO message_tags(message_id,tag_id) VALUES($1,$2);
 SELECT tag_id FROM message_tags WHERE message_id=$1;
 
 -- name: GetRecipientStatus :one
-SELECT status FROM users WHERE id=$1;
+SELECT status FROM users WHERE id=$1 FOR SHARE;
 
 -- name: ListActiveMessages :many
 SELECT m.* FROM messages m

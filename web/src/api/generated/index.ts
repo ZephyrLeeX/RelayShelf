@@ -24,6 +24,7 @@ export { Lifecycle } from './models/Lifecycle';
 export type { Limit } from './models/Limit';
 export type { LoginRequest } from './models/LoginRequest';
 export type { Message } from './models/Message';
+export type { MessageDeliveryReceipt } from './models/MessageDeliveryReceipt';
 export type { MessageId } from './models/MessageId';
 export type { MessageList } from './models/MessageList';
 export type { MessageSummary } from './models/MessageSummary';

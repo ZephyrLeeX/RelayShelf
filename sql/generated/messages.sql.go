@@ -75,39 +75,6 @@ func (q *Queries) ExpireDueTemporary(ctx context.Context, arg ExpireDueTemporary
 	return result.RowsAffected(), nil
 }
 
-const getMessageByID = `-- name: GetMessageByID :one
-SELECT id, owner_id, body_plaintext, body_ciphertext, body_nonce, body_encryption_version, body_format, detected_type, detected_language, sensitive, lifecycle, is_favorite, expires_at, trashed_at, purge_at, source_user_id, source_message_id, created_device_id, version, created_at, updated_at FROM messages WHERE id = $1
-`
-
-func (q *Queries) GetMessageByID(ctx context.Context, id pgtype.UUID) (Message, error) {
-	row := q.db.QueryRow(ctx, getMessageByID, id)
-	var i Message
-	err := row.Scan(
-		&i.ID,
-		&i.OwnerID,
-		&i.BodyPlaintext,
-		&i.BodyCiphertext,
-		&i.BodyNonce,
-		&i.BodyEncryptionVersion,
-		&i.BodyFormat,
-		&i.DetectedType,
-		&i.DetectedLanguage,
-		&i.Sensitive,
-		&i.Lifecycle,
-		&i.IsFavorite,
-		&i.ExpiresAt,
-		&i.TrashedAt,
-		&i.PurgeAt,
-		&i.SourceUserID,
-		&i.SourceMessageID,
-		&i.CreatedDeviceID,
-		&i.Version,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const getMessageSettings = `-- name: GetMessageSettings :one
 SELECT temporary_ttl_hours,trash_ttl_hours FROM system_settings WHERE id=1
 `
@@ -163,7 +130,7 @@ func (q *Queries) GetOwnedMessage(ctx context.Context, arg GetOwnedMessageParams
 }
 
 const getRecipientStatus = `-- name: GetRecipientStatus :one
-SELECT status FROM users WHERE id=$1
+SELECT status FROM users WHERE id=$1 FOR SHARE
 `
 
 func (q *Queries) GetRecipientStatus(ctx context.Context, id pgtype.UUID) (string, error) {

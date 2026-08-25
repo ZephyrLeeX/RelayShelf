@@ -68,7 +68,7 @@ func (s *Service) Create(ctx context.Context, ownerID, deviceID uuid.UUID, c Cre
 			return err
 		}
 		if idem.Found {
-			result, err = loadByID(ctx, tx, idem.ResourceID)
+			result, err = loadOwned(ctx, tx, ownerID, idem.ResourceID, false)
 			return err
 		}
 		if err = validateTags(ctx, tx, ownerID, c.TagIDs); err != nil {
@@ -92,7 +92,7 @@ func (s *Service) Create(ctx context.Context, ownerID, deviceID uuid.UUID, c Cre
 		if err != nil {
 			return err
 		}
-		return completeIdempotency(ctx, tx, idemID, ownerID, OperationCreate, c.IdempotencyKey, hash, result.ID, now)
+		return completeIdempotency(ctx, tx, idemID, ownerID, OperationCreate, c.IdempotencyKey, hash, result.ID, resourceMetadata(result.ID, now), now)
 	})
 	if err != nil {
 		return Message{}, err
@@ -249,6 +249,9 @@ func (s *Service) ReplaceTags(ctx context.Context, ownerID, messageID uuid.UUID,
 		}
 		if m.Version != expected {
 			return ErrVersionConflict
+		}
+		if m.TrashedAt != nil {
+			return ErrTrashed
 		}
 		if err = validateTags(ctx, tx, ownerID, ids); err != nil {
 			return err
@@ -458,20 +461,20 @@ func (s *Service) EditSensitive(ctx context.Context, ownerID, messageID uuid.UUI
 	})
 }
 
-func (s *Service) DirectSend(ctx context.Context, senderID, deviceID uuid.UUID, c DirectSendCommand) (Message, error) {
+func (s *Service) DirectSend(ctx context.Context, senderID, deviceID uuid.UUID, c DirectSendCommand) (MessageDeliveryReceipt, error) {
 	if !validBody(c.Body) || !validFormat(c.BodyFormat) || !validIdempotencyKey(c.IdempotencyKey) {
-		return Message{}, ErrValidation
+		return MessageDeliveryReceipt{}, ErrValidation
 	}
 	hash := hashDirect(c)
 	now := s.clock.Now()
-	var result Message
+	var receipt MessageDeliveryReceipt
 	err := s.repo.withTx(ctx, func(tx pgx.Tx) error {
 		idem, err := claimIdempotency(ctx, tx, senderID, OperationDirectSend, c.IdempotencyKey, hash, now)
 		if err != nil {
 			return err
 		}
 		if idem.Found {
-			result, err = loadByID(ctx, tx, idem.ResourceID)
+			receipt, err = deliveryReceipt(idem)
 			return err
 		}
 		status, statusErr := generated.New(tx).GetRecipientStatus(ctx, pgu(c.RecipientID))
@@ -485,7 +488,7 @@ func (s *Service) DirectSend(ctx context.Context, senderID, deviceID uuid.UUID, 
 			return err
 		}
 		source := senderID
-		result, err = s.newMessage(c.RecipientID, deviceID, c.Body, c.BodyFormat, Temporary, c.Sensitive, &source, nil, now, temp)
+		result, err := s.newMessage(c.RecipientID, deviceID, c.Body, c.BodyFormat, Temporary, c.Sensitive, &source, nil, now, temp)
 		if err != nil {
 			return err
 		}
@@ -496,32 +499,36 @@ func (s *Service) DirectSend(ctx context.Context, senderID, deviceID uuid.UUID, 
 		if err != nil {
 			return err
 		}
-		return completeIdempotency(ctx, tx, idemID, senderID, OperationDirectSend, c.IdempotencyKey, hash, result.ID, now)
+		if result.ExpiresAt == nil {
+			return errors.New("delivery message missing expiry")
+		}
+		receipt = MessageDeliveryReceipt{MessageID: result.ID, CreatedAt: result.CreatedAt, ExpiresAt: *result.ExpiresAt}
+		metadata, err := deliveryMetadata(receipt)
+		if err != nil {
+			return err
+		}
+		return completeIdempotency(ctx, tx, idemID, senderID, OperationDirectSend, c.IdempotencyKey, hash, result.ID, metadata, now)
 	})
 	if err != nil {
-		return Message{}, err
+		return MessageDeliveryReceipt{}, err
 	}
-	result.Tags = []Tag{}
-	if result.Sensitive {
-		result.BodyPlaintext = nil
-	}
-	return result, nil
+	return receipt, nil
 }
 
-func (s *Service) Forward(ctx context.Context, senderID, deviceID uuid.UUID, c ForwardCommand) (Message, error) {
+func (s *Service) Forward(ctx context.Context, senderID, deviceID uuid.UUID, c ForwardCommand) (MessageDeliveryReceipt, error) {
 	if c.ExpectedVersion < 1 || !validIdempotencyKey(c.IdempotencyKey) {
-		return Message{}, ErrValidation
+		return MessageDeliveryReceipt{}, ErrValidation
 	}
 	hash := hashForward(c)
 	now := s.clock.Now()
-	var result Message
+	var receipt MessageDeliveryReceipt
 	err := s.repo.withTx(ctx, func(tx pgx.Tx) error {
 		idem, err := claimIdempotency(ctx, tx, senderID, OperationForward, c.IdempotencyKey, hash, now)
 		if err != nil {
 			return err
 		}
 		if idem.Found {
-			result, err = loadByID(ctx, tx, idem.ResourceID)
+			receipt, err = deliveryReceipt(idem)
 			return err
 		}
 		source, err := loadOwned(ctx, tx, senderID, c.SourceID, true)
@@ -558,7 +565,7 @@ func (s *Service) Forward(ctx context.Context, senderID, deviceID uuid.UUID, c F
 		}
 		sourceUser := senderID
 		sourceID := source.ID
-		result, err = s.newMessage(c.RecipientID, deviceID, body, source.BodyFormat, Temporary, source.Sensitive, &sourceUser, &sourceID, now, temp)
+		result, err := s.newMessage(c.RecipientID, deviceID, body, source.BodyFormat, Temporary, source.Sensitive, &sourceUser, &sourceID, now, temp)
 		if err != nil {
 			return err
 		}
@@ -569,16 +576,20 @@ func (s *Service) Forward(ctx context.Context, senderID, deviceID uuid.UUID, c F
 		if err != nil {
 			return err
 		}
-		return completeIdempotency(ctx, tx, idemID, senderID, OperationForward, c.IdempotencyKey, hash, result.ID, now)
+		if result.ExpiresAt == nil {
+			return errors.New("delivery message missing expiry")
+		}
+		receipt = MessageDeliveryReceipt{MessageID: result.ID, CreatedAt: result.CreatedAt, ExpiresAt: *result.ExpiresAt}
+		metadata, err := deliveryMetadata(receipt)
+		if err != nil {
+			return err
+		}
+		return completeIdempotency(ctx, tx, idemID, senderID, OperationForward, c.IdempotencyKey, hash, result.ID, metadata, now)
 	})
 	if err != nil {
-		return Message{}, err
+		return MessageDeliveryReceipt{}, err
 	}
-	result.Tags = []Tag{}
-	if result.Sensitive {
-		result.BodyPlaintext = nil
-	}
-	return result, nil
+	return receipt, nil
 }
 
 type AuditContext struct {

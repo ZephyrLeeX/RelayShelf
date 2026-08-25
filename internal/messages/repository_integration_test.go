@@ -5,6 +5,7 @@ package messages_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ZephyrLeeX/RelayShelf/internal/auth"
+	"github.com/ZephyrLeeX/RelayShelf/internal/httpapi"
 	"github.com/ZephyrLeeX/RelayShelf/internal/messages"
 	postgresutil "github.com/ZephyrLeeX/RelayShelf/internal/platform/database/testutil"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/id"
@@ -67,6 +69,12 @@ func (f *fixture) create(t *testing.T, owner, device uuid.UUID, key, body, lifec
 		t.Fatal(err)
 	}
 	return m
+}
+
+func (f *fixture) authenticatedRequest(method, path string, body []byte) *http.Request {
+	request := httptest.NewRequest(method, path, bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	return request.WithContext(auth.ContextWithAuthentication(request.Context(), auth.Authentication{User: auth.User{ID: f.alice}, Device: auth.Device{ID: f.aliceDevice}}))
 }
 
 func TestMessageCreateOwnerBodyVersionAndSensitiveAtRest(t *testing.T) {
@@ -243,8 +251,8 @@ func TestDirectSendForwardSensitiveAndIdempotency(t *testing.T) {
 		t.Fatal(err)
 	}
 	again, err := f.service.DirectSend(ctx, f.alice, f.aliceDevice, direct)
-	if err != nil || again.ID != first.ID {
-		t.Fatalf("replay=%v %v", again.ID, err)
+	if err != nil || again.MessageID != first.MessageID || !again.CreatedAt.Equal(first.CreatedAt) || !again.ExpiresAt.Equal(first.ExpiresAt) {
+		t.Fatalf("replay=%+v %v", again, err)
 	}
 	direct.Body = "changed"
 	if _, err = f.service.DirectSend(ctx, f.alice, f.aliceDevice, direct); !errors.Is(err, messages.ErrIdempotencyKeyReused) {
@@ -252,7 +260,7 @@ func TestDirectSendForwardSensitiveAndIdempotency(t *testing.T) {
 	}
 	var receiverOwner, provenance uuid.UUID
 	var sourceMessage *uuid.UUID
-	if err = f.db.QueryRow(ctx, `SELECT owner_id,source_user_id,source_message_id FROM messages WHERE id=$1`, first.ID).Scan(&receiverOwner, &provenance, &sourceMessage); err != nil {
+	if err = f.db.QueryRow(ctx, `SELECT owner_id,source_user_id,source_message_id FROM messages WHERE id=$1`, first.MessageID).Scan(&receiverOwner, &provenance, &sourceMessage); err != nil {
 		t.Fatal(err)
 	}
 	if receiverOwner != f.bob || provenance != f.alice || sourceMessage != nil {
@@ -261,6 +269,41 @@ func TestDirectSendForwardSensitiveAndIdempotency(t *testing.T) {
 	var metadata string
 	if err = f.db.QueryRow(ctx, `SELECT response_metadata::text FROM idempotency_keys WHERE user_id=$1 AND operation='message.direct-send' AND key='direct'`, f.alice).Scan(&metadata); err != nil || strings.Contains(metadata, "sent secret") {
 		t.Fatalf("unsafe idempotency metadata=%q %v", metadata, err)
+	}
+	if strings.Contains(metadata, "body") || strings.Contains(metadata, "tag") || strings.Contains(metadata, "ciphertext") || strings.Contains(metadata, "nonce") {
+		t.Fatalf("delivery metadata contains receiver state: %q", metadata)
+	}
+	received, err := f.service.Detail(ctx, f.bob, first.MessageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updatedBody := "receiver changed secret"
+	received, err = f.service.EditSensitive(ctx, f.bob, received.ID, received.Version, updatedBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	received, err = f.service.MakePermanent(ctx, f.bob, received.ID, received.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	received, err = f.service.SetFavorite(ctx, f.bob, received.ID, received.Version, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err = f.service.DirectSend(ctx, f.alice, f.aliceDevice, messages.DirectSendCommand{RecipientID: f.bob, Body: "sent secret", BodyFormat: messages.Markdown, Sensitive: true, IdempotencyKey: "direct"})
+	if err != nil || again.MessageID != first.MessageID || !again.CreatedAt.Equal(first.CreatedAt) || !again.ExpiresAt.Equal(first.ExpiresAt) {
+		t.Fatalf("replay after receiver mutation=%+v %v", again, err)
+	}
+	received, err = f.service.Trash(ctx, f.bob, received.ID, received.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = f.service.PermanentlyDelete(ctx, f.bob, received.ID, messages.AuditContext{DeviceID: f.bobDevice}); err != nil {
+		t.Fatal(err)
+	}
+	again, err = f.service.DirectSend(ctx, f.alice, f.aliceDevice, messages.DirectSendCommand{RecipientID: f.bob, Body: "sent secret", BodyFormat: messages.Markdown, Sensitive: true, IdempotencyKey: "direct"})
+	if err != nil || again.MessageID != first.MessageID || !again.CreatedAt.Equal(first.CreatedAt) || !again.ExpiresAt.Equal(first.ExpiresAt) {
+		t.Fatalf("replay after receiver delete=%+v %v", again, err)
 	}
 	if _, err = f.service.DirectSend(ctx, f.alice, f.aliceDevice, messages.DirectSendCommand{RecipientID: f.disabled, Body: "x", BodyFormat: messages.Text, IdempotencyKey: "disabled"}); !errors.Is(err, messages.ErrRecipientUnavailable) {
 		t.Fatalf("disabled=%v", err)
@@ -271,7 +314,11 @@ func TestDirectSendForwardSensitiveAndIdempotency(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plain, _, err := f.service.Reveal(ctx, f.bob, destination.ID)
+	destinationMessage, err := f.service.Detail(ctx, f.bob, destination.MessageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, _, err := f.service.Reveal(ctx, f.bob, destination.MessageID)
 	if err != nil || plain != "forward secret" {
 		t.Fatalf("destination reveal=%q %v", plain, err)
 	}
@@ -279,15 +326,42 @@ func TestDirectSendForwardSensitiveAndIdempotency(t *testing.T) {
 	if err = f.db.QueryRow(ctx, `SELECT body_ciphertext FROM messages WHERE id=$1`, source.ID).Scan(&sourceCipher); err != nil {
 		t.Fatal(err)
 	}
-	if err = f.db.QueryRow(ctx, `SELECT body_ciphertext FROM messages WHERE id=$1`, destination.ID).Scan(&destinationCipher); err != nil {
+	if err = f.db.QueryRow(ctx, `SELECT body_ciphertext FROM messages WHERE id=$1`, destination.MessageID).Scan(&destinationCipher); err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Equal(sourceCipher, destinationCipher) || destination.SourceMessageID == nil || *destination.SourceMessageID != source.ID {
+	if bytes.Equal(sourceCipher, destinationCipher) || destinationMessage.SourceMessageID == nil || *destinationMessage.SourceMessageID != source.ID {
 		t.Fatal("forward copied ciphertext or lost provenance")
 	}
 	replayed, err := f.service.Forward(ctx, f.alice, f.aliceDevice, forward)
-	if err != nil || replayed.ID != destination.ID {
+	if err != nil || replayed.MessageID != destination.MessageID || !replayed.CreatedAt.Equal(destination.CreatedAt) || !replayed.ExpiresAt.Equal(destination.ExpiresAt) {
 		t.Fatalf("forward replay=%+v %v", replayed, err)
+	}
+	destinationMessage, err = f.service.EditSensitive(ctx, f.bob, destinationMessage.ID, destinationMessage.Version, "receiver changed forward")
+	if err != nil {
+		t.Fatal(err)
+	}
+	destinationMessage, err = f.service.MakePermanent(ctx, f.bob, destinationMessage.ID, destinationMessage.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	destinationMessage, err = f.service.SetFavorite(ctx, f.bob, destinationMessage.ID, destinationMessage.Version, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err = f.service.Forward(ctx, f.alice, f.aliceDevice, forward)
+	if err != nil || replayed.MessageID != destination.MessageID || !replayed.CreatedAt.Equal(destination.CreatedAt) || !replayed.ExpiresAt.Equal(destination.ExpiresAt) {
+		t.Fatalf("forward replay after receiver mutation=%+v %v", replayed, err)
+	}
+	destinationMessage, err = f.service.Trash(ctx, f.bob, destinationMessage.ID, destinationMessage.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = f.service.PermanentlyDelete(ctx, f.bob, destinationMessage.ID, messages.AuditContext{DeviceID: f.bobDevice}); err != nil {
+		t.Fatal(err)
+	}
+	replayed, err = f.service.Forward(ctx, f.alice, f.aliceDevice, forward)
+	if err != nil || replayed.MessageID != destination.MessageID || !replayed.CreatedAt.Equal(destination.CreatedAt) || !replayed.ExpiresAt.Equal(destination.ExpiresAt) {
+		t.Fatalf("forward replay after receiver delete=%+v %v", replayed, err)
 	}
 	stale := forward
 	stale.IdempotencyKey = "forward-stale"
@@ -395,6 +469,78 @@ func TestSensitiveToggleEditTagsFavoriteExpiryAndTrashList(t *testing.T) {
 	}
 }
 
+func TestReplaceTagsRejectsTrashedMessageWithoutMutation(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	a, err := f.tags.Create(ctx, f.alice, "A", "#112233")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := f.tags.Create(ctx, f.alice, "B", "#445566")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := f.create(t, f.alice, f.aliceDevice, "trash-tags", "body", messages.Permanent, false, a.ID)
+	trashed, err := f.service.Trash(ctx, f.alice, m.ID, m.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(httpapi.ReplaceMessageTagsRequest{ExpectedVersion: trashed.Version, TagIds: []uuid.UUID{b.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	messages.NewHandler(f.service).ReplaceMessageTags(recorder, f.authenticatedRequest(http.MethodPut, "/api/v1/messages/"+m.ID.String()+"/tags", payload), m.ID)
+	if recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), `"code":"MESSAGE_TRASHED"`) {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var version int64
+	var tagID uuid.UUID
+	if err = f.db.QueryRow(ctx, `SELECT m.version,mt.tag_id FROM messages m JOIN message_tags mt ON mt.message_id=m.id WHERE m.id=$1`, m.ID).Scan(&version, &tagID); err != nil {
+		t.Fatal(err)
+	}
+	if version != trashed.Version || tagID != a.ID {
+		t.Fatalf("trashed tag mutation version=%d tag=%s", version, tagID)
+	}
+}
+
+func TestHTTPDecodedBodyLimitAllowsEscapedOneMiB(t *testing.T) {
+	f := newFixture(t)
+	handler := messages.NewHandler(f.service)
+	cases := []struct {
+		name string
+		body string
+	}{
+		{name: "ascii", body: strings.Repeat("a", messages.MaxBodyBytes)},
+		{name: "backslash-heavy", body: strings.Repeat(`\`, messages.MaxBodyBytes)},
+		{name: "quote-heavy", body: strings.Repeat(`"`, messages.MaxBodyBytes)},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			payload, err := json.Marshal(map[string]any{"body": test.body, "lifecycle": messages.Permanent})
+			if err != nil {
+				t.Fatal(err)
+			}
+			recorder := httptest.NewRecorder()
+			handler.CreateMessage(recorder, f.authenticatedRequest(http.MethodPost, "/api/v1/messages", payload), httpapi.CreateMessageParams{IdempotencyKey: "body-limit-" + test.name})
+			if recorder.Code != http.StatusCreated {
+				t.Fatalf("encoded=%d status=%d body=%s", len(payload), recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+	t.Run("decoded-over-limit", func(t *testing.T) {
+		payload, err := json.Marshal(map[string]any{"body": strings.Repeat("a", messages.MaxBodyBytes+1), "lifecycle": messages.Permanent})
+		if err != nil {
+			t.Fatal(err)
+		}
+		recorder := httptest.NewRecorder()
+		handler.CreateMessage(recorder, f.authenticatedRequest(http.MethodPost, "/api/v1/messages", payload), httpapi.CreateMessageParams{IdempotencyKey: "body-limit-over"})
+		if recorder.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+		}
+	})
+}
+
 func TestConcurrentVersionAndIdempotencyCreate(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
@@ -459,5 +605,145 @@ func TestConcurrentVersionAndIdempotencyCreate(t *testing.T) {
 	var count int
 	if err := f.db.QueryRow(ctx, `SELECT count(*) FROM messages WHERE owner_id=$1 AND body_plaintext='once'`, f.alice).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("count=%d %v", count, err)
+	}
+}
+
+func waitForBlockedQuery(t *testing.T, db *pgxpool.Pool, fragment string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var blocked bool
+		if err := db.QueryRow(ctx, `SELECT EXISTS (
+SELECT 1 FROM pg_stat_activity
+WHERE datname=current_database() AND pid<>pg_backend_pid()
+  AND position($1 in query)>0 AND wait_event_type='Lock')`, fragment).Scan(&blocked); err != nil {
+			t.Fatal(err)
+		}
+		if blocked {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("query containing %q did not block", fragment)
+		case <-ticker.C:
+		}
+	}
+}
+
+func TestRecipientDisableCommitsBeforeForward(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	source := f.create(t, f.alice, f.aliceDevice, "disable-first-source", "forward", messages.Permanent, false)
+	disableTx, err := f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer disableTx.Rollback(ctx) //nolint:errcheck
+	if _, err = disableTx.Exec(ctx, `UPDATE users SET status='DISABLED' WHERE id=$1`, f.bob); err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, sendErr := f.service.Forward(ctx, f.alice, f.aliceDevice, messages.ForwardCommand{SourceID: source.ID, RecipientID: f.bob, ExpectedVersion: source.Version, IdempotencyKey: "disable-first-forward"})
+		result <- sendErr
+	}()
+	waitForBlockedQuery(t, f.db, "SELECT status FROM users WHERE id=$1 FOR SHARE")
+	if err = disableTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-result; !errors.Is(err, messages.ErrRecipientUnavailable) {
+		t.Fatalf("forward after disable=%v", err)
+	}
+}
+
+func TestRecipientDeleteCommitsBeforeDirectSend(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	deleteTx, err := f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer deleteTx.Rollback(ctx) //nolint:errcheck
+	if _, err = deleteTx.Exec(ctx, `DELETE FROM users WHERE id=$1`, f.bob); err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, sendErr := f.service.DirectSend(ctx, f.alice, f.aliceDevice, messages.DirectSendCommand{RecipientID: f.bob, Body: "direct", BodyFormat: messages.Text, IdempotencyKey: "delete-first-direct"})
+		result <- sendErr
+	}()
+	waitForBlockedQuery(t, f.db, "SELECT status FROM users WHERE id=$1 FOR SHARE")
+	if err = deleteTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-result; !errors.Is(err, messages.ErrRecipientUnavailable) {
+		t.Fatalf("direct send after delete=%v", err)
+	}
+}
+
+func TestDirectSendCommitsBeforeConcurrentDisable(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	const advisoryKey int64 = 734920311
+	if _, err := f.db.Exec(ctx, `CREATE FUNCTION p3_block_message_insert() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM pg_advisory_xact_lock(734920311);
+  RETURN NEW;
+END $$;
+CREATE TRIGGER p3_block_message_insert BEFORE INSERT ON messages
+FOR EACH ROW EXECUTE FUNCTION p3_block_message_insert()`); err != nil {
+		t.Fatal(err)
+	}
+	blocker, err := f.db.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blocker.Release()
+	blockerTx, err := blocker.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blockerTx.Rollback(ctx) //nolint:errcheck
+	if _, err = blockerTx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, advisoryKey); err != nil {
+		t.Fatal(err)
+	}
+	sendResult := make(chan struct {
+		receipt messages.MessageDeliveryReceipt
+		err     error
+	}, 1)
+	go func() {
+		receipt, sendErr := f.service.DirectSend(ctx, f.alice, f.aliceDevice, messages.DirectSendCommand{RecipientID: f.bob, Body: "direct wins", BodyFormat: messages.Text, IdempotencyKey: "send-first-direct"})
+		sendResult <- struct {
+			receipt messages.MessageDeliveryReceipt
+			err     error
+		}{receipt: receipt, err: sendErr}
+	}()
+	waitForBlockedQuery(t, f.db, "INSERT INTO messages")
+	disableResult := make(chan error, 1)
+	go func() {
+		_, disableErr := f.db.Exec(ctx, `UPDATE users SET status='DISABLED' WHERE id=$1 /* p3-disable-after-send */`, f.bob)
+		disableResult <- disableErr
+	}()
+	waitForBlockedQuery(t, f.db, "p3-disable-after-send")
+	if err = blockerTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	sent := <-sendResult
+	if sent.err != nil || sent.receipt.MessageID == uuid.Nil {
+		t.Fatalf("send result=%+v err=%v", sent.receipt, sent.err)
+	}
+	if err = <-disableResult; err != nil {
+		t.Fatal(err)
+	}
+	var owner uuid.UUID
+	var status string
+	if err = f.db.QueryRow(ctx, `SELECT m.owner_id,u.status FROM messages m JOIN users u ON u.id=m.owner_id WHERE m.id=$1`, sent.receipt.MessageID).Scan(&owner, &status); err != nil {
+		t.Fatal(err)
+	}
+	if owner != f.bob || status != "DISABLED" {
+		t.Fatalf("owner=%s status=%s", owner, status)
 	}
 }

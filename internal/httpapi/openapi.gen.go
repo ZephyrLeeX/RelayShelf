@@ -154,6 +154,13 @@ type Message struct {
 	Version          int64               `json:"version"`
 }
 
+// MessageDeliveryReceipt defines model for MessageDeliveryReceipt.
+type MessageDeliveryReceipt struct {
+	CreatedAt time.Time          `json:"createdAt"`
+	ExpiresAt time.Time          `json:"expiresAt"`
+	MessageId openapi_types.UUID `json:"messageId"`
+}
+
 // MessageList defines model for MessageList.
 type MessageList struct {
 	Items      []MessageSummary `json:"items"`

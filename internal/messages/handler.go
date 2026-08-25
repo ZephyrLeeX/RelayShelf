@@ -18,7 +18,7 @@ type Handler struct{ service *Service }
 func NewHandler(service *Service) *Handler { return &Handler{service: service} }
 
 func decode(w http.ResponseWriter, r *http.Request, target any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, MaxBodyBytes+(64<<10))
+	r.Body = http.MaxBytesReader(w, r.Body, MaxJSONEnvelopeBytes)
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
@@ -64,6 +64,9 @@ func mapError(w http.ResponseWriter, r *http.Request, err error) {
 
 func tagDTO(t Tag) httpapi.Tag {
 	return httpapi.Tag{Id: t.ID, Name: t.Name, Color: t.Color, CreatedAt: t.CreatedAt.UTC(), UpdatedAt: t.UpdatedAt.UTC()}
+}
+func receiptDTO(receipt MessageDeliveryReceipt) httpapi.MessageDeliveryReceipt {
+	return httpapi.MessageDeliveryReceipt{MessageId: receipt.MessageID, CreatedAt: receipt.CreatedAt.UTC(), ExpiresAt: receipt.ExpiresAt.UTC()}
 }
 func messageDTO(m Message) httpapi.Message {
 	tags := make([]httpapi.Tag, 0, len(m.Tags))
@@ -265,12 +268,12 @@ func (h *Handler) DirectSendMessage(w http.ResponseWriter, r *http.Request, para
 	}
 	format, _, sensitive := defaults(body.BodyFormat, nil, body.Sensitive)
 	a := actor(r)
-	m, err := h.service.DirectSend(r.Context(), a.User.ID, a.Device.ID, DirectSendCommand{RecipientID: uuid.UUID(body.RecipientUserId), Body: body.Body, BodyFormat: format, Sensitive: sensitive, IdempotencyKey: params.IdempotencyKey})
+	receipt, err := h.service.DirectSend(r.Context(), a.User.ID, a.Device.ID, DirectSendCommand{RecipientID: uuid.UUID(body.RecipientUserId), Body: body.Body, BodyFormat: format, Sensitive: sensitive, IdempotencyKey: params.IdempotencyKey})
 	if err != nil {
 		mapError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, messageDTO(m))
+	writeJSON(w, http.StatusCreated, receiptDTO(receipt))
 }
 func (h *Handler) ForwardMessage(w http.ResponseWriter, r *http.Request, messageID httpapi.MessageId, params httpapi.ForwardMessageParams) {
 	var body httpapi.ForwardRequest
@@ -278,12 +281,12 @@ func (h *Handler) ForwardMessage(w http.ResponseWriter, r *http.Request, message
 		return
 	}
 	a := actor(r)
-	m, err := h.service.Forward(r.Context(), a.User.ID, a.Device.ID, ForwardCommand{SourceID: uuid.UUID(messageID), RecipientID: uuid.UUID(body.RecipientUserId), ExpectedVersion: body.ExpectedVersion, IdempotencyKey: params.IdempotencyKey})
+	receipt, err := h.service.Forward(r.Context(), a.User.ID, a.Device.ID, ForwardCommand{SourceID: uuid.UUID(messageID), RecipientID: uuid.UUID(body.RecipientUserId), ExpectedVersion: body.ExpectedVersion, IdempotencyKey: params.IdempotencyKey})
 	if err != nil {
 		mapError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, messageDTO(m))
+	writeJSON(w, http.StatusCreated, receiptDTO(receipt))
 }
 func (h *Handler) PermanentlyDeleteMessage(w http.ResponseWriter, r *http.Request, messageID httpapi.MessageId) {
 	a := actor(r)

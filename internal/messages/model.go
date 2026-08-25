@@ -7,14 +7,15 @@ import (
 )
 
 const (
-	MaxBodyBytes    = 1 << 20
-	MaxPreviewBytes = 16 << 10
-	DefaultLimit    = 30
-	MaxLimit        = 100
-	Temporary       = "TEMPORARY"
-	Permanent       = "PERMANENT"
-	Text            = "TEXT"
-	Markdown        = "MARKDOWN"
+	MaxBodyBytes         = 1 << 20
+	MaxJSONEnvelopeBytes = 6*MaxBodyBytes + (64 << 10)
+	MaxPreviewBytes      = 16 << 10
+	DefaultLimit         = 30
+	MaxLimit             = 100
+	Temporary            = "TEMPORARY"
+	Permanent            = "PERMANENT"
+	Text                 = "TEXT"
+	Markdown             = "MARKDOWN"
 )
 
 type Tag struct {
@@ -39,6 +40,12 @@ type Message struct {
 	Version                        int64
 	CreatedAt, UpdatedAt           time.Time
 	Tags                           []Tag
+}
+
+type MessageDeliveryReceipt struct {
+	MessageID uuid.UUID `json:"messageId"`
+	CreatedAt time.Time `json:"createdAt"`
+	ExpiresAt time.Time `json:"expiresAt"`
 }
 
 type Summary struct {
