@@ -4,10 +4,13 @@ package database_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/database"
 	postgresutil "github.com/ZephyrLeeX/RelayShelf/internal/platform/database/testutil"
+	"github.com/ZephyrLeeX/RelayShelf/migrations"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestMigrationsAndCompatibility(t *testing.T) {
@@ -44,6 +47,149 @@ func TestMigrationsAndCompatibility(t *testing.T) {
 	}
 	if err := database.CheckCompatible(ctx, db); err == nil {
 		t.Fatal("newer database is compatible")
+	}
+}
+
+func TestPhase5UploadHandoffIndexMigrations(t *testing.T) {
+	ctx := context.Background()
+	latest, err := database.LatestVersion()
+	if err != nil || latest != 3 {
+		t.Fatalf("latest migration version=%d want=3 err=%v", latest, err)
+	}
+
+	t.Run("existing clean v2 database", func(t *testing.T) {
+		db := postgresutil.NewEmptyDatabase(t)
+		applyReleasedV2(t, ctx, db)
+		assertVersion(t, ctx, db, 2)
+		assertPhase5IndexCount(t, ctx, db, 0)
+
+		if err := database.Migrate(ctx, db); err != nil {
+			t.Fatalf("migrate v2 to v3: %v", err)
+		}
+		assertVersion(t, ctx, db, 3)
+		assertPhase5Indexes(t, ctx, db)
+
+		if err := database.Migrate(ctx, db); err != nil {
+			t.Fatalf("repeat migration: %v", err)
+		}
+		assertVersion(t, ctx, db, 3)
+		assertPhase5Indexes(t, ctx, db)
+	})
+
+	t.Run("fresh database", func(t *testing.T) {
+		db := postgresutil.NewEmptyDatabase(t)
+		if err := database.Migrate(ctx, db); err != nil {
+			t.Fatalf("migrate fresh database: %v", err)
+		}
+		assertVersion(t, ctx, db, 3)
+		assertPhase5Indexes(t, ctx, db)
+
+		var businessTables int
+		if err := db.QueryRow(ctx, `SELECT count(*) FROM information_schema.tables
+WHERE table_schema = 'public' AND table_name = ANY($1)`, []string{
+			"users", "devices", "sessions", "messages", "tags", "message_tags", "file_objects", "message_attachments", "file_derivatives", "upload_sessions", "upload_parts", "idempotency_keys", "background_jobs", "system_settings", "audit_logs",
+		}).Scan(&businessTables); err != nil || businessTables != 15 {
+			t.Fatalf("Phase 1 business tables=%d want=15 err=%v", businessTables, err)
+		}
+	})
+
+	t.Run("drifted v2 compatibility", func(t *testing.T) {
+		db := postgresutil.NewEmptyDatabase(t)
+		applyReleasedV2(t, ctx, db)
+		if _, err := db.Exec(ctx, `
+CREATE INDEX upload_sessions_completed_cleanup_idx
+    ON upload_sessions (completed_at, id)
+    WHERE status = 'COMPLETED';
+CREATE INDEX upload_sessions_handoff_file_idx
+    ON upload_sessions (file_object_id, completed_at)
+    WHERE status = 'COMPLETED' AND consumed_at IS NULL;`); err != nil {
+			t.Fatalf("create drifted v2 indexes: %v", err)
+		}
+		assertVersion(t, ctx, db, 2)
+		assertPhase5Indexes(t, ctx, db)
+
+		if err := database.Migrate(ctx, db); err != nil {
+			t.Fatalf("migrate drifted v2 to v3: %v", err)
+		}
+		assertVersion(t, ctx, db, 3)
+		assertPhase5Indexes(t, ctx, db)
+	})
+}
+
+func applyReleasedV2(t *testing.T, ctx context.Context, db *pgxpool.Pool) {
+	t.Helper()
+	if _, err := db.Exec(ctx, "CREATE TABLE schema_migrations (version BIGINT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"); err != nil {
+		t.Fatalf("create migration metadata: %v", err)
+	}
+	conn, err := db.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire migration connection: %v", err)
+	}
+	defer conn.Release()
+	for version, name := range []string{"000001_initial_schema.sql", "000002_pg_trgm.sql"} {
+		sql, err := migrations.Files.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read released migration %s: %v", name, err)
+		}
+		migration := database.Migration{Version: int64(version + 1), Name: name, SQL: string(sql)}
+		if err := database.ApplyMigration(ctx, conn, migration); err != nil {
+			t.Fatalf("apply released migration %s: %v", name, err)
+		}
+	}
+}
+
+func assertVersion(t *testing.T, ctx context.Context, db *pgxpool.Pool, want int64) {
+	t.Helper()
+	got, err := database.CurrentVersion(ctx, db)
+	if err != nil || got != want {
+		t.Fatalf("schema version=%d want=%d err=%v", got, want, err)
+	}
+}
+
+func assertPhase5IndexCount(t *testing.T, ctx context.Context, db *pgxpool.Pool, want int) {
+	t.Helper()
+	var got int
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM pg_indexes
+WHERE schemaname = 'public' AND tablename = 'upload_sessions'
+AND indexname IN ('upload_sessions_completed_cleanup_idx', 'upload_sessions_handoff_file_idx')`).Scan(&got); err != nil || got != want {
+		t.Fatalf("Phase 5 index count=%d want=%d err=%v", got, want, err)
+	}
+}
+
+func assertPhase5Indexes(t *testing.T, ctx context.Context, db *pgxpool.Pool) {
+	t.Helper()
+	assertPhase5IndexCount(t, ctx, db, 2)
+	assertIndexDefinition(t, ctx, db, "upload_sessions_completed_cleanup_idx", "completed_at,id", "STATUS='COMPLETED'")
+	assertIndexDefinition(t, ctx, db, "upload_sessions_handoff_file_idx", "file_object_id,completed_at", "STATUS='COMPLETED'", "CONSUMED_ATISNULL")
+}
+
+func assertIndexDefinition(t *testing.T, ctx context.Context, db *pgxpool.Pool, name, wantColumns string, wantPredicates ...string) {
+	t.Helper()
+	var columns []string
+	var predicate string
+	err := db.QueryRow(ctx, `SELECT array_agg(attribute.attname ORDER BY key.ordinality),
+       pg_get_expr(index.indpred, index.indrelid)
+FROM pg_class index_class
+JOIN pg_index index ON index.indexrelid = index_class.oid
+CROSS JOIN LATERAL unnest(index.indkey) WITH ORDINALITY AS key(attnum, ordinality)
+JOIN pg_attribute attribute ON attribute.attrelid = index.indrelid AND attribute.attnum = key.attnum
+WHERE index_class.relname = $1
+GROUP BY index.indpred, index.indrelid`, name).Scan(&columns, &predicate)
+	if err != nil {
+		t.Fatalf("read index %s definition: %v", name, err)
+	}
+	if got := strings.Join(columns, ","); got != wantColumns {
+		t.Fatalf("index %s columns=%s want=%s", name, got, wantColumns)
+	}
+	normalized := strings.ToUpper(predicate)
+	normalized = strings.ReplaceAll(normalized, "::TEXT", "")
+	normalized = strings.Join(strings.Fields(normalized), "")
+	normalized = strings.ReplaceAll(normalized, "(", "")
+	normalized = strings.ReplaceAll(normalized, ")", "")
+	for _, want := range wantPredicates {
+		if !strings.Contains(normalized, want) {
+			t.Fatalf("index %s predicate=%q missing %q", name, predicate, want)
+		}
 	}
 }
 
