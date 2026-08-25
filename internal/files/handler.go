@@ -58,16 +58,36 @@ func (h *Handler) DownloadAttachment(w http.ResponseWriter, r *http.Request, att
 		h.writeError(w, r, ErrStorageUnavailable)
 		return
 	}
+	if err = r.Context().Err(); err != nil {
+		h.writeError(w, r, ErrStorageUnavailable)
+		return
+	}
+	reader := io.LimitReader(f, length)
+	buffer := make([]byte, 128<<10)
+	firstN, firstErr := reader.Read(buffer)
+	if firstErr != nil && !errors.Is(firstErr, io.EOF) {
+		h.writeError(w, r, ErrStorageUnavailable)
+		return
+	}
 	w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
 	if status == http.StatusPartialContent {
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, start+length-1, d.Size))
 	}
 	w.WriteHeader(status)
-	_, _ = copyDownload(r.Context(), w, io.LimitReader(f, length), make([]byte, 128<<10))
+	if firstN > 0 {
+		if _, err = w.Write(buffer[:firstN]); err != nil {
+			return
+		}
+	}
+	_, _ = copyDownload(r.Context(), w, reader, buffer)
 }
 func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, ErrAttachmentNotFound) {
 		auth.WriteError(w, r, http.StatusNotFound, "ATTACHMENT_NOT_FOUND", "attachment not found")
+		return
+	}
+	if errors.Is(err, ErrStorageIntegrity) {
+		auth.WriteError(w, r, http.StatusServiceUnavailable, "STORAGE_INTEGRITY_ERROR", "stored file failed integrity validation")
 		return
 	}
 	auth.WriteError(w, r, http.StatusServiceUnavailable, "STORAGE_UNAVAILABLE", "storage is unavailable")

@@ -1,6 +1,11 @@
 package files
 
-import "testing"
+import (
+	"bytes"
+	"context"
+	"errors"
+	"testing"
+)
 
 func TestParseRange(t *testing.T) {
 	tests := []struct {
@@ -35,4 +40,20 @@ func containsRune(s string, r rune) bool {
 		}
 	}
 	return false
+}
+
+type failingReader struct{ err error }
+
+func (r failingReader) Read([]byte) (int, error) { return 0, r.err }
+
+func TestCopyDownloadCancellationAndStorageReadFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := copyDownload(ctx, &bytes.Buffer{}, bytes.NewReader([]byte("data")), make([]byte, 2)); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation=%v", err)
+	}
+	readErr := errors.New("injected storage read failure")
+	if _, err := copyDownload(context.Background(), &bytes.Buffer{}, failingReader{err: readErr}, make([]byte, 2)); !errors.Is(err, readErr) {
+		t.Fatalf("storage read failure=%v", err)
+	}
 }

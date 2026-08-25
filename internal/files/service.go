@@ -59,11 +59,18 @@ func ETag(d Download) string {
 }
 func (s *Service) Open(ctx context.Context, d Download) (storage.File, error) {
 	f, err := s.store.Open(ctx, d.Key)
+	if errors.Is(err, storage.ErrNotFound) {
+		return nil, ErrStorageIntegrity
+	}
 	if err != nil {
 		return nil, ErrStorageUnavailable
 	}
 	info, err := f.Stat()
-	if err != nil || !info.Mode().IsRegular() || info.Size() != d.Size {
+	if err != nil {
+		_ = f.Close()
+		return nil, ErrStorageUnavailable
+	}
+	if !info.Mode().IsRegular() || info.Size() != d.Size {
 		_ = f.Close()
 		return nil, ErrStorageIntegrity
 	}
@@ -75,6 +82,7 @@ type objectRow struct {
 	Hash        []byte
 	Size        int64
 	Key, Status string
+	CreatedAt   time.Time
 }
 
 func (s *Service) GC(ctx context.Context, batch int, now time.Time) error {
@@ -86,7 +94,14 @@ func (s *Service) GC(ctx context.Context, batch int, now time.Time) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	rows, err := tx.Query(ctx, `SELECT fo.id FROM file_objects fo WHERE fo.status='READY' AND fo.ready_at<=($1::timestamptz-interval '24 hours') AND NOT EXISTS(SELECT 1 FROM message_attachments ma WHERE ma.file_object_id=fo.id) ORDER BY fo.ready_at,fo.id FOR UPDATE SKIP LOCKED LIMIT $2`, now, batch)
+	// A completed upload is a short-lived handoff lease until an attachment is
+	// bound. Once the lease expires, removing the upload lets normal orphan GC
+	// reclaim the object; consumed uploads are also safe to remove here because
+	// message_attachments is the long-term reference authority.
+	if _, err = tx.Exec(ctx, `DELETE FROM upload_sessions WHERE status='COMPLETED' AND completed_at<=($1::timestamptz-interval '24 hours')`, now); err != nil {
+		return err
+	}
+	rows, err := tx.Query(ctx, `SELECT fo.id FROM file_objects fo WHERE fo.status='READY' AND fo.ready_at<=($1::timestamptz-interval '24 hours') AND NOT EXISTS(SELECT 1 FROM message_attachments ma WHERE ma.file_object_id=fo.id) AND NOT EXISTS(SELECT 1 FROM upload_sessions us WHERE us.file_object_id=fo.id AND us.status='COMPLETED' AND us.consumed_at IS NULL AND us.completed_at>($1::timestamptz-interval '24 hours')) ORDER BY fo.ready_at,fo.id FOR UPDATE SKIP LOCKED LIMIT $2`, now, batch)
 	if err != nil {
 		return err
 	}
@@ -101,7 +116,7 @@ func (s *Service) GC(ctx context.Context, batch int, now time.Time) error {
 	}
 	rows.Close()
 	for _, id := range ids {
-		if _, err = tx.Exec(ctx, `UPDATE file_objects SET status='DELETING',updated_at=$2 WHERE id=$1 AND status='READY' AND NOT EXISTS(SELECT 1 FROM message_attachments WHERE file_object_id=$1)`, id, now); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE file_objects SET status='DELETING',updated_at=$2 WHERE id=$1 AND status='READY' AND NOT EXISTS(SELECT 1 FROM message_attachments WHERE file_object_id=$1) AND NOT EXISTS(SELECT 1 FROM upload_sessions WHERE file_object_id=$1 AND status='COMPLETED' AND consumed_at IS NULL AND completed_at>($2::timestamptz-interval '24 hours'))`, id, now); err != nil {
 			return err
 		}
 	}
@@ -114,30 +129,61 @@ func (s *Service) Reconcile(ctx context.Context, batch int) error {
 	if batch <= 0 {
 		return nil
 	}
-	rows, err := s.pool.Query(ctx, `SELECT id,sha256,size_bytes,storage_key,status FROM file_objects WHERE status IN ('PENDING','DELETING') ORDER BY created_at,id LIMIT $1`, batch)
-	if err != nil {
-		return err
-	}
-	objects := []objectRow{}
-	for rows.Next() {
-		var o objectRow
-		if err = rows.Scan(&o.ID, &o.Hash, &o.Size, &o.Key, &o.Status); err != nil {
-			rows.Close()
-			return err
+	var reconcileErrors []error
+	var cursorTime time.Time
+	var cursorID uuid.UUID
+	haveCursor := false
+	processed := 0
+	for processed < batch {
+		pageSize := batch - processed
+		var rows pgx.Rows
+		var err error
+		if haveCursor {
+			rows, err = s.pool.Query(ctx, `SELECT id,sha256,size_bytes,storage_key,status,created_at FROM file_objects WHERE status IN ('PENDING','DELETING') AND (created_at,id)>($1,$2) ORDER BY created_at,id LIMIT $3`, cursorTime, cursorID, pageSize)
+		} else {
+			rows, err = s.pool.Query(ctx, `SELECT id,sha256,size_bytes,storage_key,status,created_at FROM file_objects WHERE status IN ('PENDING','DELETING') ORDER BY created_at,id LIMIT $1`, pageSize)
 		}
-		objects = append(objects, o)
-	}
-	rows.Close()
-	for _, o := range objects {
-		if o.Status == "PENDING" {
-			if err = s.reconcilePending(ctx, o); err != nil {
-				return err
+		if err != nil {
+			reconcileErrors = append(reconcileErrors, fmt.Errorf("scan file objects: %w", err))
+			break
+		}
+		objects := []objectRow{}
+		for rows.Next() {
+			var o objectRow
+			if err = rows.Scan(&o.ID, &o.Hash, &o.Size, &o.Key, &o.Status, &o.CreatedAt); err != nil {
+				reconcileErrors = append(reconcileErrors, fmt.Errorf("scan file object: %w", err))
+				break
 			}
-		} else if err = s.deleteObject(ctx, o); err != nil {
-			return err
+			objects = append(objects, o)
+		}
+		if rows.Err() != nil {
+			reconcileErrors = append(reconcileErrors, fmt.Errorf("scan file objects: %w", rows.Err()))
+		}
+		rows.Close()
+		if len(objects) == 0 {
+			break
+		}
+		for _, o := range objects {
+			cursorTime, cursorID, haveCursor = o.CreatedAt, o.ID, true
+			if o.Status == "PENDING" {
+				err = s.reconcilePending(ctx, o)
+			} else {
+				err = s.deleteObject(ctx, o)
+			}
+			if err != nil {
+				reconcileErrors = append(reconcileErrors, fmt.Errorf("reconcile file object: %w", err))
+				continue
+			}
+			processed++
+			if processed == batch {
+				break
+			}
 		}
 	}
-	return s.cleanupTemps(ctx)
+	if err := s.cleanupTemps(ctx); err != nil {
+		reconcileErrors = append(reconcileErrors, err)
+	}
+	return errors.Join(reconcileErrors...)
 }
 func (s *Service) reconcilePending(ctx context.Context, o objectRow) error {
 	key := storage.Key(o.Key)
@@ -224,18 +270,21 @@ func (s *Service) cleanupTemps(ctx context.Context) error {
 	if err != nil {
 		return ErrStorageUnavailable
 	}
+	var cleanupErrors []error
 	for _, id := range ids {
 		var exists bool
 		if err = s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM file_objects WHERE id=$1 AND status='PENDING')`, id).Scan(&exists); err != nil {
-			return err
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("check commit temp owner: %w", err))
+			continue
 		}
 		if !exists {
 			if err = s.store.Delete(ctx, storage.CommitTempKey(id)); err != nil {
-				return ErrStorageUnavailable
+				cleanupErrors = append(cleanupErrors, ErrStorageUnavailable)
+				continue
 			}
 		}
 	}
-	return nil
+	return errors.Join(cleanupErrors...)
 }
 func (s *Service) VerifyReady(ctx context.Context, batch int) error {
 	rows, err := s.pool.Query(ctx, `SELECT storage_key,size_bytes FROM file_objects WHERE status='READY' ORDER BY ready_at,id LIMIT $1`, batch)

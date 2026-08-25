@@ -1,12 +1,16 @@
 package uploads
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"sync"
+	"time"
 
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/clock"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/id"
@@ -24,6 +28,46 @@ type FileFinalizer struct {
 	now   clock.Clock
 	slots chan struct{}
 	hooks FinalizeFailureHooks
+}
+
+// contentFinalizeLocks serializes finalization of identical content inside this
+// process. Entries are reference counted so hashes that are no longer active do
+// not accumulate for the lifetime of the server.
+var contentFinalizeLocks = newContentLockRegistry()
+
+type contentLockRegistry struct {
+	mu    sync.Mutex
+	locks map[string]*contentLock
+}
+
+type contentLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+func newContentLockRegistry() *contentLockRegistry {
+	return &contentLockRegistry{locks: make(map[string]*contentLock)}
+}
+
+func (r *contentLockRegistry) lock(key string) func() {
+	r.mu.Lock()
+	entry := r.locks[key]
+	if entry == nil {
+		entry = &contentLock{}
+		r.locks[key] = entry
+	}
+	entry.refs++
+	r.mu.Unlock()
+	entry.mu.Lock()
+	return func() {
+		entry.mu.Unlock()
+		r.mu.Lock()
+		entry.refs--
+		if entry.refs == 0 {
+			delete(r.locks, key)
+		}
+		r.mu.Unlock()
+	}
 }
 
 type FinalizeFailureHooks struct {
@@ -71,22 +115,33 @@ func (f *FileFinalizer) Finalize(ctx context.Context, upload Session, stage stag
 		_ = f.markFailed(ctx, upload.ID)
 		return Session{}, ErrStagingCorrupt
 	}
+	unlockContent := contentFinalizeLocks.lock(string(hash[:]) + ":" + strconv.FormatInt(upload.ExpectedSize, 10))
+	defer unlockContent()
+
 	obj, found, err := f.find(ctx, hash[:], upload.ExpectedSize)
 	if err != nil {
 		return Session{}, ErrFinalizeRetryable
 	}
 	if found {
-		if obj.Status != "READY" {
+		switch obj.Status {
+		case "PENDING":
+			obj, found, err = f.reconcilePending(ctx, obj)
+			if err != nil {
+				return Session{}, ErrFinalizeRetryable
+			}
+			if !found {
+				break
+			}
+		case "DELETING":
 			return Session{}, ErrFinalizeRetryable
 		}
-		if err = f.completeWith(ctx, upload, obj.ID); err != nil {
-			return Session{}, ErrFinalizeRetryable
+		if found {
+			if obj.Status != "READY" || f.completeWith(ctx, upload, obj.ID) != nil {
+				return Session{}, ErrFinalizeRetryable
+			}
+			f.deleteStaging(stage, upload.ID)
+			return completedSession(upload, obj.ID, f.now.Now()), nil
 		}
-		f.deleteStaging(stage, upload.ID)
-		upload.Status, upload.FileObjectID = Completed, &obj.ID
-		now := f.now.Now()
-		upload.CompletedAt, upload.UpdatedAt = &now, now
-		return upload, nil
 	}
 	space, spaceErr := f.store.Space(ctx)
 	if spaceErr != nil || uint64(upload.ExpectedSize) > space.AvailableBytes {
@@ -100,15 +155,35 @@ func (f *FileFinalizer) Finalize(ctx context.Context, upload Session, stage stag
 		return Session{}, ErrFinalizeRetryable
 	}
 	if !created {
+		if obj.Status == "PENDING" {
+			obj, found, err = f.reconcilePending(ctx, obj)
+			if err != nil {
+				return Session{}, ErrFinalizeRetryable
+			}
+			if !found {
+				obj, created, err = f.reservePending(ctx, hash[:], upload.ExpectedSize, mimeType)
+				if err != nil || !created {
+					return Session{}, ErrFinalizeRetryable
+				}
+			}
+		}
 		if obj.Status == "READY" {
 			if err = f.completeWith(ctx, upload, obj.ID); err == nil {
 				f.deleteStaging(stage, upload.ID)
-				upload.Status, upload.FileObjectID = Completed, &obj.ID
-				return upload, nil
+				return completedSession(upload, obj.ID, f.now.Now()), nil
 			}
 		}
-		return Session{}, ErrFinalizeRetryable
+		if !created {
+			return Session{}, ErrFinalizeRetryable
+		}
 	}
+	keepPending := false
+	defer func() {
+		if !keepPending {
+			_ = f.store.Delete(context.WithoutCancel(ctx), storage.CommitTempKey(obj.ID))
+			_, _ = f.pool.Exec(context.WithoutCancel(ctx), `DELETE FROM file_objects WHERE id=$1 AND status='PENDING'`, obj.ID)
+		}
+	}()
 	if f.hooks.AfterPending != nil {
 		if err = f.hooks.AfterPending(); err != nil {
 			return Session{}, ErrFinalizeRetryable
@@ -163,8 +238,12 @@ func (f *FileFinalizer) Finalize(ctx context.Context, upload Session, stage stag
 		}
 	}
 	if err = f.store.Commit(ctx, tempKey, storage.ObjectKey(obj.ID)); err != nil {
+		if exists, statErr := f.finalExists(ctx, obj); exists || statErr != nil {
+			keepPending = true
+		}
 		return Session{}, ErrFinalizeRetryable
 	}
+	keepPending = true
 	if f.hooks.AfterRename != nil {
 		if err = f.hooks.AfterRename(); err != nil {
 			return Session{}, ErrFinalizeRetryable
@@ -182,11 +261,15 @@ func (f *FileFinalizer) Finalize(ctx context.Context, upload Session, stage stag
 	if err = f.readyAndComplete(ctx, upload, obj); err != nil {
 		return Session{}, ErrFinalizeRetryable
 	}
+	keepPending = true
 	f.deleteStaging(stage, upload.ID)
-	upload.Status, upload.FileObjectID = Completed, &obj.ID
-	now := f.now.Now()
+	return completedSession(upload, obj.ID, f.now.Now()), nil
+}
+
+func completedSession(upload Session, fileID uuid.UUID, now time.Time) Session {
+	upload.Status, upload.FileObjectID = Completed, &fileID
 	upload.CompletedAt, upload.UpdatedAt = &now, now
-	return upload, nil
+	return upload
 }
 
 func (f *FileFinalizer) deleteStaging(stage staging.Provider, uploadID uuid.UUID) {
@@ -274,6 +357,54 @@ func (f *FileFinalizer) find(ctx context.Context, hash []byte, size int64) (file
 	return o, err == nil, err
 }
 
+func (f *FileFinalizer) finalExists(ctx context.Context, obj fileObject) (bool, error) {
+	_, err := f.store.Stat(ctx, storage.ObjectKey(obj.ID))
+	if errors.Is(err, storage.ErrNotFound) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// reconcilePending resolves the only two safe outcomes for a dedup reservation:
+// a fully committed final object becomes READY, while a reservation with no
+// final object is removed so this request can reserve and write it again.
+func (f *FileFinalizer) reconcilePending(ctx context.Context, obj fileObject) (fileObject, bool, error) {
+	key := storage.ObjectKey(obj.ID)
+	info, err := f.store.Stat(ctx, key)
+	if errors.Is(err, storage.ErrNotFound) {
+		if deleteErr := f.store.Delete(ctx, storage.CommitTempKey(obj.ID)); deleteErr != nil {
+			return obj, true, deleteErr
+		}
+		ct, deleteErr := f.pool.Exec(ctx, `DELETE FROM file_objects fo WHERE fo.id=$1 AND fo.status='PENDING' AND NOT EXISTS(SELECT 1 FROM message_attachments ma WHERE ma.file_object_id=fo.id) AND NOT EXISTS(SELECT 1 FROM upload_sessions us WHERE us.file_object_id=fo.id)`, obj.ID)
+		if deleteErr != nil {
+			return obj, true, deleteErr
+		}
+		return obj, ct.RowsAffected() == 0, nil
+	}
+	if err != nil {
+		return obj, true, err
+	}
+	if !info.Mode().IsRegular() || info.Size() != obj.Size {
+		return obj, true, errors.New("pending final metadata mismatch")
+	}
+	file, err := f.store.Open(ctx, key)
+	if err != nil {
+		return obj, true, err
+	}
+	h := sha256.New()
+	_, copyErr := io.CopyBuffer(h, file, make([]byte, 256<<10))
+	closeErr := file.Close()
+	if copyErr != nil || closeErr != nil || !bytes.Equal(h.Sum(nil), obj.SHA) {
+		return obj, true, errors.New("pending final hash mismatch")
+	}
+	ct, err := f.pool.Exec(ctx, `UPDATE file_objects SET status='READY',ready_at=$2,updated_at=$2 WHERE id=$1 AND status='PENDING' AND sha256=$3 AND size_bytes=$4`, obj.ID, f.now.Now(), obj.SHA, obj.Size)
+	if err != nil || ct.RowsAffected() != 1 {
+		return obj, true, errors.New("pending object changed")
+	}
+	obj.Status = "READY"
+	return obj, true, nil
+}
+
 func (f *FileFinalizer) reservePending(ctx context.Context, hash []byte, size int64, mimeType string) (fileObject, bool, error) {
 	tx, err := f.pool.Begin(ctx)
 	if err != nil {
@@ -327,11 +458,24 @@ func (f *FileFinalizer) reservePending(ctx context.Context, hash []byte, size in
 }
 
 func (f *FileFinalizer) completeWith(ctx context.Context, upload Session, fileID uuid.UUID) error {
-	ct, err := f.pool.Exec(ctx, `UPDATE upload_sessions SET file_object_id=$3,status='COMPLETED',completed_at=$4,updated_at=$4 WHERE id=$1 AND user_id=$2 AND status='COMPLETING'`, upload.ID, upload.UserID, fileID, f.now.Now())
+	tx, err := f.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var uploadStatus, objectStatus string
+	if err = tx.QueryRow(ctx, `SELECT status FROM upload_sessions WHERE id=$1 AND user_id=$2 FOR UPDATE`, upload.ID, upload.UserID).Scan(&uploadStatus); err != nil || uploadStatus != Completing {
+		return errors.New("upload changed")
+	}
+	if err = tx.QueryRow(ctx, `SELECT status FROM file_objects WHERE id=$1 FOR UPDATE`, fileID).Scan(&objectStatus); err != nil || objectStatus != "READY" {
+		return errors.New("file object is not ready")
+	}
+	now := f.now.Now()
+	ct, err := tx.Exec(ctx, `UPDATE upload_sessions SET file_object_id=$3,status='COMPLETED',completed_at=$4,updated_at=$4 WHERE id=$1 AND user_id=$2 AND status='COMPLETING'`, upload.ID, upload.UserID, fileID, now)
 	if err != nil || ct.RowsAffected() != 1 {
 		return fmt.Errorf("complete upload")
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (f *FileFinalizer) readyAndComplete(ctx context.Context, upload Session, obj fileObject) error {
@@ -341,6 +485,13 @@ func (f *FileFinalizer) readyAndComplete(ctx context.Context, upload Session, ob
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	now := f.now.Now()
+	var uploadStatus, objectStatus string
+	if err = tx.QueryRow(ctx, `SELECT status FROM upload_sessions WHERE id=$1 AND user_id=$2 FOR UPDATE`, upload.ID, upload.UserID).Scan(&uploadStatus); err != nil || uploadStatus != Completing {
+		return errors.New("upload changed")
+	}
+	if err = tx.QueryRow(ctx, `SELECT status FROM file_objects WHERE id=$1 FOR UPDATE`, obj.ID).Scan(&objectStatus); err != nil || objectStatus != "PENDING" {
+		return errors.New("pending object changed")
+	}
 	ct, err := tx.Exec(ctx, `UPDATE file_objects SET status='READY',ready_at=$2,updated_at=$2 WHERE id=$1 AND status='PENDING' AND sha256=$3 AND size_bytes=$4`, obj.ID, now, obj.SHA, obj.Size)
 	if err != nil || ct.RowsAffected() != 1 {
 		return errors.New("pending object changed")

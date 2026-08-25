@@ -55,3 +55,25 @@ func TestDifferentPartsRunTogetherAndExclusiveWaits(t *testing.T) {
 		t.Fatal("registry leaked")
 	}
 }
+
+func TestContentFinalizeLockSerializesAndReclaimsEntry(t *testing.T) {
+	registry := newContentLockRegistry()
+	first := registry.lock("hash:size")
+	acquired := make(chan func(), 1)
+	go func() { acquired <- registry.lock("hash:size") }()
+	select {
+	case unlock := <-acquired:
+		unlock()
+		t.Fatal("identical content did not serialize")
+	default:
+	}
+	first()
+	second := <-acquired
+	second()
+	registry.mu.Lock()
+	remaining := len(registry.locks)
+	registry.mu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("content finalize registry leaked %d entries", remaining)
+	}
+}

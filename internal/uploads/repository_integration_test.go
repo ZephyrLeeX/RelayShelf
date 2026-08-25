@@ -5,6 +5,7 @@ package uploads_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"os"
 	"path/filepath"
@@ -21,6 +22,61 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+type finalizeFailureAdapter struct {
+	storage.Adapter
+	mu    sync.Mutex
+	mode  string
+	fired bool
+}
+
+func (a *finalizeFailureAdapter) fire(mode string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.mode != mode || a.fired {
+		return false
+	}
+	a.fired = true
+	return true
+}
+
+func (a *finalizeFailureAdapter) CreateCommitTemp(ctx context.Context, key storage.Key) (storage.File, error) {
+	f, err := a.Adapter.CreateCommitTemp(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	return &finalizeFailureFile{File: f, adapter: a}, nil
+}
+
+func (a *finalizeFailureAdapter) Commit(ctx context.Context, temp, final storage.Key) error {
+	if a.fire("rename") {
+		return errors.New("injected rename failure")
+	}
+	err := a.Adapter.Commit(ctx, temp, final)
+	if err == nil && a.fire("post-rename") {
+		return errors.New("injected directory sync failure")
+	}
+	return err
+}
+
+type finalizeFailureFile struct {
+	storage.File
+	adapter *finalizeFailureAdapter
+}
+
+func (f *finalizeFailureFile) Write(p []byte) (int, error) {
+	if f.adapter.fire("write") {
+		return 0, errors.New("injected write failure")
+	}
+	return f.File.Write(p)
+}
+
+func (f *finalizeFailureFile) Sync() error {
+	if f.adapter.fire("sync") {
+		return errors.New("injected sync failure")
+	}
+	return f.File.Sync()
+}
 
 type integrationClock struct{ now time.Time }
 
@@ -161,6 +217,226 @@ func TestPhase5CrashAfterRenameReconcilesAndCompletes(t *testing.T) {
 	entries, err := os.ReadDir(filepath.Join(root, "objects"))
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("physical=%d %v", len(entries), err)
+	}
+}
+
+func TestPhase5FinalizeFailuresRetryWithoutRestart(t *testing.T) {
+	tests := []struct {
+		name, adapterMode, hook string
+		retainsPendingFinal     bool
+	}{
+		{name: "after pending", hook: "after-pending"},
+		{name: "write", adapterMode: "write"},
+		{name: "fsync", adapterMode: "sync"},
+		{name: "rename before move", adapterMode: "rename"},
+		{name: "rename succeeded before error", adapterMode: "post-rename", retainsPendingFinal: true},
+		{name: "after rename", hook: "after-rename", retainsPendingFinal: true},
+		{name: "before ready", hook: "before-ready", retainsPendingFinal: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newUploadFixture(t)
+			ctx := context.Background()
+			root := t.TempDir()
+			base, err := storage.NewFilesystemStorageAdapter(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = base.EnsureLayout(ctx); err != nil {
+				t.Fatal(err)
+			}
+			adapter := &finalizeFailureAdapter{Adapter: base, mode: tt.adapterMode}
+			var hookFired bool
+			oneShot := func(name string) func() error {
+				return func() error {
+					if tt.hook != name || hookFired {
+						return nil
+					}
+					hookFired = true
+					return errors.New("injected finalize failure")
+				}
+			}
+			hooks := uploads.FinalizeFailureHooks{
+				AfterPending: oneShot("after-pending"),
+				AfterRename:  oneShot("after-rename"),
+				BeforeReady:  oneShot("before-ready"),
+			}
+			service := f.service(uploads.NewPostgreSQLRepository(f.db), 1<<30)
+			service.SetFinalizer(uploads.NewFileFinalizerWithFailureHooks(f.db, adapter, id.UUIDv7{}, f.clock, 1, hooks))
+			u, err := service.Create(ctx, f.alice, uploads.CreateCommand{OriginalFilename: "retry.bin", ExpectedSize: 5})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = service.PutPart(ctx, f.alice, u.ID, 0, 5, bytes.NewReader([]byte("retry"))); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = service.Complete(ctx, f.alice, u.ID); !errors.Is(err, uploads.ErrFinalizeRetryable) {
+				t.Fatalf("first complete=%v", err)
+			}
+			var pending, finals, temps int
+			if err = f.db.QueryRow(ctx, `SELECT count(*) FROM file_objects WHERE status='PENDING'`).Scan(&pending); err != nil {
+				t.Fatal(err)
+			}
+			finalEntries, _ := os.ReadDir(filepath.Join(root, "objects"))
+			tempEntries, _ := os.ReadDir(filepath.Join(root, ".commit-tmp"))
+			finals, temps = len(finalEntries), len(tempEntries)
+			if tt.retainsPendingFinal {
+				if pending != 1 || finals != 1 || temps != 0 {
+					t.Fatalf("retained state pending=%d finals=%d temps=%d", pending, finals, temps)
+				}
+			} else if pending != 0 || finals != 0 || temps != 0 {
+				t.Fatalf("cleaned state pending=%d finals=%d temps=%d", pending, finals, temps)
+			}
+			done, err := service.Complete(ctx, f.alice, u.ID)
+			if err != nil || done.Status != uploads.Completed {
+				t.Fatalf("retry=%+v err=%v", done, err)
+			}
+		})
+	}
+}
+
+func TestPhase5FinalizeStagingDeleteFailureReconciles(t *testing.T) {
+	f := newUploadFixture(t)
+	ctx := context.Background()
+	root := t.TempDir()
+	adapter, err := storage.NewFilesystemStorageAdapter(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = adapter.EnsureLayout(ctx); err != nil {
+		t.Fatal(err)
+	}
+	service := f.service(uploads.NewPostgreSQLRepository(f.db), 1<<30)
+	service.SetFinalizer(uploads.NewFileFinalizerWithFailureHooks(f.db, adapter, id.UUIDv7{}, f.clock, 1, uploads.FinalizeFailureHooks{BeforeStagingDelete: func() error {
+		return errors.New("injected staging delete failure")
+	}}))
+	u, err := service.Create(ctx, f.alice, uploads.CreateCommand{OriginalFilename: "staging.bin", ExpectedSize: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = service.PutPart(ctx, f.alice, u.ID, 0, 4, bytes.NewReader([]byte("data"))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.Complete(ctx, f.alice, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if exists, existsErr := f.stage.Exists(u.ID); existsErr != nil || !exists {
+		t.Fatalf("failed staging delete was not retained exists=%v err=%v", exists, existsErr)
+	}
+	if err = service.ReconcileStaging(ctx, 100); err != nil {
+		t.Fatal(err)
+	}
+	if exists, existsErr := f.stage.Exists(u.ID); existsErr != nil || exists {
+		t.Fatalf("staging reconcile exists=%v err=%v", exists, existsErr)
+	}
+}
+
+func TestPhase5CompletedUploadHandoffLeaseAndGC(t *testing.T) {
+	f := newUploadFixture(t)
+	ctx := context.Background()
+	root := t.TempDir()
+	adapter, err := storage.NewFilesystemStorageAdapter(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = adapter.EnsureLayout(ctx); err != nil {
+		t.Fatal(err)
+	}
+	service := f.service(uploads.NewPostgreSQLRepository(f.db), 1<<30)
+	service.SetFinalizer(uploads.NewFileFinalizer(f.db, adapter, id.UUIDv7{}, f.clock, 1))
+	fileService := files.NewService(f.db, adapter)
+
+	completeDedup := func(data string) uploads.Session {
+		t.Helper()
+		fileID := uuid.Must(uuid.NewV7())
+		temp, createErr := adapter.CreateCommitTemp(ctx, storage.CommitTempKey(fileID))
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		if _, createErr = temp.Write([]byte(data)); createErr != nil || temp.Sync() != nil || temp.Close() != nil {
+			t.Fatal(createErr)
+		}
+		if createErr = adapter.Commit(ctx, storage.CommitTempKey(fileID), storage.ObjectKey(fileID)); createErr != nil {
+			t.Fatal(createErr)
+		}
+		hash := sha256.Sum256([]byte(data))
+		old := f.clock.now.Add(-25 * time.Hour)
+		if _, createErr = f.db.Exec(ctx, `INSERT INTO file_objects(id,sha256,size_bytes,detected_mime,storage_backend,storage_key,status,created_at,updated_at,ready_at) VALUES($1,$2,$3,'application/octet-stream','filesystem',$4,'READY',$5,$5,$5)`, fileID, hash[:], len(data), storage.ObjectKey(fileID).String(), old); createErr != nil {
+			t.Fatal(createErr)
+		}
+		u, createErr := service.Create(ctx, f.alice, uploads.CreateCommand{OriginalFilename: "lease.bin", ExpectedSize: int64(len(data))})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		if createErr = service.PutPart(ctx, f.alice, u.ID, 0, int64(len(data)), bytes.NewReader([]byte(data))); createErr != nil {
+			t.Fatal(createErr)
+		}
+		done, createErr := service.Complete(ctx, f.alice, u.ID)
+		if createErr != nil || done.FileObjectID == nil || *done.FileObjectID != fileID {
+			t.Fatalf("dedup=%+v err=%v", done, createErr)
+		}
+		return done
+	}
+
+	leased := completeDedup("leased")
+	if err = fileService.GC(ctx, 100, f.clock.now); err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	if err = f.db.QueryRow(ctx, `SELECT status FROM file_objects WHERE id=$1`, *leased.FileObjectID).Scan(&status); err != nil || status != "READY" {
+		t.Fatalf("lease did not protect object status=%q err=%v", status, err)
+	}
+	messageID, attachmentID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	if _, err = f.db.Exec(ctx, `INSERT INTO messages(id,owner_id,body_plaintext,body_format,sensitive,lifecycle,expires_at,created_at,updated_at) VALUES($1,$2,'x','TEXT',false,'TEMPORARY',$3,$4,$4)`, messageID, f.alice, f.clock.now.Add(time.Hour), f.clock.now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.db.Exec(ctx, `INSERT INTO message_attachments(id,message_id,file_object_id,original_filename,display_order) VALUES($1,$2,$3,'lease.bin',0)`, attachmentID, messageID, *leased.FileObjectID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.db.Exec(ctx, `UPDATE upload_sessions SET consumed_at=$2::timestamptz,consumed_message_id=$3,completed_at=$2::timestamptz-interval '25 hours' WHERE id=$1`, leased.ID, f.clock.now, messageID); err != nil {
+		t.Fatal(err)
+	}
+	if err = fileService.GC(ctx, 100, f.clock.now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = adapter.Stat(ctx, storage.ObjectKey(*leased.FileObjectID)); err != nil {
+		t.Fatalf("attachment authority lost after upload cleanup: %v", err)
+	}
+
+	abandoned := completeDedup("abandoned")
+	if _, err = f.db.Exec(ctx, `UPDATE upload_sessions SET completed_at=$2::timestamptz-interval '25 hours' WHERE id=$1`, abandoned.ID, f.clock.now); err != nil {
+		t.Fatal(err)
+	}
+	if err = fileService.GC(ctx, 100, f.clock.now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = adapter.Stat(ctx, storage.ObjectKey(*abandoned.FileObjectID)); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("expired handoff object remains: %v", err)
+	}
+
+	gcWinner := completeDedup("gc-winner")
+	if _, err = f.db.Exec(ctx, `UPDATE upload_sessions SET status='COMPLETING',file_object_id=NULL,completed_at=NULL WHERE id=$1`, gcWinner.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.db.Exec(ctx, `UPDATE file_objects SET status='DELETING' WHERE id=$1`, *gcWinner.FileObjectID); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.stage.Create(gcWinner.ID, int64(len("gc-winner"))); err != nil {
+		t.Fatal(err)
+	}
+	stageFile, err := f.stage.Open(gcWinner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = stageFile.WriteAt([]byte("gc-winner"), 0); err != nil || stageFile.Sync() != nil || stageFile.Close() != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.Complete(ctx, f.alice, gcWinner.ID); !errors.Is(err, uploads.ErrFinalizeRetryable) {
+		t.Fatalf("complete against deleting object=%v", err)
+	}
+	var completedRefs int
+	if err = f.db.QueryRow(ctx, `SELECT count(*) FROM upload_sessions WHERE id=$1 AND status='COMPLETED' AND file_object_id=$2`, gcWinner.ID, *gcWinner.FileObjectID).Scan(&completedRefs); err != nil || completedRefs != 0 {
+		t.Fatalf("completed reference to deleting object=%d err=%v", completedRefs, err)
 	}
 }
 
