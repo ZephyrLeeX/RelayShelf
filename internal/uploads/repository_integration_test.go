@@ -6,13 +6,17 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/ZephyrLeeX/RelayShelf/internal/files"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/database/testutil"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/id"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/staging"
+	"github.com/ZephyrLeeX/RelayShelf/internal/storage"
 	"github.com/ZephyrLeeX/RelayShelf/internal/uploads"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -26,6 +30,138 @@ type healthySpace struct{}
 
 func (healthySpace) Probe() (staging.Space, error) {
 	return staging.Space{AvailableBytes: 1 << 40, TotalBytes: 2 << 40}, nil
+}
+
+func TestPhase5FinalizeDedupConcurrencyAndQuota(t *testing.T) {
+	f := newUploadFixture(t)
+	ctx := context.Background()
+	storeRoot := t.TempDir()
+	adapter, err := storage.NewFilesystemStorageAdapter(storeRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = adapter.EnsureLayout(ctx); err != nil {
+		t.Fatal(err)
+	}
+	service := f.service(uploads.NewPostgreSQLRepository(f.db), 1<<30)
+	service.SetFinalizer(uploads.NewFileFinalizer(f.db, adapter, id.UUIDv7{}, f.clock, 2))
+	complete := func(owner uuid.UUID, name string, data []byte) (uploads.Session, error) {
+		u, createErr := service.Create(ctx, owner, uploads.CreateCommand{OriginalFilename: name, ExpectedSize: int64(len(data))})
+		if createErr != nil {
+			return uploads.Session{}, createErr
+		}
+		if len(data) > 0 {
+			if createErr = service.PutPart(ctx, owner, u.ID, 0, int64(len(data)), bytes.NewReader(data)); createErr != nil {
+				return uploads.Session{}, createErr
+			}
+		}
+		return service.Complete(ctx, owner, u.ID)
+	}
+	a, err := complete(f.alice, "a.bin", []byte("same"))
+	if err != nil || a.Status != uploads.Completed {
+		t.Fatalf("alice=%+v %v", a, err)
+	}
+	b, err := complete(f.bob, "b.bin", []byte("same"))
+	if err != nil || b.Status != uploads.Completed || a.FileObjectID == nil || b.FileObjectID == nil || *a.FileObjectID != *b.FileObjectID {
+		t.Fatalf("bob=%+v %v", b, err)
+	}
+	var objects int
+	if err = f.db.QueryRow(ctx, `SELECT count(*) FROM file_objects WHERE status='READY'`).Scan(&objects); err != nil || objects != 1 {
+		t.Fatalf("objects=%d %v", objects, err)
+	}
+	entries, err := os.ReadDir(filepath.Join(storeRoot, "objects"))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("physical=%d %v", len(entries), err)
+	}
+	data := []byte("concurrent")
+	sessions := make([]uploads.Session, 2)
+	for i, owner := range []uuid.UUID{f.alice, f.bob} {
+		sessions[i], err = service.Create(ctx, owner, uploads.CreateCommand{OriginalFilename: "c.bin", ExpectedSize: int64(len(data))})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = service.PutPart(ctx, owner, sessions[i].ID, 0, int64(len(data)), bytes.NewReader(data)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	errs := make([]error, 2)
+	var wg sync.WaitGroup
+	for i, owner := range []uuid.UUID{f.alice, f.bob} {
+		wg.Add(1)
+		go func(i int, owner uuid.UUID) {
+			defer wg.Done()
+			_, errs[i] = service.Complete(ctx, owner, sessions[i].ID)
+		}(i, owner)
+	}
+	wg.Wait()
+	for i, owner := range []uuid.UUID{f.alice, f.bob} {
+		if errs[i] != nil {
+			if !errors.Is(errs[i], uploads.ErrFinalizeRetryable) {
+				t.Fatal(errs[i])
+			}
+			if _, err = service.Complete(ctx, owner, sessions[i].ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err = f.db.QueryRow(ctx, `SELECT count(*) FROM file_objects WHERE status='READY'`).Scan(&objects); err != nil || objects != 2 {
+		t.Fatalf("concurrent objects=%d %v", objects, err)
+	}
+	var used int64
+	if err = f.db.QueryRow(ctx, `SELECT sum(size_bytes) FROM file_objects`).Scan(&used); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.db.Exec(ctx, `UPDATE system_settings SET max_storage_bytes=$1 WHERE id=1`, used); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = complete(f.alice, "dedup.bin", []byte("same")); err != nil {
+		t.Fatalf("dedup at quota=%v", err)
+	}
+	if _, err = complete(f.alice, "unique.bin", []byte("unique")); !errors.Is(err, uploads.ErrStorageQuota) {
+		t.Fatalf("unique quota=%v", err)
+	}
+}
+
+func TestPhase5CrashAfterRenameReconcilesAndCompletes(t *testing.T) {
+	f := newUploadFixture(t)
+	ctx := context.Background()
+	root := t.TempDir()
+	adapter, err := storage.NewFilesystemStorageAdapter(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = adapter.EnsureLayout(ctx); err != nil {
+		t.Fatal(err)
+	}
+	service := f.service(uploads.NewPostgreSQLRepository(f.db), 1<<30)
+	injected := errors.New("crash after rename")
+	service.SetFinalizer(uploads.NewFileFinalizerWithFailureHooks(f.db, adapter, id.UUIDv7{}, f.clock, 1, uploads.FinalizeFailureHooks{AfterRename: func() error { return injected }}))
+	u, err := service.Create(ctx, f.alice, uploads.CreateCommand{OriginalFilename: "crash.bin", ExpectedSize: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = service.PutPart(ctx, f.alice, u.ID, 0, 5, bytes.NewReader([]byte("crash"))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.Complete(ctx, f.alice, u.ID); !errors.Is(err, uploads.ErrFinalizeRetryable) {
+		t.Fatalf("injection=%v", err)
+	}
+	var pending int
+	if err = f.db.QueryRow(ctx, `SELECT count(*) FROM file_objects WHERE status='PENDING'`).Scan(&pending); err != nil || pending != 1 {
+		t.Fatalf("pending=%d %v", pending, err)
+	}
+	if err = files.NewService(f.db, adapter).Reconcile(ctx, 100); err != nil {
+		t.Fatal(err)
+	}
+	service.SetFinalizer(uploads.NewFileFinalizer(f.db, adapter, id.UUIDv7{}, f.clock, 1))
+	done, err := service.Complete(ctx, f.alice, u.ID)
+	if err != nil || done.Status != uploads.Completed {
+		t.Fatalf("retry=%+v %v", done, err)
+	}
+	entries, err := os.ReadDir(filepath.Join(root, "objects"))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("physical=%d %v", len(entries), err)
+	}
 }
 
 type uploadFixture struct {

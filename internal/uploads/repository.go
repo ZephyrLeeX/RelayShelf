@@ -65,7 +65,17 @@ func textPtr(v pgtype.Text) *string {
 	return &s
 }
 func domainSession(row generated.UploadSession) Session {
-	return Session{ID: uuid.UUID(row.ID.Bytes), UserID: uuid.UUID(row.UserID.Bytes), OriginalFilename: row.OriginalFilename, ExpectedSize: row.ExpectedSize, ClientMime: textPtr(row.ClientMime), ChunkSize: row.ChunkSize, Status: row.Status, ExpiresAt: row.ExpiresAt.Time, CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time}
+	var fileID *uuid.UUID
+	if row.FileObjectID.Valid {
+		value := uuid.UUID(row.FileObjectID.Bytes)
+		fileID = &value
+	}
+	var completedAt *time.Time
+	if row.CompletedAt.Valid {
+		value := row.CompletedAt.Time
+		completedAt = &value
+	}
+	return Session{ID: uuid.UUID(row.ID.Bytes), UserID: uuid.UUID(row.UserID.Bytes), OriginalFilename: row.OriginalFilename, ExpectedSize: row.ExpectedSize, ClientMime: textPtr(row.ClientMime), ChunkSize: row.ChunkSize, Status: row.Status, ExpiresAt: row.ExpiresAt.Time, CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time, FileObjectID: fileID, CompletedAt: completedAt}
 }
 func domainParts(rows []generated.UploadPart) []Part {
 	out := make([]Part, 0, len(rows))

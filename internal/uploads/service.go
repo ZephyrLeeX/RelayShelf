@@ -29,7 +29,14 @@ type Service struct {
 	minFreeBytes   int64
 	minFreePercent int
 	stagingLife    sync.RWMutex
+	finalizer      Finalizer
 }
+
+type Finalizer interface {
+	Finalize(context.Context, Session, staging.Provider) (Session, error)
+}
+
+func (s *Service) SetFinalizer(finalizer Finalizer) { s.finalizer = finalizer }
 
 func NewService(repo Repository, provider staging.Provider, space staging.SpaceProbe, ids id.Generator, now clock.Clock, locks *LockRegistry, maxWrites int, maxStaging, minFreeBytes int64, minFreePercent int) *Service {
 	if locks == nil {
@@ -223,6 +230,12 @@ func (s *Service) Complete(ctx context.Context, ownerID, uploadID uuid.UUID) (Se
 	})
 	if err != nil {
 		return Session{}, err
+	}
+	if result.Status == Completing && s.finalizer != nil {
+		result, err = s.finalizer.Finalize(ctx, result, s.staging)
+		if err != nil {
+			return Session{}, err
+		}
 	}
 	return s.Get(ctx, ownerID, result.ID)
 }

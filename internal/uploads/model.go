@@ -28,6 +28,8 @@ type Session struct {
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 	CompletedParts   []int
+	FileObjectID     *uuid.UUID
+	CompletedAt      *time.Time
 }
 
 func (s Session) PartCount() int {

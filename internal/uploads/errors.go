@@ -14,4 +14,6 @@ var (
 	ErrIncomplete         = errors.New("upload incomplete")
 	ErrStagingCorrupt     = errors.New("upload staging corrupt")
 	ErrValidation         = errors.New("validation error")
+	ErrFinalizeRetryable  = errors.New("upload finalize retryable")
+	ErrStorageQuota       = errors.New("storage quota exceeded")
 )

@@ -63,6 +63,10 @@ func mapError(w http.ResponseWriter, r *http.Request, err error) {
 		auth.WriteError(w, r, http.StatusConflict, "UPLOAD_INCOMPLETE", "upload parts are incomplete")
 	case errors.Is(err, ErrStagingCorrupt):
 		auth.WriteError(w, r, http.StatusConflict, "UPLOAD_STAGING_CORRUPT", "upload staging is corrupt")
+	case errors.Is(err, ErrFinalizeRetryable):
+		auth.WriteError(w, r, http.StatusServiceUnavailable, "UPLOAD_FINALIZE_RETRYABLE", "file finalization can be retried")
+	case errors.Is(err, ErrStorageQuota):
+		auth.WriteError(w, r, http.StatusInsufficientStorage, "STORAGE_QUOTA_EXCEEDED", "logical storage quota exceeded")
 	case errors.Is(err, ErrValidation):
 		auth.WriteError(w, r, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "invalid request")
 	default:
@@ -124,9 +128,5 @@ func (h *Handler) CompleteUpload(w http.ResponseWriter, r *http.Request, uploadI
 		mapError(w, r, err)
 		return
 	}
-	status := http.StatusAccepted
-	if row.Status == Completed {
-		status = http.StatusOK
-	}
-	writeJSON(w, status, apiSession(row))
+	writeJSON(w, http.StatusOK, apiSession(row))
 }
