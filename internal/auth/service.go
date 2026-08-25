@@ -185,17 +185,33 @@ func (s *Service) Authenticate(ctx context.Context, encoded string, touch bool, 
 	if err = authn.Valid(now); err != nil {
 		return Authentication{}, err
 	}
-	if touch && now.Sub(authn.Session.LastSeenAt) >= TouchInterval {
-		expires := now.Add(IdleLifetime)
-		if expires.After(authn.Session.AbsoluteExpiresAt) {
-			expires = authn.Session.AbsoluteExpiresAt
-		}
-		if err = s.repo.Touch(ctx, authn, now, expires, ip); err != nil {
-			return Authentication{}, err
-		}
-		authn.Session.LastSeenAt, authn.Session.ExpiresAt, authn.Session.LastIP = now, expires, ip.String()
-		authn.Device.LastSeenAt = now
+	if touch {
+		return s.TouchAuthenticated(ctx, authn, ip)
 	}
+	return authn, nil
+}
+
+// TouchAuthenticated records interactive activity using an authentication that
+// has already been loaded and validated. It deliberately performs no token
+// parsing or authentication lookup, so callers can place it after request
+// integrity checks without duplicating authentication work.
+func (s *Service) TouchAuthenticated(ctx context.Context, authn Authentication, ip netip.Addr) (Authentication, error) {
+	now := s.clock.Now()
+	if err := authn.Valid(now); err != nil {
+		return Authentication{}, err
+	}
+	if now.Sub(authn.Session.LastSeenAt) < TouchInterval {
+		return authn, nil
+	}
+	expires := now.Add(IdleLifetime)
+	if expires.After(authn.Session.AbsoluteExpiresAt) {
+		expires = authn.Session.AbsoluteExpiresAt
+	}
+	if err := s.repo.Touch(ctx, authn, now, expires, ip); err != nil {
+		return Authentication{}, err
+	}
+	authn.Session.LastSeenAt, authn.Session.ExpiresAt, authn.Session.LastIP = now, expires, ip.String()
+	authn.Device.LastSeenAt = now
 	return authn, nil
 }
 

@@ -78,7 +78,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		mapError(w, r, err)
 		return
 	}
-	h.cookies.Set(w, result.RawToken, result.Session.ExpiresAt)
+	h.cookies.Set(w, result.RawToken, result.Session.AbsoluteExpiresAt)
 	writeJSON(w, http.StatusOK, h.bootstrap(result.Authentication))
 }
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {

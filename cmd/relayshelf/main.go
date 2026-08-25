@@ -46,6 +46,18 @@ func ready(db *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
+func newHTTPRouter(apiHost func(http.Handler) http.Handler, api, live, readiness http.Handler) http.Handler {
+	router := chi.NewRouter()
+	router.Use(httpx.Trace, httpx.SecurityHeaders, httpx.RequestLog(log.Default()))
+	router.Handle("/health/live", live)
+	router.Handle("/health/ready", readiness)
+	router.Group(func(router chi.Router) {
+		router.Use(apiHost)
+		router.Handle("/api/v1/*", api)
+	})
+	return router
+}
+
 func main() {
 	command := "serve"
 	if len(os.Args) > 1 {
@@ -91,11 +103,7 @@ func main() {
 		cookies := auth.NewCookiePolicy(cfg.PublicOrigin)
 		authMiddleware := auth.NewMiddleware(authService, cookies, csrf, cfg.PublicOrigin, httpx.NewResolver(cfg.TrustedProxies))
 		authHandler := auth.NewHandler(authService, csrf, cookies)
-		router := chi.NewRouter()
-		router.Use(httpx.Trace, httpx.SecurityHeaders, httpx.RequestLog(log.Default()), authMiddleware.Host)
-		router.Get("/health/live", health(http.StatusOK))
-		router.Get("/health/ready", ready(db))
-		router.Handle("/api/v1/*", auth.Router(authHandler, authMiddleware))
+		router := newHTTPRouter(authMiddleware.Host, auth.Router(authHandler, authMiddleware), health(http.StatusOK), ready(db))
 
 		address := os.Getenv("LISTEN_ADDR")
 		if address == "" {

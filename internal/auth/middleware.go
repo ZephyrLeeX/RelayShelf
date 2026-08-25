@@ -77,19 +77,22 @@ func (m *Middleware) Authenticate(touch bool) func(http.Handler) http.Handler {
 func isSafe(method string) bool {
 	return method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions
 }
-func (m *Middleware) CSRF(next http.Handler) http.Handler {
+
+func (m *Middleware) RequireSameOrigin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if isSafe(r.Method) {
-			next.ServeHTTP(w, r)
+		if !m.validOrigin(r) {
+			WriteError(w, r, http.StatusForbidden, "ORIGIN_INVALID", "request origin is not allowed")
 			return
 		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (m *Middleware) CSRF(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authn, ok := FromContext(r.Context())
 		if !ok {
 			WriteError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required")
-			return
-		}
-		if !m.validOrigin(r) {
-			WriteError(w, r, http.StatusForbidden, "ORIGIN_INVALID", "request origin is not allowed")
 			return
 		}
 		if !m.csrf.Verify(authn.Session.ID, r.Header.Get("X-CSRF-Token")) {
@@ -97,6 +100,28 @@ func (m *Middleware) CSRF(next http.Handler) http.Handler {
 			return
 		}
 		next.ServeHTTP(w, r)
+	})
+}
+
+func (m *Middleware) Touch(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authn, ok := FromContext(r.Context())
+		if !ok {
+			WriteError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required")
+			return
+		}
+		info, _ := RequestInfo(r.Context())
+		updated, err := m.service.TouchAuthenticated(r.Context(), authn.Authentication, info.ClientIP)
+		if err != nil {
+			code := "AUTH_REQUIRED"
+			if err == ErrSessionExpired {
+				code = "AUTH_SESSION_EXPIRED"
+			}
+			WriteError(w, r, http.StatusUnauthorized, code, "authentication required")
+			return
+		}
+		ctx := context.WithValue(r.Context(), authContextKey{}, AuthContext{Authentication: updated})
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 func (m *Middleware) validOrigin(r *http.Request) bool {

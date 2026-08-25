@@ -25,6 +25,7 @@ type memoryRepo struct {
 	devices     map[uuid.UUID]Device
 	sessions    []Session
 	touchCount  int
+	authLookups int
 	audits      []AuditEvent
 	rehashed    string
 	revoked     []uuid.UUID
@@ -57,6 +58,7 @@ func (m *memoryRepo) CreateSession(_ context.Context, s Session, _ []byte, _ net
 	return s, nil
 }
 func (m *memoryRepo) FindAuthentication(context.Context, []byte) (Authentication, error) {
+	m.authLookups++
 	return m.auth, nil
 }
 func (m *memoryRepo) Touch(_ context.Context, a Authentication, seen, expires time.Time, ip netip.Addr) error {
