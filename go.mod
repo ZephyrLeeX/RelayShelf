@@ -1,4 +1,4 @@
-module github.com/relayshelf/relay-shelf
+module github.com/ZephyrLeeX/RelayShelf
 
 go 1.26.0
 

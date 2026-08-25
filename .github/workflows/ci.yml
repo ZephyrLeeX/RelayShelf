@@ -38,9 +38,9 @@ jobs:
       - uses: jdx/mise-action@v2
       - run: mise install
       - run: go mod download
-      - run: gofmt -w $(find cmd internal -name '*.go' -type f)
-      - run: git diff --exit-code
+      - run: test -z "$(gofmt -l $(find cmd internal sql/generated -name '*.go' -type f))"
       - run: go vet ./...
+      - run: golangci-lint run
       - run: go test ./...
       - run: DATABASE_URL=postgres://test:test@localhost:5432/relayshelf_test?sslmode=disable go test -race -tags=integration ./internal/platform/database
 

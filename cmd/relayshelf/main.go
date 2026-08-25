@@ -7,24 +7,26 @@ import (
 	"os"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/relayshelf/relay-shelf/internal/httpapi"
 )
 
-type server struct{}
+type healthResponse struct {
+	Status string `json:"status"`
+}
 
-func (server) Healthz(w http.ResponseWriter, _ *http.Request) {
+func health(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(httpapi.HealthResponse{Status: "ok"})
+	_ = json.NewEncoder(w).Encode(healthResponse{Status: "ok"})
 }
 
 func main() {
 	router := chi.NewRouter()
-	httpapi.HandlerFromMux(server{}, router)
+	router.Get("/health/live", health)
+	router.Get("/health/ready", health)
 
 	address := os.Getenv("LISTEN_ADDR")
 	if address == "" {
 		address = ":8080"
 	}
-	log.Printf("share-system listening on %s", address)
+	log.Printf("relayshelf listening on %s", address)
 	log.Fatal(http.ListenAndServe(address, router))
 }

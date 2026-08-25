@@ -3,9 +3,9 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -o /out/share-system ./cmd/share-system
+RUN go build -o /out/relayshelf ./cmd/relayshelf
 
 FROM gcr.io/distroless/base-debian13:nonroot
-COPY --from=build /out/share-system /share-system
+COPY --from=build /out/relayshelf /relayshelf
 EXPOSE 8080
-ENTRYPOINT ["/share-system"]
+ENTRYPOINT ["/relayshelf"]

@@ -10,27 +10,13 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// HealthResponse defines model for HealthResponse.
-type HealthResponse struct {
-	Status string `json:"status"`
-}
-
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
-	// Healthz Check service health.
-	// (GET /healthz)
-	Healthz(w http.ResponseWriter, r *http.Request)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
 
 type Unimplemented struct{}
-
-// Healthz Check service health.
-// (GET /healthz)
-func (_ Unimplemented) Healthz(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
 
 // ServerInterfaceWrapper converts contexts to parameters.
 type ServerInterfaceWrapper struct {
@@ -40,20 +26,6 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
-
-// Healthz operation middleware
-func (siw *ServerInterfaceWrapper) Healthz(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.Healthz(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
 
 type UnescapedCookieParamError struct {
 	ParamName string
@@ -162,15 +134,6 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 			http.Error(w, err.Error(), http.StatusBadRequest)
 		}
 	}
-	wrapper := ServerInterfaceWrapper{
-		Handler:            si,
-		HandlerMiddlewares: options.Middlewares,
-		ErrorHandlerFunc:   options.ErrorHandlerFunc,
-	}
-
-	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/healthz", wrapper.Healthz)
-	})
 
 	return r
 }

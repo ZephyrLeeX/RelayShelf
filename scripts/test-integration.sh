@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-container_runtime="${CONTAINER_RUNTIME:-docker}"
+container_runtime="${CONTAINER_RUNTIME:-podman}"
 container_name="relayshelf-postgres-test-$$"
 port="${POSTGRES_TEST_PORT:-55432}"
 

@@ -39,7 +39,7 @@
 │ Debian 13 KVM VM（6 GB RAM，本地磁盘，Podman Quadlet）      │
 │                                                             │
 │  ┌───────────────────────────────┐                          │
-│  │ share-system                  │                          │
+│  │ relayshelf                  │                          │
 │  │ Go net/http + chi             │                          │
 │  │ Embedded Vue SPA              │                          │
 │  │ REST / SSE / Search           │                          │
@@ -58,7 +58,7 @@
                         ▼
 ┌─────────────────────────────────────────────────────────────┐
 │ 独立物理机：飞牛 NAS / FNOS                                │
-│ share-system/                                               │
+│ relayshelf/                                               │
 │ ├── objects/                                                │
 │ ├── derivatives/                                            │
 │ └── .commit-tmp/                                            │
@@ -129,17 +129,17 @@ Debian VM 6GB
 生产只有两个长期容器：
 
 ```text
-share-app
-share-postgres
+relayshelf-app
+relayshelf-postgres
 ```
 
 Go Binary：
 
 ```text
-share-system serve
-share-system migrate
-share-system storage check
-share-system version
+relayshelf serve
+relayshelf migrate
+relayshelf storage check
+relayshelf version
 ```
 
 V1 不存在：
@@ -718,12 +718,12 @@ App Container：
 ```text
 network-online
 → NFS mount
-→ share-app Quadlet
+→ relayshelf-app Quadlet
 ```
 
 如果 NAS 启动时不可用，App 默认不启动。
 
-原因：避免 `/mnt/share-system` 未 Mount 时，应用误把正式文件写进 VM 本地空目录。
+原因：避免 `/mnt/relayshelf` 未 Mount 时，应用误把正式文件写进 VM 本地空目录。
 
 ### 20.2 Runtime NFS Outage
 
@@ -996,11 +996,11 @@ PostgreSQL PGDATA 在 Debian VM 本地盘，禁止放 NFS。
 ```text
 deploy/
 ├── quadlet/
-│   ├── share-app.container
-│   ├── share-postgres.container
-│   └── share.network
+│   ├── relayshelf-app.container
+│   ├── relayshelf-postgres.container
+│   └── relayshelf.network
 ├── env/
-│   └── share-system.env.example
+│   └── relayshelf.env.example
 └── scripts/
     ├── install.sh
     ├── upgrade.sh
@@ -1120,7 +1120,7 @@ Migration：Pure PostgreSQL SQL，Embedded Binary。
 生产显式：
 
 ```text
-share-system migrate
+relayshelf migrate
 ```
 
 App Boot 不自动偷偷改 Schema。

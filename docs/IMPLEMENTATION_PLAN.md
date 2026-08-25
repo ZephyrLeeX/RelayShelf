@@ -74,7 +74,7 @@ P12 Podman Quadlet / OpenWrt Deployment / Release
 创建：
 
 ```text
-cmd/share-system/
+cmd/relayshelf/
 internal/
 web/
 api/
@@ -190,7 +190,7 @@ Pure SQL Embedded Migration。
 CLI：
 
 ```text
-share-system migrate
+relayshelf migrate
 ```
 
 `serve` 检查 Schema Compatibility。
@@ -485,7 +485,7 @@ Contract Test：
 CLI：
 
 ```text
-share-system storage check
+relayshelf storage check
 ```
 
 部署时对真实 NFS 检查能力。
@@ -996,13 +996,13 @@ App Container 内 non-root。
 
 ### T131 — Quadlet Network / PostgreSQL
 
-- `share.network`；
+- `relayshelf.network`；
 - PostgreSQL local VM storage；
 - 5432 不暴露 LAN。
 
 ### T132 — NFS Host Mount Dependency
 
-Cold Start 确保真实 `/mnt/share-system` 已挂载。
+Cold Start 确保真实 `/mnt/relayshelf` 已挂载。
 
 ### T133 — App Quadlet
 
