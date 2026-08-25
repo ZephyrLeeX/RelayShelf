@@ -52,3 +52,15 @@ func TestLoad(t *testing.T) {
 		}
 	})
 }
+
+func TestLoadStorageConfigDoesNotRequireApplicationSecrets(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("STORAGE_ROOT", root)
+	for _, name := range []string{"DATABASE_URL", "APP_ENCRYPTION_KEY", "CSRF_SECRET", "PUBLIC_ORIGIN"} {
+		t.Setenv(name, "")
+	}
+	cfg, err := LoadStorageConfig()
+	if err != nil || cfg.StorageRoot != root {
+		t.Fatalf("storage config=%+v %v", cfg, err)
+	}
+}

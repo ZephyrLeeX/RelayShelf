@@ -31,6 +31,15 @@ type Config struct {
 	StagingMinFreePercent        int
 }
 
+type StorageConfig struct{ StorageRoot string }
+
+// LoadStorageConfig intentionally reads only the setting required by
+// `relayshelf storage check`; it must remain independent from DB/auth secrets.
+func LoadStorageConfig() (StorageConfig, error) {
+	root, err := absolutePath("STORAGE_ROOT", defaultStorageRoot)
+	return StorageConfig{StorageRoot: root}, err
+}
+
 func (c Config) String() string {
 	return fmt.Sprintf("config{database_url:%s, app_encryption_key:%s, csrf_secret:%s}", c.DatabaseURL, c.AppEncryptionKey, c.CSRFSecret)
 }
