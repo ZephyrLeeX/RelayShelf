@@ -3,3 +3,199 @@
 //   sqlc v1.31.1
 
 package generated
+
+import (
+	"net/netip"
+
+	"github.com/jackc/pgx/v5/pgtype"
+)
+
+type AuditLog struct {
+	ID          pgtype.UUID
+	ActorUserID pgtype.UUID
+	EventType   string
+	TargetType  string
+	TargetID    pgtype.UUID
+	Ip          *netip.Addr
+	UserAgent   pgtype.Text
+	DeviceID    pgtype.UUID
+	SessionID   pgtype.UUID
+	TraceID     pgtype.Text
+	Metadata    []byte
+	CreatedAt   pgtype.Timestamptz
+}
+
+type BackgroundJob struct {
+	ID               pgtype.UUID
+	JobType          string
+	SubjectType      string
+	SubjectID        pgtype.UUID
+	Status           string
+	Attempts         int32
+	NextRunAt        pgtype.Timestamptz
+	StartedAt        pgtype.Timestamptz
+	LastErrorCode    pgtype.Text
+	LastErrorSummary pgtype.Text
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+type Device struct {
+	ID          pgtype.UUID
+	UserID      pgtype.UUID
+	Name        string
+	UserAgent   string
+	FirstSeenAt pgtype.Timestamptz
+	LastSeenAt  pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type FileDerivative struct {
+	ID           pgtype.UUID
+	SourceFileID pgtype.UUID
+	Kind         string
+	StorageKey   string
+	Mime         string
+	SizeBytes    int64
+	Status       string
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
+type FileObject struct {
+	ID             pgtype.UUID
+	Sha256         []byte
+	SizeBytes      int64
+	DetectedMime   string
+	StorageBackend string
+	StorageKey     string
+	Status         string
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	ReadyAt        pgtype.Timestamptz
+}
+
+type IdempotencyKey struct {
+	ID               pgtype.UUID
+	UserID           pgtype.UUID
+	Operation        string
+	Key              string
+	RequestHash      []byte
+	ResourceType     string
+	ResourceID       pgtype.UUID
+	ResponseMetadata []byte
+	CreatedAt        pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+}
+
+type Message struct {
+	ID                    pgtype.UUID
+	OwnerID               pgtype.UUID
+	BodyPlaintext         pgtype.Text
+	BodyCiphertext        []byte
+	BodyNonce             []byte
+	BodyEncryptionVersion pgtype.Int2
+	BodyFormat            string
+	DetectedType          pgtype.Text
+	DetectedLanguage      pgtype.Text
+	Sensitive             bool
+	Lifecycle             string
+	IsFavorite            bool
+	ExpiresAt             pgtype.Timestamptz
+	TrashedAt             pgtype.Timestamptz
+	PurgeAt               pgtype.Timestamptz
+	SourceUserID          pgtype.UUID
+	SourceMessageID       pgtype.UUID
+	CreatedDeviceID       pgtype.UUID
+	Version               int64
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+}
+
+type MessageAttachment struct {
+	ID               pgtype.UUID
+	MessageID        pgtype.UUID
+	FileObjectID     pgtype.UUID
+	OriginalFilename string
+	ClientMime       pgtype.Text
+	DisplayOrder     int32
+	Metadata         []byte
+	CreatedAt        pgtype.Timestamptz
+}
+
+type MessageTag struct {
+	MessageID pgtype.UUID
+	TagID     pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+}
+
+type Session struct {
+	ID                pgtype.UUID
+	UserID            pgtype.UUID
+	DeviceID          pgtype.UUID
+	TokenHash         []byte
+	ExpiresAt         pgtype.Timestamptz
+	AbsoluteExpiresAt pgtype.Timestamptz
+	LastSeenAt        pgtype.Timestamptz
+	LastIp            *netip.Addr
+	RevokedAt         pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+}
+
+type SystemSetting struct {
+	ID                   int16
+	TemporaryTtlHours    int32
+	TrashTtlHours        int32
+	MaxFileSizeBytes     int64
+	MaxStorageBytes      pgtype.Int8
+	AuditRetentionDays   int32
+	UploadRetentionHours int32
+	UpdatedAt            pgtype.Timestamptz
+	UpdatedByUserID      pgtype.UUID
+}
+
+type Tag struct {
+	ID             pgtype.UUID
+	UserID         pgtype.UUID
+	Name           string
+	NormalizedName string
+	Color          string
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type UploadPart struct {
+	UploadSessionID pgtype.UUID
+	PartNumber      int32
+	SizeBytes       int64
+	CompletedAt     pgtype.Timestamptz
+}
+
+type UploadSession struct {
+	ID                pgtype.UUID
+	UserID            pgtype.UUID
+	OriginalFilename  string
+	ExpectedSize      int64
+	ClientMime        pgtype.Text
+	ChunkSize         int64
+	Status            string
+	FileObjectID      pgtype.UUID
+	ExpiresAt         pgtype.Timestamptz
+	ConsumedAt        pgtype.Timestamptz
+	ConsumedMessageID pgtype.UUID
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	CompletedAt       pgtype.Timestamptz
+}
+
+type User struct {
+	ID           pgtype.UUID
+	Username     string
+	DisplayName  string
+	PasswordHash string
+	IsAdmin      bool
+	Status       string
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}

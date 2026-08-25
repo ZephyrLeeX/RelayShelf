@@ -9,3 +9,4 @@ FROM gcr.io/distroless/base-debian13:nonroot
 COPY --from=build /out/relayshelf /relayshelf
 EXPOSE 8080
 ENTRYPOINT ["/relayshelf"]
+CMD ["serve"]
