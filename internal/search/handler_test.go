@@ -1,6 +1,7 @@
 package search
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -40,6 +41,23 @@ func TestHandlerValidationIsNoStoreAndDoesNotEchoQuery(t *testing.T) {
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil || response.Code != "SEARCH_QUERY_TOO_SHORT" {
 		t.Fatalf("response=%+v err=%v", response, err)
+	}
+}
+
+func TestHandlerRejectsCursorWithTrailingJSON(t *testing.T) {
+	handler := NewHandler(NewService(&fakeRepository{}, fixedClock{time.Now()}))
+	userID := uuid.Must(uuid.NewV7())
+	valid := EncodeCursor(Cursor{CreatedAt: time.Now(), MessageID: uuid.Must(uuid.NewV7())})
+	raw, err := base64.RawURLEncoding.DecodeString(valid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalid := base64.RawURLEncoding.EncodeToString(append(raw, []byte(`{}`)...))
+	request := authenticatedSearchRequest("/api/v1/search", userID)
+	recorder := httptest.NewRecorder()
+	handler.SearchMessages(recorder, request, httpapi.SearchMessagesParams{Cursor: &invalid})
+	if recorder.Code != http.StatusUnprocessableEntity || !strings.Contains(recorder.Body.String(), `"code":"SEARCH_CURSOR_INVALID"`) {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
 

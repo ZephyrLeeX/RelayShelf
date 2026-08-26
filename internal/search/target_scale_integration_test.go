@@ -236,6 +236,12 @@ func TestTargetScaleSearchPlans(t *testing.T) {
 	}
 }
 
+func TestTargetScaleCommonPostgresPlan(t *testing.T) {
+	dataset := seedTargetDataset(t)
+	plan := explainProductionSearch(t, dataset, Query{Tokens: []string{"postgres"}, Limit: 30})
+	t.Logf("common postgres EXPLAIN: %s", planJSON(t, plan))
+}
+
 func contains(value, substring string) bool {
 	for index := 0; index+len(substring) <= len(value); index++ {
 		if value[index:index+len(substring)] == substring {
