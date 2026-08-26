@@ -19,6 +19,7 @@ import (
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/httpx"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/id"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/staging"
+	"github.com/ZephyrLeeX/RelayShelf/internal/search"
 	"github.com/ZephyrLeeX/RelayShelf/internal/storage"
 	"github.com/ZephyrLeeX/RelayShelf/internal/tags"
 	"github.com/ZephyrLeeX/RelayShelf/internal/uploads"
@@ -35,12 +36,14 @@ type messageEndpoints struct{ *messages.Handler }
 type tagEndpoints struct{ *tags.Handler }
 type uploadEndpoints struct{ *uploads.Handler }
 type fileEndpoints struct{ *files.Handler }
+type searchEndpoints struct{ *search.Handler }
 type apiHandler struct {
 	*authEndpoints
 	*messageEndpoints
 	*tagEndpoints
 	*uploadEndpoints
 	*fileEndpoints
+	*searchEndpoints
 }
 
 var _ httpapi.ServerInterface = (*apiHandler)(nil)
@@ -173,7 +176,10 @@ func main() {
 			os.Exit(1)
 		}
 		fileHandler := files.NewHandler(fileService)
-		handler := &apiHandler{authEndpoints: &authEndpoints{authHandler}, messageEndpoints: &messageEndpoints{messageHandler}, tagEndpoints: &tagEndpoints{tagHandler}, uploadEndpoints: &uploadEndpoints{uploadHandler}, fileEndpoints: &fileEndpoints{fileHandler}}
+		searchRepository := search.NewPostgreSQLRepository(db)
+		searchService := search.NewService(searchRepository, now)
+		searchHandler := search.NewHandler(searchService)
+		handler := &apiHandler{authEndpoints: &authEndpoints{authHandler}, messageEndpoints: &messageEndpoints{messageHandler}, tagEndpoints: &tagEndpoints{tagHandler}, uploadEndpoints: &uploadEndpoints{uploadHandler}, fileEndpoints: &fileEndpoints{fileHandler}, searchEndpoints: &searchEndpoints{searchHandler}}
 		router := newHTTPRouter(authMiddleware.Host, auth.Router(handler, authMiddleware), health(http.StatusOK), ready(db))
 
 		address := os.Getenv("LISTEN_ADDR")

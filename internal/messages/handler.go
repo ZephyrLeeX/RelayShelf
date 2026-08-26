@@ -90,7 +90,10 @@ func messageDTO(m Message) httpapi.Message {
 func attachmentDTO(a Attachment) httpapi.AttachmentSummary {
 	return httpapi.AttachmentSummary{Id: a.ID, OriginalFilename: a.OriginalFilename, ClientMime: a.ClientMime, DetectedMime: a.DetectedMime, SizeBytes: a.SizeBytes, DisplayOrder: a.DisplayOrder}
 }
-func summaryDTO(s Summary) httpapi.MessageSummary {
+
+// SummaryDTO maps the shared MessageSummary read model to the OpenAPI boundary.
+// Search and message listing deliberately use the same response contract.
+func SummaryDTO(s Summary) httpapi.MessageSummary {
 	m := messageDTO(s.Message)
 	return httpapi.MessageSummary{Id: m.Id, Body: nil, BodyPreview: s.BodyPreview, BodyTruncated: s.BodyTruncated, BodyFormat: m.BodyFormat, DetectedType: m.DetectedType, DetectedLanguage: m.DetectedLanguage, Sensitive: m.Sensitive, Lifecycle: m.Lifecycle, Favorite: m.Favorite, ExpiresAt: m.ExpiresAt, TrashedAt: m.TrashedAt, PurgeAt: m.PurgeAt, SourceUserId: m.SourceUserId, SourceMessageId: m.SourceMessageId, Version: m.Version, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, Tags: m.Tags, Attachments: m.Attachments, AttachmentCount: s.AttachmentCount}
 }
@@ -182,7 +185,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, lifecycle *httpap
 	}
 	items := make([]httpapi.MessageSummary, 0, len(page.Items))
 	for _, item := range page.Items {
-		items = append(items, summaryDTO(item))
+		items = append(items, SummaryDTO(item))
 	}
 	writeJSON(w, http.StatusOK, httpapi.MessageList{Items: items, NextCursor: page.NextCursor})
 }

@@ -1,7 +1,7 @@
 openapi: 3.1.1
 info:
   title: RelayShelf API
-  version: 0.5.0
+  version: 0.6.0
   description: HTTP contract authority for RelayShelf.
 servers:
   - url: /api/v1
@@ -190,6 +190,30 @@ paths:
         - { $ref: '#/components/parameters/Limit' }
       responses:
         '200': { description: Active messages, content: { application/json: { schema: { $ref: '#/components/schemas/MessageList' } } } }
+        '422': { $ref: '#/components/responses/Error' }
+  /search:
+    get:
+      operationId: searchMessages
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { name: q, in: query, schema: { type: string, maxLength: 1024 } }
+        - { name: lifecycle, in: query, schema: { $ref: '#/components/schemas/Lifecycle' } }
+        - { name: favorite, in: query, schema: { type: boolean } }
+        - { name: tagId, in: query, schema: { type: array, items: { type: string, format: uuid } }, style: form, explode: true }
+        - { name: type, in: query, schema: { type: string, maxLength: 64 } }
+        - { name: createdAfter, in: query, schema: { type: string, format: date-time } }
+        - { name: createdBefore, in: query, schema: { type: string, format: date-time } }
+        - { $ref: '#/components/parameters/Cursor' }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        '200':
+          description: Current user's matching active messages, newest first
+          headers:
+            Cache-Control: { schema: { type: string }, description: Always no-store }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MessageList' }
+        '401': { $ref: '#/components/responses/Error' }
         '422': { $ref: '#/components/responses/Error' }
   /messages/direct-send:
     post:

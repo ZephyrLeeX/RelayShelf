@@ -39,3 +39,20 @@ func TestHealthBypassesPublicHostValidation(t *testing.T) {
 		t.Fatalf("api status=%d called=%v", apiResponse.Code, apiCalled)
 	}
 }
+
+func TestSearchRouteRequiresAuthenticationAndIsNoStore(t *testing.T) {
+	origin, err := url.Parse("https://public.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	middleware := auth.NewMiddleware(nil, auth.NewCookiePolicy(origin), nil, origin, httpx.NewResolver(nil))
+	api := auth.Router(&apiHandler{}, middleware)
+	router := newHTTPRouter(middleware.Host, api, health(http.StatusOK), health(http.StatusOK))
+
+	request := httptest.NewRequest(http.MethodGet, "https://public.example/api/v1/search?q=postgres", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized || response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("status=%d cache=%q body=%s", response.Code, response.Header().Get("Cache-Control"), response.Body.String())
+	}
+}
