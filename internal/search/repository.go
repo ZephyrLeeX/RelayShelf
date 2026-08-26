@@ -22,7 +22,7 @@ func NewPostgreSQLRepository(pool *pgxpool.Pool) *PostgreSQLRepository {
 }
 
 const resultSelect = `
-SELECT m.id, m.owner_id, m.body_plaintext, m.body_format, m.detected_type,
+SELECT m.id, m.owner_id, left(m.body_plaintext, 16385), m.body_format, m.detected_type,
        m.detected_language, m.sensitive, m.lifecycle, m.is_favorite,
        m.expires_at, m.trashed_at, m.purge_at, m.source_user_id,
        m.source_message_id, m.version, m.created_at, m.updated_at

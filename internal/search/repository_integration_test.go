@@ -6,8 +6,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ZephyrLeeX/RelayShelf/internal/messages"
 	postgresutil "github.com/ZephyrLeeX/RelayShelf/internal/platform/database/testutil"
@@ -307,5 +309,46 @@ func TestSearchCursorStableWithSameTimestampAndCancellation(t *testing.T) {
 	cancel()
 	if _, err = fixture.service.Search(ctx, fixture.alice, Query{Tokens: []string{"cursor"}}); err == nil {
 		t.Fatal("cancelled search succeeded")
+	}
+}
+
+func TestSearchUsesBoundedBodyProjectionAndPreservesFullBodyMatching(t *testing.T) {
+	fixture := newIntegrationFixture(t)
+	largeBody := strings.Repeat("a", (1<<20)-len(" latebodyneedle")) + " latebodyneedle"
+	largeID := fixture.insertMessage(t, fixture.alice, messageOptions{body: &largeBody})
+
+	page := fixture.search(t, fixture.alice, "latebodyneedle", nil)
+	if len(page.Items) != 1 || page.Items[0].ID != largeID {
+		t.Fatalf("late-body match results=%d contains target=%v", len(page.Items), containsMessage(page, largeID))
+	}
+	if page.Items[0].BodyPreview == nil {
+		t.Fatal("large body preview is nil")
+	}
+	if len(*page.Items[0].BodyPreview) > maxPreviewBytes || !page.Items[0].BodyTruncated {
+		t.Fatalf("large preview bytes=%d truncated=%v", len(*page.Items[0].BodyPreview), page.Items[0].BodyTruncated)
+	}
+
+	chineseBody := strings.Repeat("中文", 10_000)
+	chineseID := fixture.insertMessage(t, fixture.alice, messageOptions{body: &chineseBody})
+	page = fixture.search(t, fixture.alice, "中文", nil)
+	if !containsMessage(page, chineseID) {
+		t.Fatal("multibyte body was not found")
+	}
+	for _, item := range page.Items {
+		if item.ID == chineseID {
+			if item.BodyPreview == nil {
+				t.Fatal("multibyte body preview is nil")
+			}
+			if len(*item.BodyPreview) > maxPreviewBytes || !utf8.ValidString(*item.BodyPreview) || !item.BodyTruncated {
+				t.Fatalf("multibyte preview bytes=%d valid=%v truncated=%v", len(*item.BodyPreview), utf8.ValidString(*item.BodyPreview), item.BodyTruncated)
+			}
+		}
+	}
+
+	shortBody := "complete shortbody preview"
+	shortID := fixture.insertMessage(t, fixture.alice, messageOptions{body: &shortBody})
+	page = fixture.search(t, fixture.alice, "shortbody", nil)
+	if len(page.Items) != 1 || page.Items[0].ID != shortID || page.Items[0].BodyPreview == nil || *page.Items[0].BodyPreview != shortBody || page.Items[0].BodyTruncated {
+		t.Fatalf("short body result=%+v", page.Items)
 	}
 }

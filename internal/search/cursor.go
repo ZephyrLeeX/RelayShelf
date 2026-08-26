@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"io"
 	"time"
 
 	"github.com/google/uuid"
@@ -36,7 +38,7 @@ func DecodeCursor(value string) (Cursor, error) {
 	if err = decoder.Decode(&wire); err != nil || wire.Version != 1 || wire.MessageID == uuid.Nil {
 		return Cursor{}, ErrCursorInvalid
 	}
-	if decoder.Decode(&struct{}{}) == nil {
+	if err = decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return Cursor{}, ErrCursorInvalid
 	}
 	createdAt, err := time.Parse(time.RFC3339Nano, wire.CreatedAt)

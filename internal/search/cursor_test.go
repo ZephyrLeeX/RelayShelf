@@ -23,3 +23,29 @@ func TestCursorRoundTripAndValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestCursorTrailingDataValidation(t *testing.T) {
+	validJSON := `{"v":1,"a":"2026-01-01T00:00:00Z","i":"00000000-0000-7000-8000-000000000001"}`
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{name: "valid cursor JSON", value: base64.RawURLEncoding.EncodeToString([]byte(validJSON))},
+		{name: "valid JSON with whitespace", value: base64.RawURLEncoding.EncodeToString([]byte(validJSON + " \n\t"))},
+		{name: "second JSON value", value: base64.RawURLEncoding.EncodeToString([]byte(validJSON + `{}`)), wantErr: true},
+		{name: "malformed trailing garbage", value: base64.RawURLEncoding.EncodeToString([]byte(validJSON + ` trailing`)), wantErr: true},
+		{name: "malformed base64", value: "not-base64!", wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := DecodeCursor(test.value)
+			if test.wantErr && !errors.Is(err, ErrCursorInvalid) {
+				t.Fatalf("error=%v want=%v", err, ErrCursorInvalid)
+			}
+			if !test.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
