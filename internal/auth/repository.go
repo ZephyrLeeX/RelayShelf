@@ -32,6 +32,7 @@ type Repository interface {
 	CreateDevice(context.Context, Device) (Device, error)
 	CreateSession(context.Context, Session, []byte, netip.Addr) (Session, error)
 	FindAuthentication(context.Context, []byte) (Authentication, error)
+	FindAuthenticationBySessionID(context.Context, uuid.UUID) (Authentication, error)
 	Touch(context.Context, Authentication, time.Time, time.Time, netip.Addr) error
 	ListSessions(context.Context, uuid.UUID) ([]Session, error)
 	RevokeOwnedSession(context.Context, uuid.UUID, uuid.UUID, time.Time) (bool, error)
@@ -130,6 +131,20 @@ func (r *PostgreSQLRepository) FindAuthentication(ctx context.Context, hash []by
 	}
 	uid, did, sid := uuid.UUID(row.UserID.Bytes), uuid.UUID(row.DeviceID.Bytes), uuid.UUID(row.SessionID.Bytes)
 	return Authentication{User: User{ID: uid, Username: row.Username, DisplayName: row.DisplayName, IsAdmin: row.IsAdmin, Status: row.UserStatus}, Device: Device{ID: did, UserID: uid, Name: row.DeviceName, UserAgent: row.UserAgent, FirstSeenAt: row.FirstSeenAt.Time, LastSeenAt: row.DeviceLastSeenAt.Time}, Session: Session{ID: sid, UserID: uid, DeviceID: did, CreatedAt: row.SessionCreatedAt.Time, LastSeenAt: row.SessionLastSeenAt.Time, ExpiresAt: row.ExpiresAt.Time, AbsoluteExpiresAt: row.AbsoluteExpiresAt.Time, LastIP: fmt.Sprint(row.LastIp), RevokedAt: revoked}}, nil
+}
+
+func (r *PostgreSQLRepository) FindAuthenticationBySessionID(ctx context.Context, sessionID uuid.UUID) (Authentication, error) {
+	var a Authentication
+	var revoked *time.Time
+	err := r.pool.QueryRow(ctx, `SELECT u.id,u.username,u.display_name,u.is_admin,u.status,d.id,d.name,d.user_agent,d.first_seen_at,d.last_seen_at,s.id,s.created_at,s.last_seen_at,s.expires_at,s.absolute_expires_at,s.revoked_at,COALESCE(s.last_ip::text,'') FROM sessions s JOIN users u ON u.id=s.user_id JOIN devices d ON d.id=s.device_id WHERE s.id=$1`, sessionID).Scan(&a.User.ID, &a.User.Username, &a.User.DisplayName, &a.User.IsAdmin, &a.User.Status, &a.Device.ID, &a.Device.Name, &a.Device.UserAgent, &a.Device.FirstSeenAt, &a.Device.LastSeenAt, &a.Session.ID, &a.Session.CreatedAt, &a.Session.LastSeenAt, &a.Session.ExpiresAt, &a.Session.AbsoluteExpiresAt, &revoked, &a.Session.LastIP)
+	if err != nil {
+		return Authentication{}, noRows(err)
+	}
+	a.Device.UserID = a.User.ID
+	a.Session.UserID = a.User.ID
+	a.Session.DeviceID = a.Device.ID
+	a.Session.RevokedAt = revoked
+	return a, nil
 }
 func (r *PostgreSQLRepository) Touch(ctx context.Context, a Authentication, seen, expires time.Time, ip netip.Addr) error {
 	n, err := r.q.TouchSession(ctx, generated.TouchSessionParams{ID: pgu(a.Session.ID), LastSeenAt: pgt(seen), ExpiresAt: pgt(expires), LastIp: ipPtr(ip)})

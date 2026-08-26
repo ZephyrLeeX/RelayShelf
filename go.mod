@@ -10,6 +10,8 @@ require (
 	github.com/oapi-codegen/runtime v1.7.0
 	github.com/sqlc-dev/sqlc v1.31.1
 	golang.org/x/crypto v0.54.0
+	golang.org/x/image v0.35.0
+	golang.org/x/sys v0.47.0
 )
 
 require (
@@ -60,7 +62,6 @@ require (
 	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/tools v0.48.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260120221211-b8f7ae30c516 // indirect

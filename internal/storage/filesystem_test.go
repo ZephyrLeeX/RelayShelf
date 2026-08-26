@@ -97,3 +97,35 @@ func TestCheckCleansProbe(t *testing.T) {
 		}
 	}
 }
+
+func TestFilesystemDerivativeAtomicCommit(t *testing.T) {
+	ctx := context.Background()
+	a, err := NewFilesystemStorageAdapter(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = a.EnsureLayout(ctx); err != nil {
+		t.Fatal(err)
+	}
+	id := uuid.Must(uuid.NewV7())
+	f, err := a.CreateCommitTemp(ctx, CommitTempKey(id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.Write([]byte("safe-raster")); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = a.Commit(ctx, CommitTempKey(id), DerivativeKey(id)); err != nil {
+		t.Fatal(err)
+	}
+	info, err := a.Stat(ctx, DerivativeKey(id))
+	if err != nil || info.Size() != 11 {
+		t.Fatalf("derivative stat=%v err=%v", info, err)
+	}
+}

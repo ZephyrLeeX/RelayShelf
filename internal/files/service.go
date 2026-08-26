@@ -25,6 +25,13 @@ type Download struct {
 	Size           int64
 	Modified       time.Time
 }
+type ThumbnailDownload struct {
+	AttachmentID, DerivativeID uuid.UUID
+	MIME                       string
+	Key                        storage.Key
+	Size                       int64
+	Modified                   time.Time
+}
 type Service struct {
 	pool  *pgxpool.Pool
 	store storage.Adapter
@@ -49,6 +56,47 @@ func (s *Service) AuthorizedDownload(ctx context.Context, ownerID, attachmentID 
 		return Download{}, ErrStorageIntegrity
 	}
 	return d, nil
+}
+
+func (s *Service) AuthorizedThumbnail(ctx context.Context, ownerID, attachmentID uuid.UUID) (ThumbnailDownload, error) {
+	var d ThumbnailDownload
+	var key string
+	err := s.pool.QueryRow(ctx, `SELECT ma.id,fd.id,fd.mime,fd.storage_key,fd.size_bytes,fd.updated_at FROM message_attachments ma JOIN messages m ON m.id=ma.message_id JOIN file_objects fo ON fo.id=ma.file_object_id JOIN file_derivatives fd ON fd.source_file_id=fo.id AND fd.kind='THUMBNAIL_SMALL' AND fd.status='READY' WHERE ma.id=$1 AND m.owner_id=$2 AND fo.status='READY'`, attachmentID, ownerID).Scan(&d.AttachmentID, &d.DerivativeID, &d.MIME, &key, &d.Size, &d.Modified)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return d, ErrThumbnailNotFound
+	}
+	if err != nil {
+		return d, err
+	}
+	d.Key = storage.Key(key)
+	if d.Key.Validate() != nil || !strings.HasPrefix(key, "derivatives/") || (d.MIME != "image/jpeg" && d.MIME != "image/png") || d.Size <= 0 {
+		return ThumbnailDownload{}, ErrStorageIntegrity
+	}
+	return d, nil
+}
+
+func ThumbnailETag(d ThumbnailDownload) string {
+	return `"thumb-` + d.DerivativeID.String() + `-` + fmt.Sprint(d.Size) + `"`
+}
+
+func (s *Service) OpenThumbnail(ctx context.Context, d ThumbnailDownload) (storage.File, error) {
+	f, err := s.store.Open(ctx, d.Key)
+	if errors.Is(err, storage.ErrNotFound) {
+		return nil, ErrStorageIntegrity
+	}
+	if err != nil {
+		return nil, ErrStorageUnavailable
+	}
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, ErrStorageUnavailable
+	}
+	if !info.Mode().IsRegular() || info.Size() != d.Size {
+		_ = f.Close()
+		return nil, ErrStorageIntegrity
+	}
+	return f, nil
 }
 func ETag(d Download) string {
 	h := sha256.New()
@@ -273,7 +321,7 @@ func (s *Service) cleanupTemps(ctx context.Context) error {
 	var cleanupErrors []error
 	for _, id := range ids {
 		var exists bool
-		if err = s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM file_objects WHERE id=$1 AND status='PENDING')`, id).Scan(&exists); err != nil {
+		if err = s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM file_objects WHERE id=$1 AND status='PENDING') OR EXISTS(SELECT 1 FROM file_derivatives WHERE id=$1 AND status='PENDING')`, id).Scan(&exists); err != nil {
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("check commit temp owner: %w", err))
 			continue
 		}

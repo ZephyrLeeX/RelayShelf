@@ -126,7 +126,8 @@ func (a *FilesystemStorageAdapter) Commit(ctx context.Context, temp, final Key) 
 	if err != nil {
 		return err
 	}
-	if filepath.Base(filepath.Dir(t)) != ".commit-tmp" || filepath.Base(filepath.Dir(f)) != "objects" {
+	finalDir := filepath.Base(filepath.Dir(f))
+	if filepath.Base(filepath.Dir(t)) != ".commit-tmp" || (finalDir != "objects" && finalDir != "derivatives") {
 		return ErrInvalidKey
 	}
 	if _, err = os.Stat(f); err == nil {
@@ -179,14 +180,17 @@ func (a *FilesystemStorageAdapter) SameFilesystem(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	var objects, temp syscall.Stat_t
+	var objects, derivatives, temp syscall.Stat_t
 	if err := syscall.Stat(filepath.Join(a.root, "objects"), &objects); err != nil {
 		return classify(err)
 	}
 	if err := syscall.Stat(filepath.Join(a.root, ".commit-tmp"), &temp); err != nil {
 		return classify(err)
 	}
-	if objects.Dev != temp.Dev {
+	if err := syscall.Stat(filepath.Join(a.root, "derivatives"), &derivatives); err != nil {
+		return classify(err)
+	}
+	if objects.Dev != temp.Dev || derivatives.Dev != temp.Dev {
 		return ErrDifferentFilesystems
 	}
 	return nil

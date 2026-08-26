@@ -191,6 +191,19 @@ func (s *Service) Authenticate(ctx context.Context, encoded string, touch bool, 
 	return authn, nil
 }
 
+// ValidateSession re-reads session and user state without extending either
+// idle expiry or device activity. Long-lived SSE streams use this path.
+func (s *Service) ValidateSession(ctx context.Context, sessionID uuid.UUID) (Authentication, error) {
+	authn, err := s.repo.FindAuthenticationBySessionID(ctx, sessionID)
+	if err != nil {
+		return Authentication{}, ErrAuthenticationRequired
+	}
+	if err = authn.Valid(s.clock.Now()); err != nil {
+		return Authentication{}, err
+	}
+	return authn, nil
+}
+
 // TouchAuthenticated records interactive activity using an authentication that
 // has already been loaded and validated. It deliberately performs no token
 // parsing or authentication lookup, so callers can place it after request

@@ -10,12 +10,34 @@ import (
 	"github.com/ZephyrLeeX/RelayShelf/internal/auth"
 	"github.com/ZephyrLeeX/RelayShelf/internal/httpapi"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/httpx"
+	"github.com/ZephyrLeeX/RelayShelf/internal/platform/id"
+	"github.com/ZephyrLeeX/RelayShelf/internal/realtime"
 	"github.com/google/uuid"
 )
 
-type Handler struct{ service *Service }
+type Handler struct {
+	service   *Service
+	publisher realtime.Publisher
+	ids       id.Generator
+	clock     Clock
+}
 
 func NewHandler(service *Service) *Handler { return &Handler{service: service} }
+
+func (h *Handler) SetPublisher(p realtime.Publisher, ids id.Generator, clock Clock) {
+	h.publisher, h.ids, h.clock = p, ids, clock
+}
+
+func (h *Handler) publish(r *http.Request, userID uuid.UUID, eventType string, resourceID uuid.UUID, version *int64, origin *uuid.UUID) {
+	if h.publisher == nil || h.ids == nil || h.clock == nil {
+		return
+	}
+	eventID, err := h.ids.New()
+	if err != nil {
+		return
+	}
+	h.publisher.Publish(userID, realtime.Event{ID: eventID, Type: eventType, ResourceID: resourceID, Version: version, OriginDeviceID: origin, OccurredAt: h.clock.Now()})
+}
 
 func decode(w http.ResponseWriter, r *http.Request, target any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, MaxJSONEnvelopeBytes)
@@ -142,6 +164,9 @@ func (h *Handler) CreateMessage(w http.ResponseWriter, r *http.Request, params h
 		mapError(w, r, err)
 		return
 	}
+	version := m.Version
+	origin := a.Device.ID
+	h.publish(r, a.User.ID, realtime.MessageCreated, m.ID, &version, &origin)
 	writeJSON(w, http.StatusCreated, messageDTO(m))
 }
 func (h *Handler) GetMessage(w http.ResponseWriter, r *http.Request, messageID httpapi.MessageId) {
@@ -249,6 +274,10 @@ func (h *Handler) respondMessage(w http.ResponseWriter, r *http.Request, m Messa
 		mapError(w, r, err)
 		return
 	}
+	a := actor(r)
+	version := m.Version
+	origin := a.Device.ID
+	h.publish(r, a.User.ID, realtime.MessageUpdated, m.ID, &version, &origin)
 	writeJSON(w, http.StatusOK, messageDTO(m))
 }
 func (h *Handler) MakeMessagePermanent(w http.ResponseWriter, r *http.Request, messageID httpapi.MessageId) {
@@ -343,6 +372,8 @@ func (h *Handler) DirectSendMessage(w http.ResponseWriter, r *http.Request, para
 		mapError(w, r, err)
 		return
 	}
+	origin := a.Device.ID
+	h.publish(r, uuid.UUID(body.RecipientUserId), realtime.MessageCreated, receipt.MessageID, nil, &origin)
 	writeJSON(w, http.StatusCreated, receiptDTO(receipt))
 }
 
@@ -377,6 +408,8 @@ func (h *Handler) ForwardMessage(w http.ResponseWriter, r *http.Request, message
 		mapError(w, r, err)
 		return
 	}
+	origin := a.Device.ID
+	h.publish(r, uuid.UUID(body.RecipientUserId), realtime.MessageCreated, receipt.MessageID, nil, &origin)
 	writeJSON(w, http.StatusCreated, receiptDTO(receipt))
 }
 func (h *Handler) PermanentlyDeleteMessage(w http.ResponseWriter, r *http.Request, messageID httpapi.MessageId) {
@@ -387,6 +420,8 @@ func (h *Handler) PermanentlyDeleteMessage(w http.ResponseWriter, r *http.Reques
 		mapError(w, r, err)
 		return
 	}
+	origin := a.Device.ID
+	h.publish(r, a.User.ID, realtime.MessageDeleted, uuid.UUID(messageID), nil, &origin)
 	w.WriteHeader(http.StatusNoContent)
 }
 

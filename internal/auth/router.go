@@ -15,6 +15,7 @@ func Router(handler any, middleware *Middleware) http.Handler {
 		WriteError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "invalid request")
 	}})
 	safe := middleware.Authenticate(true)(api)
+	stream := middleware.Authenticate(false)(api)
 	unsafe := middleware.Authenticate(false)(middleware.RequireSameOrigin(middleware.CSRF(middleware.Touch(api))))
 	login := middleware.RequireSameOrigin(api)
 	dispatch := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -24,6 +25,10 @@ func Router(handler any, middleware *Middleware) http.Handler {
 		}
 		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/login" {
 			login.ServeHTTP(w, r)
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/events" {
+			stream.ServeHTTP(w, r)
 			return
 		}
 		if isSafe(r.Method) {

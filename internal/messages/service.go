@@ -15,14 +15,20 @@ import (
 type Clock interface{ Now() time.Time }
 
 type Service struct {
-	repo   *PostgreSQLRepository
-	ids    id.Generator
-	clock  Clock
-	cipher BodyCipher
+	repo          *PostgreSQLRepository
+	ids           id.Generator
+	clock         Clock
+	cipher        BodyCipher
+	thumbnailJobs ThumbnailJobEnsurer
+	wake          interface{ Signal() }
 }
 
 func NewService(repo *PostgreSQLRepository, ids id.Generator, clock Clock, cipher BodyCipher) *Service {
 	return &Service{repo: repo, ids: ids, clock: clock, cipher: cipher}
+}
+
+func (s *Service) SetThumbnailJobs(ensurer ThumbnailJobEnsurer, wake interface{ Signal() }) {
+	s.thumbnailJobs, s.wake = ensurer, wake
 }
 
 func validBody(body string) bool {
@@ -65,6 +71,7 @@ func (s *Service) Create(ctx context.Context, ownerID, deviceID uuid.UUID, c Cre
 	hash := hashCreate(c)
 	now := s.clock.Now()
 	var result Message
+	jobCreated := false
 	err := s.repo.withTx(ctx, func(tx pgx.Tx) error {
 		idem, err := claimIdempotency(ctx, tx, ownerID, OperationCreate, c.IdempotencyKey, hash, now)
 		if err != nil {
@@ -88,9 +95,11 @@ func (s *Service) Create(ctx context.Context, ownerID, deviceID uuid.UUID, c Cre
 		if err = insertMessage(ctx, tx, result); err != nil {
 			return err
 		}
-		if err = s.bindUploads(ctx, tx, ownerID, result.ID, c.UploadIDs, 0, now); err != nil {
+		var created bool
+		if created, err = s.bindUploads(ctx, tx, ownerID, result.ID, c.UploadIDs, 0, now); err != nil {
 			return err
 		}
+		jobCreated = jobCreated || created
 		if err = replaceTags(ctx, tx, result.ID, c.TagIDs); err != nil {
 			return err
 		}
@@ -102,6 +111,9 @@ func (s *Service) Create(ctx context.Context, ownerID, deviceID uuid.UUID, c Cre
 	})
 	if err != nil {
 		return Message{}, err
+	}
+	if jobCreated && s.wake != nil {
+		s.wake.Signal()
 	}
 	result.Tags, err = loadTags(ctx, s.repo.queries, result.ID)
 	if err == nil {
@@ -493,6 +505,7 @@ func (s *Service) DirectSend(ctx context.Context, senderID, deviceID uuid.UUID, 
 	hash := hashDirect(c)
 	now := s.clock.Now()
 	var receipt MessageDeliveryReceipt
+	jobCreated := false
 	err := s.repo.withTx(ctx, func(tx pgx.Tx) error {
 		idem, err := claimIdempotency(ctx, tx, senderID, OperationDirectSend, c.IdempotencyKey, hash, now)
 		if err != nil {
@@ -520,9 +533,11 @@ func (s *Service) DirectSend(ctx context.Context, senderID, deviceID uuid.UUID, 
 		if err = insertMessage(ctx, tx, result); err != nil {
 			return err
 		}
-		if err = s.bindUploads(ctx, tx, senderID, result.ID, c.UploadIDs, 0, now); err != nil {
+		var created bool
+		if created, err = s.bindUploads(ctx, tx, senderID, result.ID, c.UploadIDs, 0, now); err != nil {
 			return err
 		}
+		jobCreated = jobCreated || created
 		idemID, err := s.ids.New()
 		if err != nil {
 			return err
@@ -540,6 +555,9 @@ func (s *Service) DirectSend(ctx context.Context, senderID, deviceID uuid.UUID, 
 	if err != nil {
 		return MessageDeliveryReceipt{}, err
 	}
+	if jobCreated && s.wake != nil {
+		s.wake.Signal()
+	}
 	return receipt, nil
 }
 
@@ -550,6 +568,7 @@ func (s *Service) Forward(ctx context.Context, senderID, deviceID uuid.UUID, c F
 	hash := hashForward(c)
 	now := s.clock.Now()
 	var receipt MessageDeliveryReceipt
+	jobCreated := false
 	err := s.repo.withTx(ctx, func(tx pgx.Tx) error {
 		idem, err := claimIdempotency(ctx, tx, senderID, OperationForward, c.IdempotencyKey, hash, now)
 		if err != nil {
@@ -606,9 +625,11 @@ func (s *Service) Forward(ctx context.Context, senderID, deviceID uuid.UUID, c F
 		if err = insertMessage(ctx, tx, result); err != nil {
 			return err
 		}
-		if err = s.copyAttachments(ctx, tx, source.ID, result.ID, now); err != nil {
+		var created bool
+		if created, err = s.copyAttachments(ctx, tx, source.ID, result.ID, now); err != nil {
 			return err
 		}
+		jobCreated = jobCreated || created
 		idemID, err := s.ids.New()
 		if err != nil {
 			return err
@@ -625,6 +646,9 @@ func (s *Service) Forward(ctx context.Context, senderID, deviceID uuid.UUID, c F
 	})
 	if err != nil {
 		return MessageDeliveryReceipt{}, err
+	}
+	if jobCreated && s.wake != nil {
+		s.wake.Signal()
 	}
 	return receipt, nil
 }
