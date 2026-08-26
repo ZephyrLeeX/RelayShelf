@@ -326,6 +326,50 @@ export class DefaultService {
         });
     }
     /**
+     * @param q
+     * @param lifecycle
+     * @param favorite
+     * @param tagId
+     * @param type
+     * @param createdAfter
+     * @param createdBefore
+     * @param cursor
+     * @param limit
+     * @returns MessageList Current user's matching active messages, newest first
+     * @throws ApiError
+     */
+    public static searchMessages(
+        q?: string,
+        lifecycle?: Lifecycle,
+        favorite?: boolean,
+        tagId?: Array<string>,
+        type?: string,
+        createdAfter?: string,
+        createdBefore?: string,
+        cursor?: string,
+        limit: number = 30,
+    ): CancelablePromise<MessageList> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/search',
+            query: {
+                'q': q,
+                'lifecycle': lifecycle,
+                'favorite': favorite,
+                'tagId': tagId,
+                'type': type,
+                'createdAfter': createdAfter,
+                'createdBefore': createdBefore,
+                'cursor': cursor,
+                'limit': limit,
+            },
+            errors: {
+                401: `API error`,
+                422: `API error`,
+            },
+        });
+    }
+    /**
      * @param idempotencyKey
      * @param requestBody
      * @returns MessageDeliveryReceipt Immutable delivery receipt

@@ -18,6 +18,10 @@ func Router(handler any, middleware *Middleware) http.Handler {
 	unsafe := middleware.Authenticate(false)(middleware.RequireSameOrigin(middleware.CSRF(middleware.Touch(api))))
 	login := middleware.RequireSameOrigin(api)
 	dispatch := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/search" {
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("Pragma", "no-cache")
+		}
 		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/login" {
 			login.ServeHTTP(w, r)
 			return

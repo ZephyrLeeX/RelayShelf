@@ -4,6 +4,8 @@ package database_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"testing"
 
@@ -52,10 +54,6 @@ func TestMigrationsAndCompatibility(t *testing.T) {
 
 func TestPhase5UploadHandoffIndexMigrations(t *testing.T) {
 	ctx := context.Background()
-	latest, err := database.LatestVersion()
-	if err != nil || latest != 3 {
-		t.Fatalf("latest migration version=%d want=3 err=%v", latest, err)
-	}
 
 	t.Run("existing clean v2 database", func(t *testing.T) {
 		db := postgresutil.NewEmptyDatabase(t)
@@ -63,15 +61,7 @@ func TestPhase5UploadHandoffIndexMigrations(t *testing.T) {
 		assertVersion(t, ctx, db, 2)
 		assertPhase5IndexCount(t, ctx, db, 0)
 
-		if err := database.Migrate(ctx, db); err != nil {
-			t.Fatalf("migrate v2 to v3: %v", err)
-		}
-		assertVersion(t, ctx, db, 3)
-		assertPhase5Indexes(t, ctx, db)
-
-		if err := database.Migrate(ctx, db); err != nil {
-			t.Fatalf("repeat migration: %v", err)
-		}
+		applyReleasedMigration(t, ctx, db, 3, "000003_phase5_upload_handoff_indexes.sql")
 		assertVersion(t, ctx, db, 3)
 		assertPhase5Indexes(t, ctx, db)
 	})
@@ -81,7 +71,7 @@ func TestPhase5UploadHandoffIndexMigrations(t *testing.T) {
 		if err := database.Migrate(ctx, db); err != nil {
 			t.Fatalf("migrate fresh database: %v", err)
 		}
-		assertVersion(t, ctx, db, 3)
+		assertVersion(t, ctx, db, 4)
 		assertPhase5Indexes(t, ctx, db)
 
 		var businessTables int
@@ -108,12 +98,64 @@ CREATE INDEX upload_sessions_handoff_file_idx
 		assertVersion(t, ctx, db, 2)
 		assertPhase5Indexes(t, ctx, db)
 
-		if err := database.Migrate(ctx, db); err != nil {
-			t.Fatalf("migrate drifted v2 to v3: %v", err)
-		}
+		applyReleasedMigration(t, ctx, db, 3, "000003_phase5_upload_handoff_indexes.sql")
 		assertVersion(t, ctx, db, 3)
 		assertPhase5Indexes(t, ctx, db)
 	})
+}
+
+func TestPhase6SearchIndexMigrations(t *testing.T) {
+	ctx := context.Background()
+	latest, err := database.LatestVersion()
+	if err != nil || latest != 4 {
+		t.Fatalf("latest migration version=%d want=4 err=%v", latest, err)
+	}
+
+	t.Run("existing clean v3 database", func(t *testing.T) {
+		db := postgresutil.NewEmptyDatabase(t)
+		applyReleasedV2(t, ctx, db)
+		applyReleasedMigration(t, ctx, db, 3, "000003_phase5_upload_handoff_indexes.sql")
+		assertVersion(t, ctx, db, 3)
+		assertPhase6IndexCount(t, ctx, db, 0)
+		if err := database.Migrate(ctx, db); err != nil {
+			t.Fatalf("migrate v3 to v4: %v", err)
+		}
+		assertVersion(t, ctx, db, 4)
+		assertPhase6Indexes(t, ctx, db)
+		if err := database.Migrate(ctx, db); err != nil {
+			t.Fatalf("repeat migration: %v", err)
+		}
+		assertVersion(t, ctx, db, 4)
+		assertPhase6Indexes(t, ctx, db)
+	})
+
+	t.Run("fresh database", func(t *testing.T) {
+		db := postgresutil.NewEmptyDatabase(t)
+		if err := database.Migrate(ctx, db); err != nil {
+			t.Fatalf("migrate fresh database: %v", err)
+		}
+		assertVersion(t, ctx, db, 4)
+		assertPhase5Indexes(t, ctx, db)
+		assertPhase6Indexes(t, ctx, db)
+	})
+}
+
+func TestReleasedMigrationHistoryIsImmutable(t *testing.T) {
+	want := map[string]string{
+		"000001_initial_schema.sql":                "3eb8cff7d93ac0798cd8d180b45aad52c414792797e1e3344225d4b22d25b742",
+		"000002_pg_trgm.sql":                       "3c041b2c922fb8c60ae41085a7f999c0981fd1c443665d54d0dcc1ba7955a165",
+		"000003_phase5_upload_handoff_indexes.sql": "cb6c90012d4b54bd180467a02f13a98e041e8cd9b32924287990d8e847f90c07",
+	}
+	for name, expected := range want {
+		contents, err := migrations.Files.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		digest := sha256.Sum256(contents)
+		if got := hex.EncodeToString(digest[:]); got != expected {
+			t.Fatalf("released migration %s digest=%s want=%s", name, got, expected)
+		}
+	}
 }
 
 func applyReleasedV2(t *testing.T, ctx context.Context, db *pgxpool.Pool) {
@@ -135,6 +177,22 @@ func applyReleasedV2(t *testing.T, ctx context.Context, db *pgxpool.Pool) {
 		if err := database.ApplyMigration(ctx, conn, migration); err != nil {
 			t.Fatalf("apply released migration %s: %v", name, err)
 		}
+	}
+}
+
+func applyReleasedMigration(t *testing.T, ctx context.Context, db *pgxpool.Pool, version int64, name string) {
+	t.Helper()
+	contents, err := migrations.Files.ReadFile(name)
+	if err != nil {
+		t.Fatalf("read released migration %s: %v", name, err)
+	}
+	conn, err := db.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire migration connection: %v", err)
+	}
+	defer conn.Release()
+	if err = database.ApplyMigration(ctx, conn, database.Migration{Version: version, Name: name, SQL: string(contents)}); err != nil {
+		t.Fatalf("apply released migration %s: %v", name, err)
 	}
 }
 
@@ -163,10 +221,50 @@ func assertPhase5Indexes(t *testing.T, ctx context.Context, db *pgxpool.Pool) {
 	assertIndexDefinition(t, ctx, db, "upload_sessions_handoff_file_idx", "file_object_id,completed_at", "STATUS='COMPLETED'", "CONSUMED_ATISNULL")
 }
 
+func assertPhase6IndexCount(t *testing.T, ctx context.Context, db *pgxpool.Pool, want int) {
+	t.Helper()
+	var got int
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM pg_indexes
+WHERE schemaname = 'public'
+AND indexname IN ('tags_normalized_name_trgm_idx', 'message_tags_tag_message_idx', 'messages_owner_active_created_idx')`).Scan(&got); err != nil || got != want {
+		t.Fatalf("Phase 6 index count=%d want=%d err=%v", got, want, err)
+	}
+}
+
+func assertPhase6Indexes(t *testing.T, ctx context.Context, db *pgxpool.Pool) {
+	t.Helper()
+	assertPhase6IndexCount(t, ctx, db, 3)
+	assertIndexDefinition(t, ctx, db, "message_tags_tag_message_idx", "tag_id,message_id")
+	assertIndexDefinition(t, ctx, db, "messages_owner_active_created_idx", "owner_id,created_at,id", "TRASHED_ATISNULL")
+	for _, name := range []string{"message_tags_tag_message_idx", "messages_owner_active_created_idx"} {
+		var method string
+		if err := db.QueryRow(ctx, `SELECT access_method.amname FROM pg_class index_class JOIN pg_am access_method ON access_method.oid=index_class.relam WHERE index_class.relname=$1`, name).Scan(&method); err != nil || method != "btree" {
+			t.Fatalf("index %s method=%s want=btree err=%v", name, method, err)
+		}
+	}
+	var ownerIndexDefinition string
+	if err := db.QueryRow(ctx, `SELECT pg_get_indexdef(index_class.oid) FROM pg_class index_class WHERE index_class.relname='messages_owner_active_created_idx'`).Scan(&ownerIndexDefinition); err != nil || !strings.Contains(strings.ToUpper(ownerIndexDefinition), "CREATED_AT DESC") || !strings.Contains(strings.ToUpper(ownerIndexDefinition), "ID DESC") {
+		t.Fatalf("owner search index ordering=%q err=%v", ownerIndexDefinition, err)
+	}
+	var method, opclass string
+	if err := db.QueryRow(ctx, `SELECT access_method.amname, operator_class.opcname
+FROM pg_class index_class
+JOIN pg_index index ON index.indexrelid = index_class.oid
+JOIN pg_class table_class ON table_class.oid = index.indrelid
+JOIN pg_am access_method ON access_method.oid = index_class.relam
+JOIN pg_opclass operator_class ON operator_class.oid = index.indclass[0]
+WHERE index_class.relname = 'tags_normalized_name_trgm_idx'`).Scan(&method, &opclass); err != nil {
+		t.Fatal(err)
+	}
+	if method != "gin" || opclass != "gin_trgm_ops" {
+		t.Fatalf("tag search index method=%s opclass=%s", method, opclass)
+	}
+}
+
 func assertIndexDefinition(t *testing.T, ctx context.Context, db *pgxpool.Pool, name, wantColumns string, wantPredicates ...string) {
 	t.Helper()
 	var columns []string
-	var predicate string
+	var predicate *string
 	err := db.QueryRow(ctx, `SELECT array_agg(attribute.attname ORDER BY key.ordinality),
        pg_get_expr(index.indpred, index.indrelid)
 FROM pg_class index_class
@@ -181,14 +279,18 @@ GROUP BY index.indpred, index.indrelid`, name).Scan(&columns, &predicate)
 	if got := strings.Join(columns, ","); got != wantColumns {
 		t.Fatalf("index %s columns=%s want=%s", name, got, wantColumns)
 	}
-	normalized := strings.ToUpper(predicate)
+	predicateText := ""
+	if predicate != nil {
+		predicateText = *predicate
+	}
+	normalized := strings.ToUpper(predicateText)
 	normalized = strings.ReplaceAll(normalized, "::TEXT", "")
 	normalized = strings.Join(strings.Fields(normalized), "")
 	normalized = strings.ReplaceAll(normalized, "(", "")
 	normalized = strings.ReplaceAll(normalized, ")", "")
 	for _, want := range wantPredicates {
 		if !strings.Contains(normalized, want) {
-			t.Fatalf("index %s predicate=%q missing %q", name, predicate, want)
+			t.Fatalf("index %s predicate=%q missing %q", name, predicateText, want)
 		}
 	}
 }

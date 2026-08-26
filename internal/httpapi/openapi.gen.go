@@ -395,6 +395,19 @@ type ForwardMessageParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
+// SearchMessagesParams defines parameters for SearchMessages.
+type SearchMessagesParams struct {
+	Q             *string               `form:"q,omitempty" json:"q,omitempty"`
+	Lifecycle     *Lifecycle            `form:"lifecycle,omitempty" json:"lifecycle,omitempty"`
+	Favorite      *bool                 `form:"favorite,omitempty" json:"favorite,omitempty"`
+	TagId         *[]openapi_types.UUID `form:"tagId,omitempty" json:"tagId,omitempty"`
+	Type          *string               `form:"type,omitempty" json:"type,omitempty"`
+	CreatedAfter  *time.Time            `form:"createdAfter,omitempty" json:"createdAfter,omitempty"`
+	CreatedBefore *time.Time            `form:"createdBefore,omitempty" json:"createdBefore,omitempty"`
+	Cursor        *Cursor               `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit         *Limit                `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // ListTrashParams defines parameters for ListTrash.
 type ListTrashParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
@@ -526,6 +539,9 @@ type ServerInterface interface {
 
 	// (POST /messages/{messageId}/trash)
 	TrashMessage(w http.ResponseWriter, r *http.Request, messageId MessageId)
+
+	// (GET /search)
+	SearchMessages(w http.ResponseWriter, r *http.Request, params SearchMessagesParams)
 
 	// (GET /sessions)
 	ListSessions(w http.ResponseWriter, r *http.Request)
@@ -678,6 +694,11 @@ func (_ Unimplemented) ReplaceMessageTags(w http.ResponseWriter, r *http.Request
 
 // (POST /messages/{messageId}/trash)
 func (_ Unimplemented) TrashMessage(w http.ResponseWriter, r *http.Request, messageId MessageId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /search)
+func (_ Unimplemented) SearchMessages(w http.ResponseWriter, r *http.Request, params SearchMessagesParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1401,6 +1422,143 @@ func (siw *ServerInterfaceWrapper) TrashMessage(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// SearchMessages operation middleware
+func (siw *ServerInterfaceWrapper) SearchMessages(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SearchMessagesParams
+
+	// ------------- Optional query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "lifecycle" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "lifecycle", r.URL.Query(), &params.Lifecycle, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "lifecycle"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "lifecycle", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "favorite" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "favorite", r.URL.Query(), &params.Favorite, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "favorite"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "favorite", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "tagId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "tagId", r.URL.Query(), &params.TagId, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "tagId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tagId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "type" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "type", r.URL.Query(), &params.Type, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "type"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "type", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "createdAfter" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "createdAfter", r.URL.Query(), &params.CreatedAfter, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "createdAfter"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "createdAfter", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "createdBefore" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "createdBefore", r.URL.Query(), &params.CreatedBefore, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "createdBefore"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "createdBefore", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SearchMessages(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListSessions operation middleware
 func (siw *ServerInterfaceWrapper) ListSessions(w http.ResponseWriter, r *http.Request) {
 
@@ -1874,6 +2032,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/messages", wrapper.CreateMessage)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/search", wrapper.SearchMessages)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/messages/direct-send", wrapper.DirectSendMessage)
