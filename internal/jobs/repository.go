@@ -40,7 +40,10 @@ RETURNING job.id,job.job_type,job.subject_type,job.subject_id,job.status,job.att
 }
 
 func (r *Repository) Complete(ctx context.Context, id uuid.UUID, now time.Time) error {
-	_, err := r.pool.Exec(ctx, `UPDATE background_jobs SET status='COMPLETED',started_at=NULL,last_error_code=NULL,last_error_summary=NULL,updated_at=$2 WHERE id=$1 AND status='RUNNING'`, id, now)
+	ct, err := r.pool.Exec(ctx, `UPDATE background_jobs SET status='COMPLETED',started_at=NULL,last_error_code=NULL,last_error_summary=NULL,updated_at=$2 WHERE id=$1 AND status='RUNNING'`, id, now)
+	if err == nil && ct.RowsAffected() != 1 {
+		return ErrStateTransition
+	}
 	return err
 }
 
@@ -51,8 +54,12 @@ func (r *Repository) Fail(ctx context.Context, job Job, code, summary string, pe
 			return err
 		}
 		defer func() { _ = tx.Rollback(ctx) }()
-		if _, err = tx.Exec(ctx, `UPDATE background_jobs SET status='FAILED',started_at=NULL,last_error_code=$2,last_error_summary=$3,updated_at=$4 WHERE id=$1 AND status='RUNNING'`, job.ID, code, summary, now); err != nil {
-			return err
+		ct, execErr := tx.Exec(ctx, `UPDATE background_jobs SET status='FAILED',started_at=NULL,last_error_code=$2,last_error_summary=$3,updated_at=$4 WHERE id=$1 AND status='RUNNING'`, job.ID, code, summary, now)
+		if execErr != nil {
+			return execErr
+		}
+		if ct.RowsAffected() != 1 {
+			return ErrStateTransition
 		}
 		if job.Type == TypeGenerateThumbnail && job.SubjectID != nil {
 			if _, err = tx.Exec(ctx, `UPDATE file_derivatives SET status='FAILED',updated_at=$2 WHERE source_file_id=$1 AND kind='THUMBNAIL_SMALL' AND status='PENDING'`, *job.SubjectID, now); err != nil {
@@ -61,7 +68,10 @@ func (r *Repository) Fail(ctx context.Context, job Job, code, summary string, pe
 		}
 		return tx.Commit(ctx)
 	}
-	_, err := r.pool.Exec(ctx, `UPDATE background_jobs SET status='PENDING',started_at=NULL,next_run_at=$2,last_error_code=$3,last_error_summary=$4,updated_at=$5 WHERE id=$1 AND status='RUNNING'`, job.ID, now.Add(Backoff(job.Attempts)), code, summary, now)
+	ct, err := r.pool.Exec(ctx, `UPDATE background_jobs SET status='PENDING',started_at=NULL,next_run_at=$2,last_error_code=$3,last_error_summary=$4,updated_at=$5 WHERE id=$1 AND status='RUNNING'`, job.ID, now.Add(Backoff(job.Attempts)), code, summary, now)
+	if err == nil && ct.RowsAffected() != 1 {
+		return ErrStateTransition
+	}
 	return err
 }
 
@@ -69,15 +79,50 @@ func (r *Repository) RecoverStuck(ctx context.Context, now time.Time, timeout ti
 	if batch <= 0 {
 		return 0, nil
 	}
-	ct, err := r.pool.Exec(ctx, `WITH stuck AS (
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	rows, err := tx.Query(ctx, `WITH stuck AS (
 SELECT id FROM background_jobs WHERE status='RUNNING' AND started_at<$1
 ORDER BY started_at,id FOR UPDATE SKIP LOCKED LIMIT $2
 ) UPDATE background_jobs j SET status=CASE WHEN attempts >= $3 THEN 'FAILED' ELSE 'PENDING' END,
 started_at=NULL,next_run_at=CASE WHEN attempts >= $3 THEN next_run_at ELSE $4 END,
 last_error_code=CASE WHEN attempts >= $3 THEN 'JOB_STUCK_MAX_ATTEMPTS' ELSE 'JOB_STUCK_RECOVERED' END,
 last_error_summary=CASE WHEN attempts >= $3 THEN 'stuck job reached maximum attempts' ELSE 'stuck job recovered' END,updated_at=$4
-FROM stuck WHERE j.id=stuck.id`, now.Add(-timeout), batch, maxAttempts, now)
-	return ct.RowsAffected(), err
+FROM stuck WHERE j.id=stuck.id RETURNING j.job_type,j.subject_id,j.status`, now.Add(-timeout), batch, maxAttempts, now)
+	if err != nil {
+		return 0, err
+	}
+	var affected int64
+	var failedThumbnailIDs []uuid.UUID
+	for rows.Next() {
+		var jobType, status string
+		var subjectID *uuid.UUID
+		if err = rows.Scan(&jobType, &subjectID, &status); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		affected++
+		if jobType == TypeGenerateThumbnail && subjectID != nil && status == StatusFailed {
+			failedThumbnailIDs = append(failedThumbnailIDs, *subjectID)
+		}
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+	if len(failedThumbnailIDs) > 0 {
+		if _, err = tx.Exec(ctx, `UPDATE file_derivatives SET status='FAILED',updated_at=$2 WHERE source_file_id=ANY($1::uuid[]) AND kind='THUMBNAIL_SMALL' AND status='PENDING'`, failedThumbnailIDs, now); err != nil {
+			return 0, err
+		}
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return affected, nil
 }
 
 func IsThumbnailMIME(mime string) bool {

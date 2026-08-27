@@ -3,6 +3,7 @@
 package jobs_test
 
 import (
+	"bytes"
 	"context"
 	"sync"
 	"testing"
@@ -25,6 +26,13 @@ func TestJobClaimRetryAndRecovery(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	first, second := uuid.New(), uuid.New()
 	source := uuid.New()
+	derivative := uuid.New()
+	if _, err := db.Exec(ctx, `INSERT INTO file_objects(id,sha256,size_bytes,detected_mime,storage_backend,storage_key,status,created_at,updated_at,ready_at) VALUES($1,$2,1,'image/png','filesystem',$3,'READY',$4,$4,$4)`, source, bytes.Repeat([]byte{1}, 32), "objects/"+source.String(), now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO file_derivatives(id,source_file_id,kind,storage_key,mime,size_bytes,status,created_at,updated_at) VALUES($1,$2,'THUMBNAIL_SMALL',$3,'image/png',0,'PENDING',$4,$4)`, derivative, source, "derivatives/"+derivative.String(), now); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(ctx, `INSERT INTO background_jobs(id,job_type,subject_type,subject_id,status,attempts,next_run_at,created_at,updated_at) VALUES($1,'GENERATE_THUMBNAIL','FILE_OBJECT',$3,'PENDING',0,$4,$4,$4),($2,'OTHER','TEST',NULL,'PENDING',0,$4+interval '1 second',$4,$4)`, first, second, source, now); err != nil {
 		t.Fatal(err)
 	}
@@ -53,6 +61,9 @@ func TestJobClaimRetryAndRecovery(t *testing.T) {
 	}
 	if err = db.QueryRow(ctx, `SELECT status FROM background_jobs WHERE id=$1`, first).Scan(&status); err != nil || status != "FAILED" {
 		t.Fatalf("status=%s err=%v", status, err)
+	}
+	if err = db.QueryRow(ctx, `SELECT status FROM file_derivatives WHERE id=$1`, derivative).Scan(&status); err != nil || status != "FAILED" {
+		t.Fatalf("derivative status=%s err=%v", status, err)
 	}
 }
 

@@ -149,7 +149,7 @@ func (s *Service) GC(ctx context.Context, batch int, now time.Time) error {
 	if _, err = tx.Exec(ctx, `DELETE FROM upload_sessions WHERE status='COMPLETED' AND completed_at<=($1::timestamptz-interval '24 hours')`, now); err != nil {
 		return err
 	}
-	rows, err := tx.Query(ctx, `SELECT fo.id FROM file_objects fo WHERE fo.status='READY' AND fo.ready_at<=($1::timestamptz-interval '24 hours') AND NOT EXISTS(SELECT 1 FROM message_attachments ma WHERE ma.file_object_id=fo.id) AND NOT EXISTS(SELECT 1 FROM upload_sessions us WHERE us.file_object_id=fo.id AND us.status='COMPLETED' AND us.consumed_at IS NULL AND us.completed_at>($1::timestamptz-interval '24 hours')) ORDER BY fo.ready_at,fo.id FOR UPDATE SKIP LOCKED LIMIT $2`, now, batch)
+	rows, err := tx.Query(ctx, `SELECT fo.id FROM file_objects fo WHERE fo.status='READY' AND fo.ready_at<=($1::timestamptz-interval '24 hours') AND NOT EXISTS(SELECT 1 FROM message_attachments ma WHERE ma.file_object_id=fo.id) AND NOT EXISTS(SELECT 1 FROM upload_sessions us WHERE us.file_object_id=fo.id AND us.status='COMPLETED' AND us.consumed_at IS NULL AND us.completed_at>($1::timestamptz-interval '24 hours')) AND NOT EXISTS(SELECT 1 FROM background_jobs bj WHERE bj.job_type='GENERATE_THUMBNAIL' AND bj.subject_type='FILE_OBJECT' AND bj.subject_id=fo.id AND bj.status IN ('PENDING','RUNNING')) ORDER BY fo.ready_at,fo.id FOR UPDATE SKIP LOCKED LIMIT $2`, now, batch)
 	if err != nil {
 		return err
 	}
@@ -164,7 +164,7 @@ func (s *Service) GC(ctx context.Context, batch int, now time.Time) error {
 	}
 	rows.Close()
 	for _, id := range ids {
-		if _, err = tx.Exec(ctx, `UPDATE file_objects SET status='DELETING',updated_at=$2 WHERE id=$1 AND status='READY' AND NOT EXISTS(SELECT 1 FROM message_attachments WHERE file_object_id=$1) AND NOT EXISTS(SELECT 1 FROM upload_sessions WHERE file_object_id=$1 AND status='COMPLETED' AND consumed_at IS NULL AND completed_at>($2::timestamptz-interval '24 hours'))`, id, now); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE file_objects SET status='DELETING',updated_at=$2 WHERE id=$1 AND status='READY' AND NOT EXISTS(SELECT 1 FROM message_attachments WHERE file_object_id=$1) AND NOT EXISTS(SELECT 1 FROM upload_sessions WHERE file_object_id=$1 AND status='COMPLETED' AND consumed_at IS NULL AND completed_at>($2::timestamptz-interval '24 hours')) AND NOT EXISTS(SELECT 1 FROM background_jobs bj WHERE bj.job_type='GENERATE_THUMBNAIL' AND bj.subject_type='FILE_OBJECT' AND bj.subject_id=$1 AND bj.status IN ('PENDING','RUNNING'))`, id, now); err != nil {
 			return err
 		}
 	}

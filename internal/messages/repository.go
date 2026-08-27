@@ -245,16 +245,26 @@ func resourceMetadata(resourceID uuid.UUID, now time.Time) []byte {
 	return metadata
 }
 
-func deliveryMetadata(receipt MessageDeliveryReceipt) ([]byte, error) {
-	return json.Marshal(receipt)
+type deliveryIdempotencyMetadata struct {
+	MessageDeliveryReceipt
+	Version int64 `json:"version"`
 }
 
-func deliveryReceipt(idem idemResult) (MessageDeliveryReceipt, error) {
-	var receipt MessageDeliveryReceipt
-	if err := json.Unmarshal(idem.ResponseMetadata, &receipt); err != nil || receipt.MessageID == uuid.Nil || receipt.CreatedAt.IsZero() || receipt.ExpiresAt.IsZero() || receipt.MessageID != idem.ResourceID {
-		return MessageDeliveryReceipt{}, errors.New("invalid idempotency delivery receipt")
+func deliveryMetadata(receipt MessageDeliveryReceipt, version int64) ([]byte, error) {
+	return json.Marshal(deliveryIdempotencyMetadata{MessageDeliveryReceipt: receipt, Version: version})
+}
+
+func deliveryResult(idem idemResult) (MessageDeliveryReceipt, int64, error) {
+	var metadata deliveryIdempotencyMetadata
+	if err := json.Unmarshal(idem.ResponseMetadata, &metadata); err != nil || metadata.MessageID == uuid.Nil || metadata.CreatedAt.IsZero() || metadata.ExpiresAt.IsZero() || metadata.MessageID != idem.ResourceID {
+		return MessageDeliveryReceipt{}, 0, errors.New("invalid idempotency delivery receipt")
 	}
-	return receipt, nil
+	// Phase 7 idempotency rows written before committed versions were added
+	// represent newly-created messages, whose authoritative initial version is 1.
+	if metadata.Version == 0 {
+		metadata.Version = 1
+	}
+	return metadata.MessageDeliveryReceipt, metadata.Version, nil
 }
 
 func (r *PostgreSQLRepository) List(ctx context.Context, ownerID uuid.UUID, filter ListFilter, trash bool, now time.Time) ([]Message, error) {

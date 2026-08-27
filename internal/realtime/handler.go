@@ -61,7 +61,10 @@ func (h *Handler) GetEvents(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 			return
 		case <-expiryTimer.C:
-			return
+			validated, err := h.validator.ValidateSession(ctx, a.Session.ID)
+			if err != nil || !resetExpiryTimer(expiryTimer, validated) {
+				return
+			}
 		case event := <-sub.Events:
 			if writeEvent(w, event) != nil {
 				return
@@ -69,27 +72,31 @@ func (h *Handler) GetEvents(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		case <-heartbeat.C:
 			validated, err := h.validator.ValidateSession(ctx, a.Session.ID)
-			if err != nil {
+			if err != nil || !resetExpiryTimer(expiryTimer, validated) {
 				return
 			}
-			next := nearest(validated.Session.ExpiresAt, validated.Session.AbsoluteExpiresAt)
-			if !expiryTimer.Stop() {
-				select {
-				case <-expiryTimer.C:
-				default:
-				}
-			}
-			delay = time.Until(next)
-			if delay < 0 {
-				return
-			}
-			expiryTimer.Reset(delay)
 			if _, err = w.Write([]byte(": heartbeat\n\n")); err != nil {
 				return
 			}
 			flusher.Flush()
 		}
 	}
+}
+
+func resetExpiryTimer(timer *time.Timer, a auth.Authentication) bool {
+	next := nearest(a.Session.ExpiresAt, a.Session.AbsoluteExpiresAt)
+	delay := time.Until(next)
+	if delay <= 0 {
+		return false
+	}
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	timer.Reset(delay)
+	return true
 }
 
 func nearest(a, b time.Time) time.Time {

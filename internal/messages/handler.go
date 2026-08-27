@@ -159,15 +159,17 @@ func (h *Handler) CreateMessage(w http.ResponseWriter, r *http.Request, params h
 	if body.Body != nil {
 		messageBody = *body.Body
 	}
-	m, err := h.service.Create(r.Context(), a.User.ID, a.Device.ID, CreateCommand{Body: messageBody, BodyFormat: format, Lifecycle: lifecycle, Sensitive: sensitive, TagIDs: ids, UploadIDs: uploadIDs, IdempotencyKey: params.IdempotencyKey})
+	result, err := h.service.CreateResult(r.Context(), a.User.ID, a.Device.ID, CreateCommand{Body: messageBody, BodyFormat: format, Lifecycle: lifecycle, Sensitive: sensitive, TagIDs: ids, UploadIDs: uploadIDs, IdempotencyKey: params.IdempotencyKey})
 	if err != nil {
 		mapError(w, r, err)
 		return
 	}
-	version := m.Version
-	origin := a.Device.ID
-	h.publish(r, a.User.ID, realtime.MessageCreated, m.ID, &version, &origin)
-	writeJSON(w, http.StatusCreated, messageDTO(m))
+	if result.Created {
+		version := result.Version
+		origin := a.Device.ID
+		h.publish(r, a.User.ID, realtime.MessageCreated, result.ID, &version, &origin)
+	}
+	writeJSON(w, http.StatusCreated, messageDTO(result.Message))
 }
 func (h *Handler) GetMessage(w http.ResponseWriter, r *http.Request, messageID httpapi.MessageId) {
 	m, err := h.service.Detail(r.Context(), actor(r).User.ID, uuid.UUID(messageID))
@@ -267,9 +269,9 @@ func (h *Handler) EditMessage(w http.ResponseWriter, r *http.Request, messageID 
 		command.DetectedLanguage = OptionalString{Set: true, Value: value}
 	}
 	m, err := h.service.Edit(r.Context(), actor(r).User.ID, uuid.UUID(messageID), command)
-	h.respondMessage(w, r, m, err)
+	h.respondMessage(w, r, m, command.ExpectedVersion, err)
 }
-func (h *Handler) respondMessage(w http.ResponseWriter, r *http.Request, m Message, err error) {
+func (h *Handler) respondMessage(w http.ResponseWriter, r *http.Request, m Message, expectedVersion int64, err error) {
 	if err != nil {
 		mapError(w, r, err)
 		return
@@ -277,7 +279,9 @@ func (h *Handler) respondMessage(w http.ResponseWriter, r *http.Request, m Messa
 	a := actor(r)
 	version := m.Version
 	origin := a.Device.ID
-	h.publish(r, a.User.ID, realtime.MessageUpdated, m.ID, &version, &origin)
+	if m.Version != expectedVersion {
+		h.publish(r, a.User.ID, realtime.MessageUpdated, m.ID, &version, &origin)
+	}
 	writeJSON(w, http.StatusOK, messageDTO(m))
 }
 func (h *Handler) MakeMessagePermanent(w http.ResponseWriter, r *http.Request, messageID httpapi.MessageId) {
@@ -286,7 +290,7 @@ func (h *Handler) MakeMessagePermanent(w http.ResponseWriter, r *http.Request, m
 		return
 	}
 	m, err := h.service.MakePermanent(r.Context(), actor(r).User.ID, uuid.UUID(messageID), body.ExpectedVersion)
-	h.respondMessage(w, r, m, err)
+	h.respondMessage(w, r, m, body.ExpectedVersion, err)
 }
 func (h *Handler) SetMessageFavorite(w http.ResponseWriter, r *http.Request, messageID httpapi.MessageId) {
 	var body httpapi.FavoriteRequest
@@ -294,7 +298,7 @@ func (h *Handler) SetMessageFavorite(w http.ResponseWriter, r *http.Request, mes
 		return
 	}
 	m, err := h.service.SetFavorite(r.Context(), actor(r).User.ID, uuid.UUID(messageID), body.ExpectedVersion, body.Favorite)
-	h.respondMessage(w, r, m, err)
+	h.respondMessage(w, r, m, body.ExpectedVersion, err)
 }
 func (h *Handler) TrashMessage(w http.ResponseWriter, r *http.Request, messageID httpapi.MessageId) {
 	var body httpapi.VersionRequest
@@ -302,7 +306,7 @@ func (h *Handler) TrashMessage(w http.ResponseWriter, r *http.Request, messageID
 		return
 	}
 	m, err := h.service.Trash(r.Context(), actor(r).User.ID, uuid.UUID(messageID), body.ExpectedVersion)
-	h.respondMessage(w, r, m, err)
+	h.respondMessage(w, r, m, body.ExpectedVersion, err)
 }
 func (h *Handler) RestoreMessage(w http.ResponseWriter, r *http.Request, messageID httpapi.MessageId) {
 	var body httpapi.VersionRequest
@@ -310,7 +314,7 @@ func (h *Handler) RestoreMessage(w http.ResponseWriter, r *http.Request, message
 		return
 	}
 	m, err := h.service.Restore(r.Context(), actor(r).User.ID, uuid.UUID(messageID), body.ExpectedVersion)
-	h.respondMessage(w, r, m, err)
+	h.respondMessage(w, r, m, body.ExpectedVersion, err)
 }
 func (h *Handler) ReplaceMessageTags(w http.ResponseWriter, r *http.Request, messageID httpapi.MessageId) {
 	var body httpapi.ReplaceMessageTagsRequest
@@ -322,7 +326,7 @@ func (h *Handler) ReplaceMessageTags(w http.ResponseWriter, r *http.Request, mes
 		ids = append(ids, uuid.UUID(value))
 	}
 	m, err := h.service.ReplaceTags(r.Context(), actor(r).User.ID, uuid.UUID(messageID), body.ExpectedVersion, ids)
-	h.respondMessage(w, r, m, err)
+	h.respondMessage(w, r, m, body.ExpectedVersion, err)
 }
 func (h *Handler) SetMessageSensitive(w http.ResponseWriter, r *http.Request, messageID httpapi.MessageId) {
 	var body httpapi.SensitiveRequest
@@ -330,7 +334,7 @@ func (h *Handler) SetMessageSensitive(w http.ResponseWriter, r *http.Request, me
 		return
 	}
 	m, err := h.service.SetSensitive(r.Context(), actor(r).User.ID, uuid.UUID(messageID), body.ExpectedVersion, body.Sensitive)
-	h.respondMessage(w, r, m, err)
+	h.respondMessage(w, r, m, body.ExpectedVersion, err)
 }
 func (h *Handler) RevealSensitiveBody(w http.ResponseWriter, r *http.Request, messageID httpapi.MessageId) {
 	w.Header().Set("Cache-Control", "no-store")
@@ -348,7 +352,7 @@ func (h *Handler) EditSensitiveBody(w http.ResponseWriter, r *http.Request, mess
 		return
 	}
 	m, err := h.service.EditSensitive(r.Context(), actor(r).User.ID, uuid.UUID(messageID), body.ExpectedVersion, body.Body)
-	h.respondMessage(w, r, m, err)
+	h.respondMessage(w, r, m, body.ExpectedVersion, err)
 }
 func (h *Handler) DirectSendMessage(w http.ResponseWriter, r *http.Request, params httpapi.DirectSendMessageParams) {
 	var body httpapi.DirectSendRequest
@@ -367,14 +371,16 @@ func (h *Handler) DirectSendMessage(w http.ResponseWriter, r *http.Request, para
 	if body.Body != nil {
 		messageBody = *body.Body
 	}
-	receipt, err := h.service.DirectSend(r.Context(), a.User.ID, a.Device.ID, DirectSendCommand{RecipientID: uuid.UUID(body.RecipientUserId), Body: messageBody, BodyFormat: format, Sensitive: sensitive, UploadIDs: uploadIDs, IdempotencyKey: params.IdempotencyKey})
+	result, err := h.service.DirectSendResult(r.Context(), a.User.ID, a.Device.ID, DirectSendCommand{RecipientID: uuid.UUID(body.RecipientUserId), Body: messageBody, BodyFormat: format, Sensitive: sensitive, UploadIDs: uploadIDs, IdempotencyKey: params.IdempotencyKey})
 	if err != nil {
 		mapError(w, r, err)
 		return
 	}
-	origin := a.Device.ID
-	h.publish(r, uuid.UUID(body.RecipientUserId), realtime.MessageCreated, receipt.MessageID, nil, &origin)
-	writeJSON(w, http.StatusCreated, receiptDTO(receipt))
+	if result.Created {
+		origin := a.Device.ID
+		h.publish(r, uuid.UUID(body.RecipientUserId), realtime.MessageCreated, result.Receipt.MessageID, &result.Version, &origin)
+	}
+	writeJSON(w, http.StatusCreated, receiptDTO(result.Receipt))
 }
 
 func (h *Handler) AddMessageAttachments(w http.ResponseWriter, r *http.Request, messageID httpapi.MessageId) {
@@ -387,7 +393,7 @@ func (h *Handler) AddMessageAttachments(w http.ResponseWriter, r *http.Request, 
 		ids = append(ids, uuid.UUID(v))
 	}
 	m, err := h.service.AddAttachments(r.Context(), actor(r).User.ID, uuid.UUID(messageID), body.ExpectedVersion, ids)
-	h.respondMessage(w, r, m, err)
+	h.respondMessage(w, r, m, body.ExpectedVersion, err)
 }
 func (h *Handler) RemoveMessageAttachment(w http.ResponseWriter, r *http.Request, messageID httpapi.MessageId, attachmentID httpapi.AttachmentId) {
 	var body httpapi.VersionRequest
@@ -395,7 +401,7 @@ func (h *Handler) RemoveMessageAttachment(w http.ResponseWriter, r *http.Request
 		return
 	}
 	m, err := h.service.RemoveAttachment(r.Context(), actor(r).User.ID, uuid.UUID(messageID), uuid.UUID(attachmentID), body.ExpectedVersion)
-	h.respondMessage(w, r, m, err)
+	h.respondMessage(w, r, m, body.ExpectedVersion, err)
 }
 func (h *Handler) ForwardMessage(w http.ResponseWriter, r *http.Request, messageID httpapi.MessageId, params httpapi.ForwardMessageParams) {
 	var body httpapi.ForwardRequest
@@ -403,14 +409,16 @@ func (h *Handler) ForwardMessage(w http.ResponseWriter, r *http.Request, message
 		return
 	}
 	a := actor(r)
-	receipt, err := h.service.Forward(r.Context(), a.User.ID, a.Device.ID, ForwardCommand{SourceID: uuid.UUID(messageID), RecipientID: uuid.UUID(body.RecipientUserId), ExpectedVersion: body.ExpectedVersion, IdempotencyKey: params.IdempotencyKey})
+	result, err := h.service.ForwardResult(r.Context(), a.User.ID, a.Device.ID, ForwardCommand{SourceID: uuid.UUID(messageID), RecipientID: uuid.UUID(body.RecipientUserId), ExpectedVersion: body.ExpectedVersion, IdempotencyKey: params.IdempotencyKey})
 	if err != nil {
 		mapError(w, r, err)
 		return
 	}
-	origin := a.Device.ID
-	h.publish(r, uuid.UUID(body.RecipientUserId), realtime.MessageCreated, receipt.MessageID, nil, &origin)
-	writeJSON(w, http.StatusCreated, receiptDTO(receipt))
+	if result.Created {
+		origin := a.Device.ID
+		h.publish(r, uuid.UUID(body.RecipientUserId), realtime.MessageCreated, result.Receipt.MessageID, &result.Version, &origin)
+	}
+	writeJSON(w, http.StatusCreated, receiptDTO(result.Receipt))
 }
 func (h *Handler) PermanentlyDeleteMessage(w http.ResponseWriter, r *http.Request, messageID httpapi.MessageId) {
 	a := actor(r)

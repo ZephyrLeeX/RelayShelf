@@ -204,6 +204,226 @@ type blockingCreateAdapter struct {
 	release chan struct{}
 }
 
+type thumbnailFaultFile struct {
+	storage.File
+	write, sync bool
+}
+
+func (f *thumbnailFaultFile) Write(p []byte) (int, error) {
+	if f.write {
+		return 0, storage.ErrUnavailable
+	}
+	return f.File.Write(p)
+}
+
+func (f *thumbnailFaultFile) Sync() error {
+	if f.sync {
+		return storage.ErrUnavailable
+	}
+	return f.File.Sync()
+}
+
+type thumbnailFaultAdapter struct {
+	storage.Adapter
+	mu                   sync.Mutex
+	mode                 string
+	createCalls          int
+	commitCalls          int
+	afterRenamedCommit   func()
+	failDerivativeDelete bool
+}
+
+func (a *thumbnailFaultAdapter) Delete(ctx context.Context, key storage.Key) error {
+	a.mu.Lock()
+	fail := a.failDerivativeDelete && strings.HasPrefix(key.String(), "derivatives/")
+	a.mu.Unlock()
+	if fail {
+		return storage.ErrUnavailable
+	}
+	return a.Adapter.Delete(ctx, key)
+}
+
+func (a *thumbnailFaultAdapter) CreateCommitTemp(ctx context.Context, key storage.Key) (storage.File, error) {
+	a.mu.Lock()
+	a.createCalls++
+	call := a.createCalls
+	a.mu.Unlock()
+	if a.mode == "create" && call == 1 {
+		return nil, storage.ErrUnavailable
+	}
+	f, err := a.Adapter.CreateCommitTemp(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	return &thumbnailFaultFile{File: f, write: a.mode == "write" && call == 1, sync: a.mode == "sync" && call == 1}, nil
+}
+
+func (a *thumbnailFaultAdapter) Commit(ctx context.Context, temp, final storage.Key) error {
+	a.mu.Lock()
+	a.commitCalls++
+	call := a.commitCalls
+	a.mu.Unlock()
+	if a.mode == "before-rename" && call == 1 {
+		return storage.ErrUnavailable
+	}
+	if err := a.Adapter.Commit(ctx, temp, final); err != nil {
+		return err
+	}
+	if a.mode == "after-rename" && call == 1 {
+		if a.afterRenamedCommit != nil {
+			a.afterRenamedCommit()
+		}
+		return storage.ErrUnavailable
+	}
+	return nil
+}
+
+func TestThumbnailStorageFaultsRemainRestartable(t *testing.T) {
+	for _, mode := range []string{"create", "write", "sync", "before-rename", "after-rename"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := context.Background()
+			db := postgresutil.NewDatabase(t)
+			base, err := storage.NewFilesystemStorageAdapter(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = base.EnsureLayout(ctx); err != nil {
+				t.Fatal(err)
+			}
+			sourceID := writeSource(t, ctx, db, base, "image/png", encodePNG(image.NewNRGBA(image.Rect(0, 0, 32, 24))))
+			faults := &thumbnailFaultAdapter{Adapter: base, mode: mode}
+			thumbnailer := files.NewThumbnailer(db, faults, id.UUIDv7{}, time.Now)
+			repo := jobs.NewRepository(db, id.UUIDv7{})
+			now := time.Now()
+			jobID := uuid.Must(uuid.NewV7())
+			if _, err = db.Exec(ctx, `INSERT INTO background_jobs(id,job_type,subject_type,subject_id,status,attempts,next_run_at,created_at,updated_at) VALUES($1,'GENERATE_THUMBNAIL','FILE_OBJECT',$2,'PENDING',0,$3,$3,$3)`, jobID, sourceID, now); err != nil {
+				t.Fatal(err)
+			}
+			job, ok, err := repo.Claim(ctx, now)
+			if err != nil || !ok {
+				t.Fatalf("claim ok=%v err=%v", ok, err)
+			}
+			handleErr := thumbnailer.Handle(ctx, job)
+			if mode == "after-rename" {
+				if handleErr != nil {
+					t.Fatalf("rename recovery failed: %v", handleErr)
+				}
+				if err = repo.Complete(ctx, job.ID, time.Now()); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				var handlerErr *jobs.HandlerError
+				if !errors.As(handleErr, &handlerErr) || handlerErr.Permanent {
+					t.Fatalf("first error=%v", handleErr)
+				}
+				if err = repo.Fail(ctx, job, handlerErr.Code, handlerErr.Summary, false, time.Now(), jobs.DefaultMaxAttempts); err != nil {
+					t.Fatal(err)
+				}
+				if _, err = db.Exec(ctx, `UPDATE background_jobs SET next_run_at=$2 WHERE id=$1`, jobID, now); err != nil {
+					t.Fatal(err)
+				}
+				job, ok, err = repo.Claim(ctx, now)
+				if err != nil || !ok {
+					t.Fatalf("retry claim ok=%v err=%v", ok, err)
+				}
+				if err = thumbnailer.Handle(ctx, job); err != nil {
+					t.Fatalf("restart failed: %v", err)
+				}
+				if err = repo.Complete(ctx, job.ID, time.Now()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var jobStatus, derivativeStatus, sourceStatus, derivativeKey string
+			var attempts int
+			var derivativeID uuid.UUID
+			if err = db.QueryRow(ctx, `SELECT status,attempts FROM background_jobs WHERE id=$1`, jobID).Scan(&jobStatus, &attempts); err != nil {
+				t.Fatal(err)
+			}
+			if err = db.QueryRow(ctx, `SELECT id,storage_key,status FROM file_derivatives WHERE source_file_id=$1`, sourceID).Scan(&derivativeID, &derivativeKey, &derivativeStatus); err != nil {
+				t.Fatal(err)
+			}
+			if err = db.QueryRow(ctx, `SELECT status FROM file_objects WHERE id=$1`, sourceID).Scan(&sourceStatus); err != nil {
+				t.Fatal(err)
+			}
+			wantAttempts := 2
+			if mode == "after-rename" {
+				wantAttempts = 1
+			}
+			if jobStatus != "COMPLETED" || attempts != wantAttempts || derivativeStatus != "READY" || sourceStatus != "READY" {
+				t.Fatalf("job=%s attempts=%d derivative=%s source=%s", jobStatus, attempts, derivativeStatus, sourceStatus)
+			}
+			if _, err = base.Stat(ctx, storage.CommitTempKey(derivativeID)); !errors.Is(err, storage.ErrNotFound) {
+				t.Fatalf("temp remains: %v", err)
+			}
+			if _, err = base.Stat(ctx, storage.Key(derivativeKey)); err != nil {
+				t.Fatalf("final missing: %v", err)
+			}
+		})
+	}
+}
+
+func TestThumbnailCleanupFailureRetainsDurableAuthority(t *testing.T) {
+	ctx := context.Background()
+	db := postgresutil.NewDatabase(t)
+	base, err := storage.NewFilesystemStorageAdapter(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = base.EnsureLayout(ctx); err != nil {
+		t.Fatal(err)
+	}
+	sourceID := writeSource(t, ctx, db, base, "image/png", encodePNG(image.NewNRGBA(image.Rect(0, 0, 32, 24))))
+	now := time.Now()
+	faults := &thumbnailFaultAdapter{Adapter: base, mode: "after-rename", failDerivativeDelete: true}
+	faults.afterRenamedCommit = func() {
+		_, _ = db.Exec(ctx, `UPDATE file_objects SET status='DELETING',updated_at=$2 WHERE id=$1`, sourceID, now)
+	}
+	jobID := uuid.Must(uuid.NewV7())
+	if _, err = db.Exec(ctx, `INSERT INTO background_jobs(id,job_type,subject_type,subject_id,status,attempts,next_run_at,created_at,updated_at) VALUES($1,'GENERATE_THUMBNAIL','FILE_OBJECT',$2,'PENDING',0,$3,$3,$3)`, jobID, sourceID, now); err != nil {
+		t.Fatal(err)
+	}
+	repo := jobs.NewRepository(db, id.UUIDv7{})
+	job, ok, err := repo.Claim(ctx, now)
+	if err != nil || !ok {
+		t.Fatalf("claim ok=%v err=%v", ok, err)
+	}
+	thumbnailer := files.NewThumbnailer(db, faults, id.UUIDv7{}, time.Now)
+	handleErr := thumbnailer.Handle(ctx, job)
+	var handlerErr *jobs.HandlerError
+	if !errors.As(handleErr, &handlerErr) || handlerErr.Permanent {
+		t.Fatalf("cleanup error=%v", handleErr)
+	}
+	if err = repo.Fail(ctx, job, handlerErr.Code, handlerErr.Summary, false, now, jobs.DefaultMaxAttempts); err != nil {
+		t.Fatal(err)
+	}
+	var jobStatus, derivativeStatus, derivativeKey string
+	if err = db.QueryRow(ctx, `SELECT status FROM background_jobs WHERE id=$1`, jobID).Scan(&jobStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.QueryRow(ctx, `SELECT storage_key,status FROM file_derivatives WHERE source_file_id=$1`, sourceID).Scan(&derivativeKey, &derivativeStatus); err != nil {
+		t.Fatal(err)
+	}
+	if jobStatus != "PENDING" || derivativeStatus != "PENDING" {
+		t.Fatalf("lost authority: job=%s derivative=%s", jobStatus, derivativeStatus)
+	}
+	if _, err = base.Stat(ctx, storage.Key(derivativeKey)); err != nil {
+		t.Fatalf("tracked physical derivative missing: %v", err)
+	}
+	faults.mu.Lock()
+	faults.failDerivativeDelete = false
+	faults.mu.Unlock()
+	if err = files.NewService(db, faults).Reconcile(ctx, 100); err != nil {
+		t.Fatal(err)
+	}
+	var exists bool
+	if err = db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM file_objects WHERE id=$1) OR EXISTS(SELECT 1 FROM file_derivatives WHERE source_file_id=$1)`, sourceID).Scan(&exists); err != nil || exists {
+		t.Fatalf("cleanup retry exists=%v err=%v", exists, err)
+	}
+	if _, err = base.Stat(ctx, storage.Key(derivativeKey)); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("derivative cleanup retry failed: %v", err)
+	}
+}
+
 func (a *blockingCreateAdapter) CreateCommitTemp(ctx context.Context, key storage.Key) (storage.File, error) {
 	a.once.Do(func() {
 		close(a.started)
@@ -241,6 +461,10 @@ func TestThumbnailGenerationRacesSourceGC(t *testing.T) {
 	if _, err = db.Exec(ctx, `INSERT INTO message_attachments(id,message_id,file_object_id,original_filename,display_order) VALUES($1,$2,$3,'race.png',0)`, attachmentID, messageID, sourceID); err != nil {
 		t.Fatal(err)
 	}
+	jobID := uuid.Must(uuid.NewV7())
+	if _, err = db.Exec(ctx, `INSERT INTO background_jobs(id,job_type,subject_type,subject_id,status,attempts,next_run_at,started_at,created_at,updated_at) VALUES($1,'GENERATE_THUMBNAIL','FILE_OBJECT',$2,'RUNNING',1,$3,$3,$3,$3)`, jobID, sourceID, now); err != nil {
+		t.Fatal(err)
+	}
 	blocking := &blockingCreateAdapter{Adapter: base, started: make(chan struct{}), release: make(chan struct{})}
 	thumbnailer := files.NewThumbnailer(db, blocking, id.UUIDv7{}, time.Now)
 	done := make(chan error, 1)
@@ -262,6 +486,10 @@ func TestThumbnailGenerationRacesSourceGC(t *testing.T) {
 	if err = files.NewService(db, base).GC(ctx, 100, now); err != nil {
 		t.Fatal(err)
 	}
+	var sourceStatus string
+	if err = db.QueryRow(ctx, `SELECT status FROM file_objects WHERE id=$1`, sourceID).Scan(&sourceStatus); err != nil || sourceStatus != "READY" {
+		t.Fatalf("active job did not protect source: status=%s err=%v", sourceStatus, err)
+	}
 	close(blocking.release)
 	select {
 	case err = <-done:
@@ -270,6 +498,12 @@ func TestThumbnailGenerationRacesSourceGC(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("thumbnail did not finish")
+	}
+	if _, err = db.Exec(ctx, `UPDATE background_jobs SET status='COMPLETED',started_at=NULL,updated_at=$2 WHERE id=$1 AND status='RUNNING'`, jobID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err = files.NewService(db, base).GC(ctx, 100, now); err != nil {
+		t.Fatal(err)
 	}
 	var exists bool
 	if err = db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM file_objects WHERE id=$1) OR EXISTS(SELECT 1 FROM file_derivatives WHERE source_file_id=$1)`, sourceID).Scan(&exists); err != nil || exists {

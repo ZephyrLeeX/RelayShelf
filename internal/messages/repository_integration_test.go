@@ -151,17 +151,47 @@ func TestPhase7CommitBeforePublishHTTPPaths(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
 		t.Fatal(err)
 	}
+	request = f.authenticatedRequest(http.MethodPost, "/api/v1/messages", []byte(body))
+	w = httptest.NewRecorder()
+	handler.CreateMessage(w, request, httpapi.CreateMessageParams{IdempotencyKey: "event-success"})
+	if w.Code != http.StatusCreated || publisher.count(f.alice) != 1 {
+		t.Fatalf("create replay status=%d events=%d", w.Code, publisher.count(f.alice))
+	}
 	request = f.authenticatedRequest(http.MethodPost, "/api/v1/messages/"+created.Id.String()+"/make-permanent", []byte(`{"expectedVersion":1}`))
 	w = httptest.NewRecorder()
 	handler.MakeMessagePermanent(w, request, httpapi.MessageId(created.Id))
 	if w.Code != http.StatusOK || publisher.count(f.alice) != 2 {
 		t.Fatalf("edit status=%d events=%d", w.Code, publisher.count(f.alice))
 	}
+	request = f.authenticatedRequest(http.MethodPost, "/api/v1/messages/"+created.Id.String()+"/make-permanent", []byte(`{"expectedVersion":2}`))
+	w = httptest.NewRecorder()
+	handler.MakeMessagePermanent(w, request, httpapi.MessageId(created.Id))
+	if w.Code != http.StatusOK || publisher.count(f.alice) != 2 {
+		t.Fatalf("no-op status=%d events=%d", w.Code, publisher.count(f.alice))
+	}
 	request = f.authenticatedRequest(http.MethodPost, "/api/v1/messages/direct-send", []byte(fmt.Sprintf(`{"recipientUserId":%q,"body":"direct","bodyFormat":"TEXT"}`, f.bob)))
 	w = httptest.NewRecorder()
 	handler.DirectSendMessage(w, request, httpapi.DirectSendMessageParams{IdempotencyKey: "event-direct"})
 	if w.Code != http.StatusCreated || publisher.count(f.bob) != 1 {
 		t.Fatalf("direct status=%d receiver events=%d", w.Code, publisher.count(f.bob))
+	}
+	request = f.authenticatedRequest(http.MethodPost, "/api/v1/messages/direct-send", []byte(fmt.Sprintf(`{"recipientUserId":%q,"body":"direct","bodyFormat":"TEXT"}`, f.bob)))
+	w = httptest.NewRecorder()
+	handler.DirectSendMessage(w, request, httpapi.DirectSendMessageParams{IdempotencyKey: "event-direct"})
+	if w.Code != http.StatusCreated || publisher.count(f.bob) != 1 || publisher.count(f.alice) != 2 {
+		t.Fatalf("direct replay status=%d receiver=%d sender=%d", w.Code, publisher.count(f.bob), publisher.count(f.alice))
+	}
+	request = f.authenticatedRequest(http.MethodPost, "/api/v1/messages/"+created.Id.String()+"/forward", []byte(fmt.Sprintf(`{"recipientUserId":%q,"expectedVersion":2}`, f.bob)))
+	w = httptest.NewRecorder()
+	handler.ForwardMessage(w, request, httpapi.MessageId(created.Id), httpapi.ForwardMessageParams{IdempotencyKey: "event-forward"})
+	if w.Code != http.StatusCreated || publisher.count(f.bob) != 2 || publisher.count(f.alice) != 2 {
+		t.Fatalf("forward status=%d receiver=%d sender=%d", w.Code, publisher.count(f.bob), publisher.count(f.alice))
+	}
+	request = f.authenticatedRequest(http.MethodPost, "/api/v1/messages/"+created.Id.String()+"/forward", []byte(fmt.Sprintf(`{"recipientUserId":%q,"expectedVersion":2}`, f.bob)))
+	w = httptest.NewRecorder()
+	handler.ForwardMessage(w, request, httpapi.MessageId(created.Id), httpapi.ForwardMessageParams{IdempotencyKey: "event-forward"})
+	if w.Code != http.StatusCreated || publisher.count(f.bob) != 2 {
+		t.Fatalf("forward replay status=%d receiver=%d", w.Code, publisher.count(f.bob))
 	}
 	publisher.mu.Lock()
 	aliceEvents := append([]realtime.Event(nil), publisher.events[f.alice]...)
@@ -170,7 +200,7 @@ func TestPhase7CommitBeforePublishHTTPPaths(t *testing.T) {
 	if aliceEvents[0].Type != realtime.MessageCreated || aliceEvents[0].Version == nil || aliceEvents[1].Type != realtime.MessageUpdated || aliceEvents[1].Version == nil || *aliceEvents[1].Version != 2 {
 		t.Fatalf("alice events=%+v", aliceEvents)
 	}
-	if bobEvents[0].Type != realtime.MessageCreated || bobEvents[0].OriginDeviceID == nil || *bobEvents[0].OriginDeviceID != f.aliceDevice {
+	if len(bobEvents) != 2 || bobEvents[0].Type != realtime.MessageCreated || bobEvents[0].Version == nil || bobEvents[0].OriginDeviceID == nil || *bobEvents[0].OriginDeviceID != f.aliceDevice || bobEvents[1].Version == nil {
 		t.Fatalf("bob event=%+v", bobEvents[0])
 	}
 }

@@ -5,6 +5,8 @@ import (
 	"unicode/utf8"
 )
 
+var ErrStateTransition = errors.New("job state transition affected no rows")
+
 type HandlerError struct {
 	Code      string
 	Summary   string

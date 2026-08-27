@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -14,15 +15,31 @@ type Worker struct {
 	poll        time.Duration
 	drain       int
 	maxAttempts int
+	report      func(error)
+	retry       time.Duration
 }
 
 func NewWorker(repo *Repository, handlers map[string]Handler, wake *Wake, clock Clock) *Worker {
-	return &Worker{repo: repo, handlers: handlers, wake: wake, clock: clock, poll: DefaultPollInterval, drain: DefaultDrainLimit, maxAttempts: DefaultMaxAttempts}
+	return &Worker{repo: repo, handlers: handlers, wake: wake, clock: clock, poll: DefaultPollInterval, drain: DefaultDrainLimit, maxAttempts: DefaultMaxAttempts, report: func(err error) { log.Printf("background worker: %v", err) }, retry: time.Second}
+}
+
+func (w *Worker) SetErrorReporter(report func(error)) {
+	if report != nil {
+		w.report = report
+	}
+}
+
+func safeReport(report func(error), err error) {
+	if report == nil || err == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	report(err)
 }
 
 func (w *Worker) Run(ctx context.Context) error {
 	if _, err := w.repo.RecoverStuck(ctx, w.clock.Now(), DefaultStuckTimeout, w.maxAttempts, 200); err != nil {
-		return fmt.Errorf("recover stuck jobs: %w", err)
+		safeReport(w.report, fmt.Errorf("recover stuck jobs: %w", err))
 	}
 	w.wake.Signal()
 	timer := time.NewTimer(w.poll)
@@ -36,7 +53,7 @@ func (w *Worker) Run(ctx context.Context) error {
 		}
 		more, err := w.drainDue(ctx)
 		if err != nil && ctx.Err() == nil {
-			return err
+			safeReport(w.report, fmt.Errorf("drain due jobs: %w", err))
 		}
 		if more {
 			w.wake.Signal()
@@ -60,12 +77,14 @@ func (w *Worker) drainDue(ctx context.Context) (bool, error) {
 		if err != nil || !ok {
 			return false, err
 		}
-		w.execute(ctx, job)
+		if err = w.execute(ctx, job); err != nil {
+			return false, err
+		}
 	}
 	return true, nil
 }
 
-func (w *Worker) execute(ctx context.Context, job Job) {
+func (w *Worker) execute(ctx context.Context, job Job) error {
 	var handlerErr error
 	func() {
 		defer func() {
@@ -82,9 +101,31 @@ func (w *Worker) execute(ctx context.Context, job Job) {
 	}()
 	now := w.clock.Now()
 	if handlerErr == nil {
-		_ = w.repo.Complete(context.WithoutCancel(ctx), job.ID, now)
-		return
+		return w.persist(ctx, "complete", func(persistCtx context.Context) error {
+			return w.repo.Complete(persistCtx, job.ID, now)
+		})
 	}
 	code, summary, permanent := classifyError(handlerErr)
-	_ = w.repo.Fail(context.WithoutCancel(ctx), job, code, summary, permanent, now, w.maxAttempts)
+	return w.persist(ctx, "fail", func(persistCtx context.Context) error {
+		return w.repo.Fail(persistCtx, job, code, summary, permanent, now, w.maxAttempts)
+	})
+}
+
+func (w *Worker) persist(ctx context.Context, transition string, fn func(context.Context) error) error {
+	for {
+		if err := fn(ctx); err == nil {
+			return nil
+		} else if ctx.Err() != nil {
+			return nil
+		} else {
+			safeReport(w.report, fmt.Errorf("persist job %s: %w", transition, err))
+		}
+		timer := time.NewTimer(w.retry)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil
+		case <-timer.C:
+		}
+	}
 }

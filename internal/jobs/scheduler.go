@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/id"
@@ -37,14 +38,23 @@ type Scheduler struct {
 	wake              *Wake
 	interval          time.Duration
 	batch, maxBatches int
+	report            func(error)
 }
 
 func NewScheduler(pool *pgxpool.Pool, repo *Repository, uploads UploadMaintenance, files FileMaintenance, publisher realtime.Publisher, ids id.Generator, clock Clock, wake *Wake) *Scheduler {
-	return &Scheduler{pool: pool, repo: repo, uploads: uploads, files: files, publisher: publisher, ids: ids, clock: clock, wake: wake, interval: DefaultSchedulerInterval, batch: DefaultMaintenanceBatch, maxBatches: 5}
+	return &Scheduler{pool: pool, repo: repo, uploads: uploads, files: files, publisher: publisher, ids: ids, clock: clock, wake: wake, interval: DefaultSchedulerInterval, batch: DefaultMaintenanceBatch, maxBatches: 5, report: func(err error) { log.Printf("maintenance scheduler: %v", err) }}
+}
+
+func (s *Scheduler) SetErrorReporter(report func(error)) {
+	if report != nil {
+		s.report = report
+	}
 }
 
 func (s *Scheduler) Run(ctx context.Context) {
-	_, _ = s.RunOnce(ctx)
+	if _, err := s.RunOnce(ctx); err != nil && ctx.Err() == nil {
+		safeReport(s.report, err)
+	}
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
 	for {
@@ -52,7 +62,9 @@ func (s *Scheduler) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			_, _ = s.RunOnce(ctx)
+			if _, err := s.RunOnce(ctx); err != nil && ctx.Err() == nil {
+				safeReport(s.report, err)
+			}
 		}
 	}
 }

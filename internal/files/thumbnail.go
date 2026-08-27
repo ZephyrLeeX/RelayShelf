@@ -189,19 +189,13 @@ func (t *Thumbnailer) markReady(ctx context.Context, source thumbnailSource, mim
 	var status string
 	err = tx.QueryRow(ctx, `SELECT status FROM file_objects WHERE id=$1 FOR UPDATE`, source.id).Scan(&status)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(ctx)
-		_ = t.store.Delete(context.WithoutCancel(ctx), storage.Key(source.derivativeKey))
-		_, _ = t.pool.Exec(context.WithoutCancel(ctx), `DELETE FROM file_derivatives WHERE id=$1 AND status='PENDING'`, source.derivativeID)
-		return nil
+		return t.cleanupUnownedDerivative(ctx, tx, source)
 	}
 	if err != nil {
 		return err
 	}
 	if status != "READY" {
-		_ = tx.Rollback(ctx)
-		_ = t.store.Delete(context.WithoutCancel(ctx), storage.Key(source.derivativeKey))
-		_, _ = t.pool.Exec(context.WithoutCancel(ctx), `DELETE FROM file_derivatives WHERE id=$1 AND status='PENDING'`, source.derivativeID)
-		return nil
+		return t.cleanupUnownedDerivative(ctx, tx, source)
 	}
 	ct, err := tx.Exec(ctx, `UPDATE file_derivatives SET status='READY',mime=$2,size_bytes=$3,updated_at=$4 WHERE id=$1 AND source_file_id=$5 AND status='PENDING'`, source.derivativeID, mime, size, t.now(), source.id)
 	if err != nil {
@@ -213,8 +207,27 @@ func (t *Thumbnailer) markReady(ctx context.Context, source thumbnailSource, mim
 	return tx.Commit(ctx)
 }
 
+func (t *Thumbnailer) cleanupUnownedDerivative(ctx context.Context, tx pgx.Tx, source thumbnailSource) error {
+	if err := tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+		return err
+	}
+	cleanupCtx := context.WithoutCancel(ctx)
+	if err := t.store.Delete(cleanupCtx, storage.Key(source.derivativeKey)); err != nil {
+		// Keep the PENDING derivative row when its source still exists. If a
+		// concurrent delete already cascaded that row, the RUNNING job remains
+		// durable authority and its retry transition will preserve a cleanup path.
+		return jobs.Retryable("STORAGE_UNAVAILABLE", "thumbnail cleanup failed")
+	}
+	if _, err := t.pool.Exec(cleanupCtx, `DELETE FROM file_derivatives WHERE id=$1 AND status='PENDING'`, source.derivativeID); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (t *Thumbnailer) permanentFailure(ctx context.Context, derivativeID uuid.UUID, code, summary string) error {
-	_, _ = t.pool.Exec(context.WithoutCancel(ctx), `UPDATE file_derivatives SET status='FAILED',updated_at=$2 WHERE id=$1 AND status='PENDING'`, derivativeID, t.now())
+	if _, err := t.pool.Exec(context.WithoutCancel(ctx), `UPDATE file_derivatives SET status='FAILED',updated_at=$2 WHERE id=$1 AND status='PENDING'`, derivativeID, t.now()); err != nil {
+		return err
+	}
 	return jobs.Permanent(code, summary)
 }
 
