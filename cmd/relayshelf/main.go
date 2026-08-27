@@ -28,6 +28,7 @@ import (
 	"github.com/ZephyrLeeX/RelayShelf/internal/storage"
 	"github.com/ZephyrLeeX/RelayShelf/internal/tags"
 	"github.com/ZephyrLeeX/RelayShelf/internal/uploads"
+	"github.com/ZephyrLeeX/RelayShelf/internal/webui"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -87,6 +88,7 @@ func newHTTPRouter(apiHost func(http.Handler) http.Handler, api, live, readiness
 		router.Use(apiHost)
 		router.Handle("/api/v1/*", api)
 	})
+	router.Handle("/*", webui.Handler())
 	return router
 }
 

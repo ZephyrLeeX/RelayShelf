@@ -19,9 +19,11 @@ test:
 	./scripts/test-integration.sh
 
 build:
-	mkdir -p bin
-	go build -o bin/relayshelf ./cmd/relayshelf
 	cd web && pnpm build
+	mkdir -p internal/webui/dist bin
+	find internal/webui/dist -mindepth 1 -delete
+	cp -R web/dist/. internal/webui/dist/
+	go build -o bin/relayshelf ./cmd/relayshelf
 
 e2e:
 	cd web && pnpm e2e
