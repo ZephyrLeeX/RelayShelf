@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"net/netip"
 	"testing"
+	"time"
 
 	"github.com/ZephyrLeeX/RelayShelf/internal/auth"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/clock"
@@ -65,6 +66,20 @@ func TestPostgreSQLLoginSessionOwnershipAndRevocation(t *testing.T) {
 	}
 	if _, err = service.Authenticate(ctx, first.RawToken, false, ip); err != nil {
 		t.Fatal(err)
+	}
+	var lastSeen, expiresAt time.Time
+	if err = db.QueryRow(ctx, `SELECT last_seen_at,expires_at FROM sessions WHERE id=$1`, first.Session.ID).Scan(&lastSeen, &expiresAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.ValidateSession(ctx, first.Session.ID); err != nil {
+		t.Fatal(err)
+	}
+	var validatedLastSeen, validatedExpiresAt time.Time
+	if err = db.QueryRow(ctx, `SELECT last_seen_at,expires_at FROM sessions WHERE id=$1`, first.Session.ID).Scan(&validatedLastSeen, &validatedExpiresAt); err != nil {
+		t.Fatal(err)
+	}
+	if !validatedLastSeen.Equal(lastSeen) || !validatedExpiresAt.Equal(expiresAt) {
+		t.Fatalf("read-only validation touched session: last_seen %s -> %s expires %s -> %s", lastSeen, validatedLastSeen, expiresAt, validatedExpiresAt)
 	}
 	cross := login("bob", &first.Device.ID)
 	if cross.Device.ID == first.Device.ID || cross.Device.UserID != two {

@@ -33,6 +33,20 @@ import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class DefaultService {
     /**
+     * Stream metadata-only RealtimeEvent SSE frames. Last-Event-ID is ignored; clients refetch truth after reconnect.
+     * @returns string Realtime event stream
+     * @throws ApiError
+     */
+    public static getEvents(): CancelablePromise<string> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/events',
+            errors: {
+                401: `API error`,
+            },
+        });
+    }
+    /**
      * @param requestBody
      * @returns AuthBootstrap Authenticated session bootstrap
      * @throws ApiError
@@ -533,6 +547,26 @@ export class DefaultService {
                 304: `Not modified`,
                 404: `API error`,
                 416: `API error`,
+                503: `API error`,
+            },
+        });
+    }
+    /**
+     * @param attachmentId
+     * @returns binary Server-generated safe raster thumbnail
+     * @throws ApiError
+     */
+    public static getAttachmentThumbnail(
+        attachmentId: string,
+    ): CancelablePromise<Blob> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/attachments/{attachmentId}/thumbnail',
+            path: {
+                'attachmentId': attachmentId,
+            },
+            errors: {
+                404: `API error`,
                 503: `API error`,
             },
         });

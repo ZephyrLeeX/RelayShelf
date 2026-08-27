@@ -20,6 +20,28 @@ type Handler struct{ service *Service }
 
 func NewHandler(service *Service) *Handler { return &Handler{service: service} }
 
+func (h *Handler) GetAttachmentThumbnail(w http.ResponseWriter, r *http.Request, attachmentID httpapi.AttachmentId) {
+	a, _ := auth.FromContext(r.Context())
+	d, err := h.service.AuthorizedThumbnail(r.Context(), a.User.ID, uuid.UUID(attachmentID))
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	f, err := h.service.OpenThumbnail(r.Context(), d)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	defer func() { _ = f.Close() }()
+	w.Header().Set("Content-Type", d.MIME)
+	w.Header().Set("Content-Length", strconv.FormatInt(d.Size, 10))
+	w.Header().Set("ETag", ThumbnailETag(d))
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	_, _ = copyDownload(r.Context(), w, io.LimitReader(f, d.Size), make([]byte, 64<<10))
+}
+
 func (h *Handler) DownloadAttachment(w http.ResponseWriter, r *http.Request, attachmentID httpapi.AttachmentId) {
 	a, _ := auth.FromContext(r.Context())
 	d, err := h.service.AuthorizedDownload(r.Context(), a.User.ID, uuid.UUID(attachmentID))
@@ -84,6 +106,10 @@ func (h *Handler) DownloadAttachment(w http.ResponseWriter, r *http.Request, att
 func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, ErrAttachmentNotFound) {
 		auth.WriteError(w, r, http.StatusNotFound, "ATTACHMENT_NOT_FOUND", "attachment not found")
+		return
+	}
+	if errors.Is(err, ErrThumbnailNotFound) {
+		auth.WriteError(w, r, http.StatusNotFound, "THUMBNAIL_NOT_FOUND", "thumbnail not found")
 		return
 	}
 	if errors.Is(err, ErrStorageIntegrity) {

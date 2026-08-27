@@ -7,11 +7,15 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/ZephyrLeeX/RelayShelf/internal/auth"
 	"github.com/ZephyrLeeX/RelayShelf/internal/files"
 	"github.com/ZephyrLeeX/RelayShelf/internal/httpapi"
+	"github.com/ZephyrLeeX/RelayShelf/internal/jobs"
 	"github.com/ZephyrLeeX/RelayShelf/internal/messages"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/clock"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/config"
@@ -19,6 +23,7 @@ import (
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/httpx"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/id"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/staging"
+	"github.com/ZephyrLeeX/RelayShelf/internal/realtime"
 	"github.com/ZephyrLeeX/RelayShelf/internal/search"
 	"github.com/ZephyrLeeX/RelayShelf/internal/storage"
 	"github.com/ZephyrLeeX/RelayShelf/internal/tags"
@@ -37,6 +42,7 @@ type tagEndpoints struct{ *tags.Handler }
 type uploadEndpoints struct{ *uploads.Handler }
 type fileEndpoints struct{ *files.Handler }
 type searchEndpoints struct{ *search.Handler }
+type realtimeEndpoints struct{ *realtime.Handler }
 type apiHandler struct {
 	*authEndpoints
 	*messageEndpoints
@@ -44,6 +50,7 @@ type apiHandler struct {
 	*uploadEndpoints
 	*fileEndpoints
 	*searchEndpoints
+	*realtimeEndpoints
 }
 
 var _ httpapi.ServerInterface = (*apiHandler)(nil)
@@ -124,6 +131,8 @@ func main() {
 			os.Exit(1)
 		}
 		now := clock.Real{}
+		serveCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+		defer stop()
 		storageAdapter, storageErr := storage.NewFilesystemStorageAdapter(cfg.StorageRoot)
 		if storageErr == nil {
 			_, storageErr = storage.Check(ctx, storageAdapter)
@@ -147,10 +156,17 @@ func main() {
 		}
 		messageRepo := messages.NewPostgreSQLRepository(db)
 		messageService := messages.NewService(messageRepo, id.UUIDv7{}, now, bodyCipher)
+		hub := realtime.NewHub()
+		defer hub.Close()
+		jobWake := jobs.NewWake()
+		jobRepo := jobs.NewRepository(db, id.UUIDv7{})
+		messageService.SetThumbnailJobs(jobRepo, jobWake)
 		messageHandler := messages.NewHandler(messageService)
+		messageHandler.SetPublisher(hub, id.UUIDv7{}, now)
 		tagRepo := tags.NewPostgreSQLRepository(db)
 		tagService := tags.NewService(tagRepo, id.UUIDv7{}, now)
 		tagHandler := tags.NewHandler(tagService)
+		tagHandler.SetPublisher(hub, id.UUIDv7{}, now)
 		stagingManager, stagingErr := staging.New(cfg.StagingRoot)
 		if stagingErr != nil {
 			log.Printf("upload staging unavailable")
@@ -176,19 +192,48 @@ func main() {
 			os.Exit(1)
 		}
 		fileHandler := files.NewHandler(fileService)
+		thumbnailer := files.NewThumbnailer(db, storageAdapter, id.UUIDv7{}, now.Now)
+		worker := jobs.NewWorker(jobRepo, map[string]jobs.Handler{jobs.TypeGenerateThumbnail: thumbnailer}, jobWake, now)
+		var background sync.WaitGroup
+		background.Add(1)
+		go func() {
+			defer background.Done()
+			if workerErr := worker.Run(serveCtx); workerErr != nil {
+				log.Printf("background worker stopped: %v", workerErr)
+			}
+		}()
 		searchRepository := search.NewPostgreSQLRepository(db)
 		searchService := search.NewService(searchRepository, now)
 		searchHandler := search.NewHandler(searchService)
-		handler := &apiHandler{authEndpoints: &authEndpoints{authHandler}, messageEndpoints: &messageEndpoints{messageHandler}, tagEndpoints: &tagEndpoints{tagHandler}, uploadEndpoints: &uploadEndpoints{uploadHandler}, fileEndpoints: &fileEndpoints{fileHandler}, searchEndpoints: &searchEndpoints{searchHandler}}
+		realtimeHandler := realtime.NewHandler(hub, authService)
+		scheduler := jobs.NewScheduler(db, jobRepo, uploadService, fileService, hub, id.UUIDv7{}, now, jobWake)
+		background.Add(1)
+		go func() { defer background.Done(); scheduler.Run(serveCtx) }()
+		handler := &apiHandler{authEndpoints: &authEndpoints{authHandler}, messageEndpoints: &messageEndpoints{messageHandler}, tagEndpoints: &tagEndpoints{tagHandler}, uploadEndpoints: &uploadEndpoints{uploadHandler}, fileEndpoints: &fileEndpoints{fileHandler}, searchEndpoints: &searchEndpoints{searchHandler}, realtimeEndpoints: &realtimeEndpoints{realtimeHandler}}
 		router := newHTTPRouter(authMiddleware.Host, auth.Router(handler, authMiddleware), health(http.StatusOK), ready(db))
 
 		address := os.Getenv("LISTEN_ADDR")
 		if address == "" {
 			address = ":8080"
 		}
+		server := &http.Server{Addr: address, Handler: router, ReadHeaderTimeout: 10 * time.Second}
+		go func() {
+			<-serveCtx.Done()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_ = server.Shutdown(shutdownCtx)
+		}()
 		log.Printf("relayshelf listening on %s", address)
-		if err := http.ListenAndServe(address, router); !errors.Is(err, http.ErrServerClosed) {
+		if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 			log.Fatal(err)
+		}
+		stop()
+		backgroundDone := make(chan struct{})
+		go func() { background.Wait(); close(backgroundDone) }()
+		select {
+		case <-backgroundDone:
+		case <-time.After(30 * time.Second):
+			log.Printf("background shutdown deadline reached")
 		}
 	default:
 		log.Printf("unknown command %q (use serve, migrate, or storage check)", command)

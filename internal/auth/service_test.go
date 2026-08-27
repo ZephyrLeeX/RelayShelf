@@ -61,6 +61,12 @@ func (m *memoryRepo) FindAuthentication(context.Context, []byte) (Authentication
 	m.authLookups++
 	return m.auth, nil
 }
+func (m *memoryRepo) FindAuthenticationBySessionID(_ context.Context, id uuid.UUID) (Authentication, error) {
+	if m.auth.Session.ID == id {
+		return m.auth, nil
+	}
+	return Authentication{}, ErrNotFound
+}
 func (m *memoryRepo) Touch(_ context.Context, a Authentication, seen, expires time.Time, ip netip.Addr) error {
 	m.touchCount++
 	m.auth = a

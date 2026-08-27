@@ -71,7 +71,7 @@ func TestPhase5UploadHandoffIndexMigrations(t *testing.T) {
 		if err := database.Migrate(ctx, db); err != nil {
 			t.Fatalf("migrate fresh database: %v", err)
 		}
-		assertVersion(t, ctx, db, 4)
+		assertVersion(t, ctx, db, 5)
 		assertPhase5Indexes(t, ctx, db)
 
 		var businessTables int
@@ -107,8 +107,8 @@ CREATE INDEX upload_sessions_handoff_file_idx
 func TestPhase6SearchIndexMigrations(t *testing.T) {
 	ctx := context.Background()
 	latest, err := database.LatestVersion()
-	if err != nil || latest != 4 {
-		t.Fatalf("latest migration version=%d want=4 err=%v", latest, err)
+	if err != nil || latest != 5 {
+		t.Fatalf("latest migration version=%d want=5 err=%v", latest, err)
 	}
 
 	t.Run("existing clean v3 database", func(t *testing.T) {
@@ -120,12 +120,12 @@ func TestPhase6SearchIndexMigrations(t *testing.T) {
 		if err := database.Migrate(ctx, db); err != nil {
 			t.Fatalf("migrate v3 to v4: %v", err)
 		}
-		assertVersion(t, ctx, db, 4)
+		assertVersion(t, ctx, db, 5)
 		assertPhase6Indexes(t, ctx, db)
 		if err := database.Migrate(ctx, db); err != nil {
 			t.Fatalf("repeat migration: %v", err)
 		}
-		assertVersion(t, ctx, db, 4)
+		assertVersion(t, ctx, db, 5)
 		assertPhase6Indexes(t, ctx, db)
 	})
 
@@ -134,7 +134,7 @@ func TestPhase6SearchIndexMigrations(t *testing.T) {
 		if err := database.Migrate(ctx, db); err != nil {
 			t.Fatalf("migrate fresh database: %v", err)
 		}
-		assertVersion(t, ctx, db, 4)
+		assertVersion(t, ctx, db, 5)
 		assertPhase5Indexes(t, ctx, db)
 		assertPhase6Indexes(t, ctx, db)
 	})
@@ -145,6 +145,7 @@ func TestReleasedMigrationHistoryIsImmutable(t *testing.T) {
 		"000001_initial_schema.sql":                "3eb8cff7d93ac0798cd8d180b45aad52c414792797e1e3344225d4b22d25b742",
 		"000002_pg_trgm.sql":                       "3c041b2c922fb8c60ae41085a7f999c0981fd1c443665d54d0dcc1ba7955a165",
 		"000003_phase5_upload_handoff_indexes.sql": "cb6c90012d4b54bd180467a02f13a98e041e8cd9b32924287990d8e847f90c07",
+		"000004_phase6_search_indexes.sql":         "4018f66f9680fce5b6f2a59bee5db88f9079007121c4bdddd1a27b1f4f7a05f1",
 	}
 	for name, expected := range want {
 		contents, err := migrations.Files.ReadFile(name)
@@ -155,6 +156,40 @@ func TestReleasedMigrationHistoryIsImmutable(t *testing.T) {
 		if got := hex.EncodeToString(digest[:]); got != expected {
 			t.Fatalf("released migration %s digest=%s want=%s", name, got, expected)
 		}
+	}
+}
+
+func TestPhase7JobMigration(t *testing.T) {
+	ctx := context.Background()
+	db := postgresutil.NewEmptyDatabase(t)
+	applyReleasedV2(t, ctx, db)
+	applyReleasedMigration(t, ctx, db, 3, "000003_phase5_upload_handoff_indexes.sql")
+	applyReleasedMigration(t, ctx, db, 4, "000004_phase6_search_indexes.sql")
+	assertVersion(t, ctx, db, 4)
+	if err := database.Migrate(ctx, db); err != nil {
+		t.Fatalf("migrate v4 to v5: %v", err)
+	}
+	assertVersion(t, ctx, db, 5)
+	if err := database.Migrate(ctx, db); err != nil {
+		t.Fatalf("repeat migrate: %v", err)
+	}
+	var indexCount, constraintCount int
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM pg_indexes WHERE indexname='background_jobs_thumbnail_subject_unique_idx'`).Scan(&indexCount); err != nil || indexCount != 1 {
+		t.Fatalf("thumbnail unique index count=%d err=%v", indexCount, err)
+	}
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM pg_constraint WHERE conname='background_jobs_thumbnail_subject_check'`).Scan(&constraintCount); err != nil || constraintCount != 1 {
+		t.Fatalf("thumbnail check count=%d err=%v", constraintCount, err)
+	}
+	jobID := "018f0000-0000-7000-8000-000000000001"
+	sourceID := "018f0000-0000-7000-8000-000000000002"
+	if _, err := db.Exec(ctx, `INSERT INTO background_jobs(id,job_type,subject_type,subject_id,status,next_run_at) VALUES($1,'GENERATE_THUMBNAIL','FILE_OBJECT',$2,'PENDING',now())`, jobID, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO background_jobs(id,job_type,subject_type,subject_id,status,next_run_at) VALUES('018f0000-0000-7000-8000-000000000003','GENERATE_THUMBNAIL','FILE_OBJECT',$1,'PENDING',now())`, sourceID); err == nil {
+		t.Fatal("duplicate thumbnail lifecycle accepted")
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO background_jobs(id,job_type,subject_type,status,next_run_at) VALUES('018f0000-0000-7000-8000-000000000004','GENERATE_THUMBNAIL','FILE_OBJECT','PENDING',now())`); err == nil {
+		t.Fatal("thumbnail without subject accepted")
 	}
 }
 

@@ -122,6 +122,15 @@ func TestRequestActivityPipeline(t *testing.T) {
 	if repo.touchCount != 1 || repo.authLookups != 1 {
 		t.Fatalf("safe GET touches=%d auth lookups=%d", repo.touchCount, repo.authLookups)
 	}
+
+	repo.touchCount, repo.authLookups = 0, 0
+	repo.auth = authn
+	if status := request(http.MethodGet, "/api/v1/events", "", ""); status != http.StatusNotImplemented {
+		t.Fatalf("focused auth server SSE status=%d", status)
+	}
+	if repo.touchCount != 0 || repo.authLookups != 1 {
+		t.Fatalf("SSE touches=%d auth lookups=%d", repo.touchCount, repo.authLookups)
+	}
 }
 
 func TestAuthenticateWithoutTouchPreservesNonInteractiveCapability(t *testing.T) {

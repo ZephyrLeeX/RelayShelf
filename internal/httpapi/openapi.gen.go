@@ -477,6 +477,9 @@ type ServerInterface interface {
 	// (GET /attachments/{attachmentId}/download)
 	DownloadAttachment(w http.ResponseWriter, r *http.Request, attachmentId AttachmentId)
 
+	// (GET /attachments/{attachmentId}/thumbnail)
+	GetAttachmentThumbnail(w http.ResponseWriter, r *http.Request, attachmentId AttachmentId)
+
 	// (POST /auth/login)
 	Login(w http.ResponseWriter, r *http.Request)
 
@@ -494,6 +497,9 @@ type ServerInterface interface {
 
 	// (PATCH /devices/{deviceId})
 	RenameDevice(w http.ResponseWriter, r *http.Request, deviceId DeviceId)
+
+	// (GET /events)
+	GetEvents(w http.ResponseWriter, r *http.Request)
 
 	// (GET /messages)
 	ListMessages(w http.ResponseWriter, r *http.Request, params ListMessagesParams)
@@ -592,6 +598,11 @@ func (_ Unimplemented) DownloadAttachment(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// (GET /attachments/{attachmentId}/thumbnail)
+func (_ Unimplemented) GetAttachmentThumbnail(w http.ResponseWriter, r *http.Request, attachmentId AttachmentId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // (POST /auth/login)
 func (_ Unimplemented) Login(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -619,6 +630,11 @@ func (_ Unimplemented) ListDevices(w http.ResponseWriter, r *http.Request) {
 
 // (PATCH /devices/{deviceId})
 func (_ Unimplemented) RenameDevice(w http.ResponseWriter, r *http.Request, deviceId DeviceId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /events)
+func (_ Unimplemented) GetEvents(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -802,6 +818,32 @@ func (siw *ServerInterfaceWrapper) DownloadAttachment(w http.ResponseWriter, r *
 	handler.ServeHTTP(w, r)
 }
 
+// GetAttachmentThumbnail operation middleware
+func (siw *ServerInterfaceWrapper) GetAttachmentThumbnail(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "attachmentId" -------------
+	var attachmentId AttachmentId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "attachmentId", chi.URLParam(r, "attachmentId"), &attachmentId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "attachmentId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAttachmentThumbnail(w, r, attachmentId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // Login operation middleware
 func (siw *ServerInterfaceWrapper) Login(w http.ResponseWriter, r *http.Request) {
 
@@ -889,6 +931,20 @@ func (siw *ServerInterfaceWrapper) RenameDevice(w http.ResponseWriter, r *http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RenameDevice(w, r, deviceId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetEvents operation middleware
+func (siw *ServerInterfaceWrapper) GetEvents(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetEvents(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1992,6 +2048,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	}
 
 	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/events", wrapper.GetEvents)
+	})
+	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/auth/login", wrapper.Login)
 	})
 	r.Group(func(r chi.Router) {
@@ -2056,6 +2115,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/attachments/{attachmentId}/download", wrapper.DownloadAttachment)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/attachments/{attachmentId}/thumbnail", wrapper.GetAttachmentThumbnail)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/messages/{messageId}/make-permanent", wrapper.MakeMessagePermanent)

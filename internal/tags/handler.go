@@ -8,12 +8,34 @@ import (
 
 	"github.com/ZephyrLeeX/RelayShelf/internal/auth"
 	"github.com/ZephyrLeeX/RelayShelf/internal/httpapi"
+	"github.com/ZephyrLeeX/RelayShelf/internal/platform/id"
+	"github.com/ZephyrLeeX/RelayShelf/internal/realtime"
 	"github.com/google/uuid"
 )
 
-type Handler struct{ service *Service }
+type Handler struct {
+	service   *Service
+	publisher realtime.Publisher
+	ids       id.Generator
+	clock     Clock
+}
 
 func NewHandler(service *Service) *Handler { return &Handler{service: service} }
+func (h *Handler) SetPublisher(p realtime.Publisher, ids id.Generator, clock Clock) {
+	h.publisher, h.ids, h.clock = p, ids, clock
+}
+func (h *Handler) publish(r *http.Request, eventType string, resourceID uuid.UUID) {
+	if h.publisher == nil || h.ids == nil || h.clock == nil {
+		return
+	}
+	eventID, err := h.ids.New()
+	if err != nil {
+		return
+	}
+	a, _ := auth.FromContext(r.Context())
+	origin := a.Device.ID
+	h.publisher.Publish(a.User.ID, realtime.Event{ID: eventID, Type: eventType, ResourceID: resourceID, OriginDeviceID: &origin, OccurredAt: h.clock.Now()})
+}
 func decode(w http.ResponseWriter, r *http.Request, target any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	decoder := json.NewDecoder(r.Body)
@@ -71,6 +93,7 @@ func (h *Handler) CreateTag(w http.ResponseWriter, r *http.Request) {
 		mapError(w, r, err)
 		return
 	}
+	h.publish(r, realtime.TagCreated, tag.ID)
 	writeJSON(w, http.StatusCreated, dto(tag))
 }
 func (h *Handler) UpdateTag(w http.ResponseWriter, r *http.Request, tagID httpapi.TagId) {
@@ -83,6 +106,7 @@ func (h *Handler) UpdateTag(w http.ResponseWriter, r *http.Request, tagID httpap
 		mapError(w, r, err)
 		return
 	}
+	h.publish(r, realtime.TagUpdated, tag.ID)
 	writeJSON(w, http.StatusOK, dto(tag))
 }
 func (h *Handler) DeleteTag(w http.ResponseWriter, r *http.Request, tagID httpapi.TagId) {
@@ -90,5 +114,6 @@ func (h *Handler) DeleteTag(w http.ResponseWriter, r *http.Request, tagID httpap
 		mapError(w, r, err)
 		return
 	}
+	h.publish(r, realtime.TagDeleted, uuid.UUID(tagID))
 	w.WriteHeader(http.StatusNoContent)
 }

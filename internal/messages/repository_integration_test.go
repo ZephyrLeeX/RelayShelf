@@ -17,11 +17,14 @@ import (
 
 	"github.com/ZephyrLeeX/RelayShelf/internal/auth"
 	"github.com/ZephyrLeeX/RelayShelf/internal/httpapi"
+	"github.com/ZephyrLeeX/RelayShelf/internal/jobs"
 	"github.com/ZephyrLeeX/RelayShelf/internal/messages"
 	postgresutil "github.com/ZephyrLeeX/RelayShelf/internal/platform/database/testutil"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/id"
+	"github.com/ZephyrLeeX/RelayShelf/internal/realtime"
 	"github.com/ZephyrLeeX/RelayShelf/internal/tags"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -34,6 +37,8 @@ type fixture struct {
 	service                                      *messages.Service
 	tags                                         *tags.Service
 	clock                                        *fixedClock
+	jobRepo                                      *jobs.Repository
+	wake                                         *jobs.Wake
 	alice, bob, disabled, aliceDevice, bobDevice uuid.UUID
 }
 
@@ -60,6 +65,8 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	f.service = messages.NewService(messages.NewPostgreSQLRepository(db), id.UUIDv7{}, f.clock, cipher)
+	f.jobRepo, f.wake = jobs.NewRepository(db, id.UUIDv7{}), jobs.NewWake()
+	f.service.SetThumbnailJobs(f.jobRepo, f.wake)
 	f.tags = tags.NewService(tags.NewPostgreSQLRepository(db), id.UUIDv7{}, f.clock)
 	return f
 }
@@ -79,16 +86,178 @@ func (f *fixture) authenticatedRequest(method, path string, body []byte) *http.R
 }
 
 func (f *fixture) completedUpload(t *testing.T, owner uuid.UUID, name string, content byte) uuid.UUID {
+	return f.completedUploadMIME(t, owner, name, content, "application/octet-stream")
+}
+func (f *fixture) completedUploadMIME(t *testing.T, owner uuid.UUID, name string, content byte, mime string) uuid.UUID {
 	t.Helper()
 	fileID, uploadID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	hash := bytes.Repeat([]byte{content}, 32)
-	if _, err := f.db.Exec(context.Background(), `INSERT INTO file_objects(id,sha256,size_bytes,detected_mime,storage_backend,storage_key,status,created_at,updated_at,ready_at) VALUES($1,$2,1,'application/octet-stream','filesystem',$3,'READY',$4,$4,$4)`, fileID, hash, "objects/"+fileID.String(), f.clock.now); err != nil {
+	if _, err := f.db.Exec(context.Background(), `INSERT INTO file_objects(id,sha256,size_bytes,detected_mime,storage_backend,storage_key,status,created_at,updated_at,ready_at) VALUES($1,$2,1,$3,'filesystem',$4,'READY',$5,$5,$5)`, fileID, hash, mime, "objects/"+fileID.String(), f.clock.now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.db.Exec(context.Background(), `INSERT INTO upload_sessions(id,user_id,original_filename,expected_size,chunk_size,status,file_object_id,expires_at,completed_at,created_at,updated_at) VALUES($1,$2,$3,1,8388608,'COMPLETED',$4,$5,$6,$6,$6)`, uploadID, owner, name, fileID, f.clock.now.Add(time.Hour), f.clock.now); err != nil {
 		t.Fatal(err)
 	}
 	return uploadID
+}
+
+type failingThumbnailEnsurer struct{}
+
+func (failingThumbnailEnsurer) EnsureThumbnailJobTx(context.Context, pgx.Tx, uuid.UUID, string, time.Time) (bool, error) {
+	return false, errors.New("injected job insert failure")
+}
+
+type eventRecorder struct {
+	mu     sync.Mutex
+	events map[uuid.UUID][]realtime.Event
+}
+
+func (p *eventRecorder) Publish(user uuid.UUID, event realtime.Event) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.events == nil {
+		p.events = map[uuid.UUID][]realtime.Event{}
+	}
+	p.events[user] = append(p.events[user], event)
+}
+func (p *eventRecorder) count(user uuid.UUID) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.events[user])
+}
+
+func TestPhase7CommitBeforePublishHTTPPaths(t *testing.T) {
+	f := newFixture(t)
+	publisher := &eventRecorder{}
+	handler := messages.NewHandler(f.service)
+	handler.SetPublisher(publisher, id.UUIDv7{}, f.clock)
+	upload := f.completedUploadMIME(t, f.alice, "event.png", 0x71, "image/png")
+	f.service.SetThumbnailJobs(failingThumbnailEnsurer{}, f.wake)
+	body := fmt.Sprintf(`{"bodyFormat":"TEXT","lifecycle":"TEMPORARY","uploadIds":[%q]}`, upload)
+	request := f.authenticatedRequest(http.MethodPost, "/api/v1/messages", []byte(body))
+	w := httptest.NewRecorder()
+	handler.CreateMessage(w, request, httpapi.CreateMessageParams{IdempotencyKey: "event-rollback"})
+	if w.Code != http.StatusInternalServerError || publisher.count(f.alice) != 0 {
+		t.Fatalf("rollback status=%d events=%d", w.Code, publisher.count(f.alice))
+	}
+	f.service.SetThumbnailJobs(f.jobRepo, f.wake)
+	request = f.authenticatedRequest(http.MethodPost, "/api/v1/messages", []byte(body))
+	w = httptest.NewRecorder()
+	handler.CreateMessage(w, request, httpapi.CreateMessageParams{IdempotencyKey: "event-success"})
+	if w.Code != http.StatusCreated || publisher.count(f.alice) != 1 {
+		t.Fatalf("create status=%d events=%d body=%s", w.Code, publisher.count(f.alice), w.Body.String())
+	}
+	var created httpapi.Message
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	request = f.authenticatedRequest(http.MethodPost, "/api/v1/messages", []byte(body))
+	w = httptest.NewRecorder()
+	handler.CreateMessage(w, request, httpapi.CreateMessageParams{IdempotencyKey: "event-success"})
+	if w.Code != http.StatusCreated || publisher.count(f.alice) != 1 {
+		t.Fatalf("create replay status=%d events=%d", w.Code, publisher.count(f.alice))
+	}
+	request = f.authenticatedRequest(http.MethodPost, "/api/v1/messages/"+created.Id.String()+"/make-permanent", []byte(`{"expectedVersion":1}`))
+	w = httptest.NewRecorder()
+	handler.MakeMessagePermanent(w, request, httpapi.MessageId(created.Id))
+	if w.Code != http.StatusOK || publisher.count(f.alice) != 2 {
+		t.Fatalf("edit status=%d events=%d", w.Code, publisher.count(f.alice))
+	}
+	request = f.authenticatedRequest(http.MethodPost, "/api/v1/messages/"+created.Id.String()+"/make-permanent", []byte(`{"expectedVersion":2}`))
+	w = httptest.NewRecorder()
+	handler.MakeMessagePermanent(w, request, httpapi.MessageId(created.Id))
+	if w.Code != http.StatusOK || publisher.count(f.alice) != 2 {
+		t.Fatalf("no-op status=%d events=%d", w.Code, publisher.count(f.alice))
+	}
+	request = f.authenticatedRequest(http.MethodPost, "/api/v1/messages/direct-send", []byte(fmt.Sprintf(`{"recipientUserId":%q,"body":"direct","bodyFormat":"TEXT"}`, f.bob)))
+	w = httptest.NewRecorder()
+	handler.DirectSendMessage(w, request, httpapi.DirectSendMessageParams{IdempotencyKey: "event-direct"})
+	if w.Code != http.StatusCreated || publisher.count(f.bob) != 1 {
+		t.Fatalf("direct status=%d receiver events=%d", w.Code, publisher.count(f.bob))
+	}
+	request = f.authenticatedRequest(http.MethodPost, "/api/v1/messages/direct-send", []byte(fmt.Sprintf(`{"recipientUserId":%q,"body":"direct","bodyFormat":"TEXT"}`, f.bob)))
+	w = httptest.NewRecorder()
+	handler.DirectSendMessage(w, request, httpapi.DirectSendMessageParams{IdempotencyKey: "event-direct"})
+	if w.Code != http.StatusCreated || publisher.count(f.bob) != 1 || publisher.count(f.alice) != 2 {
+		t.Fatalf("direct replay status=%d receiver=%d sender=%d", w.Code, publisher.count(f.bob), publisher.count(f.alice))
+	}
+	request = f.authenticatedRequest(http.MethodPost, "/api/v1/messages/"+created.Id.String()+"/forward", []byte(fmt.Sprintf(`{"recipientUserId":%q,"expectedVersion":2}`, f.bob)))
+	w = httptest.NewRecorder()
+	handler.ForwardMessage(w, request, httpapi.MessageId(created.Id), httpapi.ForwardMessageParams{IdempotencyKey: "event-forward"})
+	if w.Code != http.StatusCreated || publisher.count(f.bob) != 2 || publisher.count(f.alice) != 2 {
+		t.Fatalf("forward status=%d receiver=%d sender=%d", w.Code, publisher.count(f.bob), publisher.count(f.alice))
+	}
+	request = f.authenticatedRequest(http.MethodPost, "/api/v1/messages/"+created.Id.String()+"/forward", []byte(fmt.Sprintf(`{"recipientUserId":%q,"expectedVersion":2}`, f.bob)))
+	w = httptest.NewRecorder()
+	handler.ForwardMessage(w, request, httpapi.MessageId(created.Id), httpapi.ForwardMessageParams{IdempotencyKey: "event-forward"})
+	if w.Code != http.StatusCreated || publisher.count(f.bob) != 2 {
+		t.Fatalf("forward replay status=%d receiver=%d", w.Code, publisher.count(f.bob))
+	}
+	publisher.mu.Lock()
+	aliceEvents := append([]realtime.Event(nil), publisher.events[f.alice]...)
+	bobEvents := append([]realtime.Event(nil), publisher.events[f.bob]...)
+	publisher.mu.Unlock()
+	if aliceEvents[0].Type != realtime.MessageCreated || aliceEvents[0].Version == nil || aliceEvents[1].Type != realtime.MessageUpdated || aliceEvents[1].Version == nil || *aliceEvents[1].Version != 2 {
+		t.Fatalf("alice events=%+v", aliceEvents)
+	}
+	if len(bobEvents) != 2 || bobEvents[0].Type != realtime.MessageCreated || bobEvents[0].Version == nil || bobEvents[0].OriginDeviceID == nil || *bobEvents[0].OriginDeviceID != f.aliceDevice || bobEvents[1].Version == nil {
+		t.Fatalf("bob event=%+v", bobEvents[0])
+	}
+}
+
+func TestPhase7ThumbnailJobAtomicMutationPaths(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	imageUpload := f.completedUploadMIME(t, f.alice, "image.png", 0x61, "image/png")
+	created, err := f.service.Create(ctx, f.alice, f.aliceDevice, messages.CreateCommand{BodyFormat: messages.Text, Lifecycle: messages.Temporary, UploadIDs: []uuid.UUID{imageUpload}, IdempotencyKey: "phase7-image"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileID := created.Attachments[0].FileObjectID
+	var count int
+	if err = f.db.QueryRow(ctx, `SELECT count(*) FROM background_jobs WHERE job_type='GENERATE_THUMBNAIL' AND subject_id=$1`, fileID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("create job count=%d err=%v", count, err)
+	}
+	forward, err := f.service.Forward(ctx, f.alice, f.aliceDevice, messages.ForwardCommand{SourceID: created.ID, RecipientID: f.bob, ExpectedVersion: created.Version, IdempotencyKey: "phase7-forward"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if forward.MessageID == uuid.Nil {
+		t.Fatal("forward missing message")
+	}
+	if err = f.db.QueryRow(ctx, `SELECT count(*) FROM background_jobs WHERE subject_id=$1`, fileID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("forward dedup count=%d err=%v", count, err)
+	}
+	directUpload := f.completedUploadMIME(t, f.alice, "direct.jpg", 0x62, "image/jpeg")
+	direct, err := f.service.DirectSend(ctx, f.alice, f.aliceDevice, messages.DirectSendCommand{RecipientID: f.bob, BodyFormat: messages.Text, UploadIDs: []uuid.UUID{directUpload}, IdempotencyKey: "phase7-direct"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = f.db.QueryRow(ctx, `SELECT count(*) FROM background_jobs j JOIN message_attachments ma ON ma.file_object_id=j.subject_id WHERE ma.message_id=$1 AND j.job_type='GENERATE_THUMBNAIL'`, direct.MessageID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("direct job count=%d err=%v", count, err)
+	}
+	nonImage := f.completedUploadMIME(t, f.alice, "safe.svg", 0x63, "image/svg+xml")
+	if _, err = f.service.AddAttachments(ctx, f.alice, created.ID, created.Version, []uuid.UUID{nonImage}); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.db.QueryRow(ctx, `SELECT count(*) FROM background_jobs`).Scan(&count); err != nil || count != 2 {
+		t.Fatalf("non-image changed job count=%d err=%v", count, err)
+	}
+	rollbackUpload := f.completedUploadMIME(t, f.alice, "rollback.png", 0x64, "image/png")
+	f.service.SetThumbnailJobs(failingThumbnailEnsurer{}, f.wake)
+	if _, err = f.service.Create(ctx, f.alice, f.aliceDevice, messages.CreateCommand{BodyFormat: messages.Text, Lifecycle: messages.Temporary, UploadIDs: []uuid.UUID{rollbackUpload}, IdempotencyKey: "phase7-rollback"}); err == nil {
+		t.Fatal("injected job failure succeeded")
+	}
+	var consumed *time.Time
+	if err = f.db.QueryRow(ctx, `SELECT consumed_at FROM upload_sessions WHERE id=$1`, rollbackUpload).Scan(&consumed); err != nil || consumed != nil {
+		t.Fatalf("rollback upload consumed=%v err=%v", consumed, err)
+	}
+	if err = f.db.QueryRow(ctx, `SELECT count(*) FROM idempotency_keys WHERE user_id=$1 AND key='phase7-rollback'`, f.alice).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("rollback idempotency count=%d err=%v", count, err)
+	}
+	if err = f.db.QueryRow(ctx, `SELECT count(*) FROM message_attachments ma JOIN upload_sessions us ON us.file_object_id=ma.file_object_id WHERE us.id=$1`, rollbackUpload).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("rollback attachment count=%d err=%v", count, err)
+	}
 }
 
 func TestPhase5AttachmentBindingConsumptionForwardAndMutation(t *testing.T) {

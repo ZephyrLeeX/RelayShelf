@@ -1,11 +1,23 @@
 openapi: 3.1.1
 info:
   title: RelayShelf API
-  version: 0.6.0
+  version: 0.7.0
   description: HTTP contract authority for RelayShelf.
 servers:
   - url: /api/v1
 paths:
+  /events:
+    get:
+      operationId: getEvents
+      description: Stream metadata-only RealtimeEvent SSE frames. Last-Event-ID is ignored; clients refetch truth after reconnect.
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200':
+          description: Realtime event stream
+          content:
+            text/event-stream:
+              schema: { type: string }
+        '401': { $ref: '#/components/responses/Error' }
   /auth/login:
     post:
       operationId: login
@@ -278,6 +290,19 @@ paths:
         '304': { description: Not modified }
         '404': { $ref: '#/components/responses/Error' }
         '416': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /attachments/{attachmentId}/thumbnail:
+    get:
+      operationId: getAttachmentThumbnail
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/AttachmentId' }]
+      responses:
+        '200':
+          description: Server-generated safe raster thumbnail
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+        '404': { $ref: '#/components/responses/Error' }
         '503': { $ref: '#/components/responses/Error' }
   /messages/{messageId}/make-permanent:
     post:
