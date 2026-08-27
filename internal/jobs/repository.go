@@ -41,10 +41,10 @@ RETURNING job.id,job.job_type,job.subject_type,job.subject_id,job.status,job.att
 
 func (r *Repository) Complete(ctx context.Context, id uuid.UUID, now time.Time) error {
 	ct, err := r.pool.Exec(ctx, `UPDATE background_jobs SET status='COMPLETED',started_at=NULL,last_error_code=NULL,last_error_summary=NULL,updated_at=$2 WHERE id=$1 AND status='RUNNING'`, id, now)
-	if err == nil && ct.RowsAffected() != 1 {
-		return ErrStateTransition
+	if err != nil || ct.RowsAffected() == 1 {
+		return err
 	}
-	return err
+	return r.reconcileComplete(ctx, id)
 }
 
 func (r *Repository) Fail(ctx context.Context, job Job, code, summary string, permanent bool, now time.Time, maxAttempts int) error {
@@ -59,7 +59,7 @@ func (r *Repository) Fail(ctx context.Context, job Job, code, summary string, pe
 			return execErr
 		}
 		if ct.RowsAffected() != 1 {
-			return ErrStateTransition
+			return r.reconcileFail(ctx, tx, job, code, summary, StatusFailed, now)
 		}
 		if job.Type == TypeGenerateThumbnail && job.SubjectID != nil {
 			if _, err = tx.Exec(ctx, `UPDATE file_derivatives SET status='FAILED',updated_at=$2 WHERE source_file_id=$1 AND kind='THUMBNAIL_SMALL' AND status='PENDING'`, *job.SubjectID, now); err != nil {
@@ -68,11 +68,60 @@ func (r *Repository) Fail(ctx context.Context, job Job, code, summary string, pe
 		}
 		return tx.Commit(ctx)
 	}
-	ct, err := r.pool.Exec(ctx, `UPDATE background_jobs SET status='PENDING',started_at=NULL,next_run_at=$2,last_error_code=$3,last_error_summary=$4,updated_at=$5 WHERE id=$1 AND status='RUNNING'`, job.ID, now.Add(Backoff(job.Attempts)), code, summary, now)
-	if err == nil && ct.RowsAffected() != 1 {
+	nextRunAt := now.Add(Backoff(job.Attempts))
+	ct, err := r.pool.Exec(ctx, `UPDATE background_jobs SET status='PENDING',started_at=NULL,next_run_at=$2,last_error_code=$3,last_error_summary=$4,updated_at=$5 WHERE id=$1 AND status='RUNNING'`, job.ID, nextRunAt, code, summary, now)
+	if err != nil || ct.RowsAffected() == 1 {
+		return err
+	}
+	return r.reconcileFail(ctx, r.pool, job, code, summary, StatusPending, now)
+}
+
+type jobStateReader interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func (r *Repository) reconcileComplete(ctx context.Context, jobID uuid.UUID) error {
+	var status string
+	if err := r.pool.QueryRow(ctx, `SELECT status FROM background_jobs WHERE id=$1`, jobID).Scan(&status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return claimLost(jobID, StatusCompleted, "MISSING")
+		}
+		return err
+	}
+	if status == StatusCompleted {
+		return nil
+	}
+	if status == StatusRunning {
 		return ErrStateTransition
 	}
-	return err
+	return claimLost(jobID, StatusCompleted, status)
+}
+
+func (r *Repository) reconcileFail(ctx context.Context, reader jobStateReader, job Job, code, summary, desiredState string, now time.Time) error {
+	var status string
+	var intended bool
+	nextRunAt := now.Add(Backoff(job.Attempts))
+	err := reader.QueryRow(ctx, `SELECT status,
+attempts=$2 AND last_error_code IS NOT DISTINCT FROM $3 AND last_error_summary IS NOT DISTINCT FROM $4
+AND ($5 <> 'PENDING' OR next_run_at=$6)
+FROM background_jobs WHERE id=$1`, job.ID, job.Attempts, code, summary, desiredState, nextRunAt).Scan(&status, &intended)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return claimLost(job.ID, desiredState, "MISSING")
+		}
+		return err
+	}
+	if status == desiredState && intended {
+		return nil
+	}
+	if status == StatusRunning {
+		return ErrStateTransition
+	}
+	return claimLost(job.ID, desiredState, status)
+}
+
+func claimLost(jobID uuid.UUID, desiredState, currentState string) error {
+	return &JobClaimLostError{JobID: jobID, DesiredState: desiredState, CurrentState: currentState}
 }
 
 func (r *Repository) RecoverStuck(ctx context.Context, now time.Time, timeout time.Duration, maxAttempts, batch int) (int64, error) {

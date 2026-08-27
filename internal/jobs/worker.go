@@ -2,13 +2,23 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
+
+	"github.com/google/uuid"
 )
 
+type workerRepository interface {
+	Claim(context.Context, time.Time) (Job, bool, error)
+	Complete(context.Context, uuid.UUID, time.Time) error
+	Fail(context.Context, Job, string, string, bool, time.Time, int) error
+	RecoverStuck(context.Context, time.Time, time.Duration, int, int) (int64, error)
+}
+
 type Worker struct {
-	repo        *Repository
+	repo        workerRepository
 	handlers    map[string]Handler
 	wake        *Wake
 	clock       Clock
@@ -19,7 +29,7 @@ type Worker struct {
 	retry       time.Duration
 }
 
-func NewWorker(repo *Repository, handlers map[string]Handler, wake *Wake, clock Clock) *Worker {
+func NewWorker(repo workerRepository, handlers map[string]Handler, wake *Wake, clock Clock) *Worker {
 	return &Worker{repo: repo, handlers: handlers, wake: wake, clock: clock, poll: DefaultPollInterval, drain: DefaultDrainLimit, maxAttempts: DefaultMaxAttempts, report: func(err error) { log.Printf("background worker: %v", err) }, retry: time.Second}
 }
 
@@ -116,6 +126,9 @@ func (w *Worker) persist(ctx context.Context, transition string, fn func(context
 		if err := fn(ctx); err == nil {
 			return nil
 		} else if ctx.Err() != nil {
+			return nil
+		} else if errors.Is(err, ErrJobClaimLost) {
+			safeReport(w.report, fmt.Errorf("persist job %s: %w", transition, err))
 			return nil
 		} else {
 			safeReport(w.report, fmt.Errorf("persist job %s: %w", transition, err))

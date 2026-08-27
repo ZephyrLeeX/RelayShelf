@@ -2,10 +2,26 @@ package jobs
 
 import (
 	"errors"
+	"fmt"
 	"unicode/utf8"
+
+	"github.com/google/uuid"
 )
 
 var ErrStateTransition = errors.New("job state transition affected no rows")
+var ErrJobClaimLost = errors.New("job claim lost")
+
+type JobClaimLostError struct {
+	JobID        uuid.UUID
+	DesiredState string
+	CurrentState string
+}
+
+func (e *JobClaimLostError) Error() string {
+	return fmt.Sprintf("job %s claim lost: cannot transition from %s to %s", e.JobID, e.CurrentState, e.DesiredState)
+}
+
+func (e *JobClaimLostError) Unwrap() error { return ErrJobClaimLost }
 
 type HandlerError struct {
 	Code      string
