@@ -38,10 +38,12 @@ interface SendSnapshot {
 const send = useMutation({
   retry: false,
   mutationFn: ({ key, payload }: SendSnapshot) => DefaultService.createMessage(key, payload),
-  onSuccess: () => {
-    body.value = ''
-    selectedTags.value = []
-    sensitive.value = false
+  onSuccess: (_result, snapshot) => {
+    if (fingerprint.value === snapshot.fingerprint) {
+      body.value = ''
+      selectedTags.value = []
+      sensitive.value = false
+    }
     activeKey.value = ''
     attemptedFingerprint = ''
     failed.value = false

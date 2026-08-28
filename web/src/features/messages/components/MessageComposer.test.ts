@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { BodyFormat, DefaultService, Lifecycle } from '@/api/generated'
+import { queryKeys } from '@/shared/api/queryKeys'
 import { messageFixture } from '@/test/fixtures'
 import MessageComposer from './MessageComposer.vue'
 
@@ -83,6 +84,60 @@ describe('MessageComposer', () => {
     await wrapper.get('button.primary').trigger('click')
     await flushPromises()
     expect(create).toHaveBeenNthCalledWith(2, 'key-b', expect.objectContaining({ body:'F2' }))
+  })
+  it('clears an unchanged draft after its request succeeds', async () => {
+    const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
+    const wrapper = mountComposer()
+    await wrapper.get('textarea').setValue('F1')
+    await wrapper.get('.toggle input').setValue(true)
+    await wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await flushPromises()
+    expect(create).toHaveBeenCalledWith('key-a', expect.objectContaining({ body: 'F1', sensitive: true }))
+    expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('')
+    expect(wrapper.get<HTMLInputElement>('.toggle input').element.checked).toBe(false)
+  })
+  it('preserves a changed draft after the pending request succeeds and uses a new key for it', async () => {
+    vi.mocked(DefaultService.listTags).mockResolvedValue([{
+      id: 'tag-f2', name: 'F2 tag', color: '#3B8C6E',
+      createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+    }])
+    let resolveFirst!: (value: ReturnType<typeof messageFixture>) => void
+    const pending = new Promise<ReturnType<typeof messageFixture>>((resolve) => { resolveFirst = resolve })
+    const create = vi.spyOn(DefaultService, 'createMessage').mockReturnValueOnce(pending as never).mockResolvedValueOnce(messageFixture())
+    const invalidate = vi.spyOn(QueryClient.prototype, 'invalidateQueries')
+    const wrapper = mountComposer()
+    await flushPromises()
+
+    await wrapper.get('textarea').setValue('F1')
+    await wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
+    expect(create).toHaveBeenNthCalledWith(1, 'key-a', expect.objectContaining({
+      body: 'F1', bodyFormat: BodyFormat.TEXT, lifecycle: Lifecycle.TEMPORARY,
+      sensitive: false, tagIds: [],
+    }))
+
+    await wrapper.get('textarea').setValue('F2')
+    await wrapper.findAll('.modes button')[1].trigger('click')
+    await wrapper.get('select').setValue(Lifecycle.PERMANENT)
+    await wrapper.get('.toggle input').setValue(true)
+    await wrapper.get('.tag-options input').setValue(true)
+    resolveFirst(messageFixture())
+    await flushPromises()
+
+    expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('F2')
+    expect(wrapper.findAll('.modes button')[1].classes()).toContain('active')
+    expect(wrapper.get<HTMLSelectElement>('select').element.value).toBe(Lifecycle.PERMANENT)
+    expect(wrapper.get<HTMLInputElement>('.toggle input').element.checked).toBe(true)
+    expect(wrapper.get<HTMLInputElement>('.tag-options input').element.checked).toBe(true)
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.messages.root() })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.search.root() })
+
+    await wrapper.get('button.primary').trigger('click')
+    await flushPromises()
+    expect(create).toHaveBeenNthCalledWith(2, 'key-b', expect.objectContaining({
+      body: 'F2', bodyFormat: BodyFormat.MARKDOWN, lifecycle: Lifecycle.PERMANENT,
+      sensitive: true, tagIds: ['tag-f2'],
+    }))
+    expect(create.mock.calls[1][0]).not.toBe(create.mock.calls[0][0])
   })
   it('includes the explicit sensitive selection', async () => {
     const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
