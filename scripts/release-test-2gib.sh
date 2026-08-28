@@ -15,7 +15,7 @@
 #   E2E_USERNAME / E2E_PASSWORD     an ACTIVE test user's credentials
 # Optional:
 #   RELAYSHELF_RELEASE_TEST_SIZE    file size in bytes (default 2147483648)
-#   WORK_DIR                        scratch directory (default mktemp -d)
+#   WORK_DIR                        parent for an owned scratch child (default TMPDIR or /tmp)
 set -euo pipefail
 
 size="${RELAYSHELF_RELEASE_TEST_SIZE:-2147483648}"
@@ -33,9 +33,26 @@ if [ -z "$base" ] || [ -z "$user" ] || [ -z "$password" ]; then
   exit 2
 fi
 
-work="${WORK_DIR:-$(mktemp -d)}"
+parent="${WORK_DIR:-${TMPDIR:-/tmp}}"
+[ -n "$parent" ] && [ "$parent" != "/" ] && [ -d "$parent" ] || {
+  echo "WORK_DIR parent must be a non-root existing directory." >&2
+  exit 2
+}
+work="$(mktemp -d "$parent/relayshelf-release-test.XXXXXX")"
+[ -n "$work" ] && [ "$work" != "/" ] && [ -d "$work" ] || {
+  echo "failed to create owned release-test directory" >&2
+  exit 2
+}
+case "${work##*/}" in relayshelf-release-test.*) ;; *) echo "unsafe scratch directory name" >&2; exit 2;; esac
+touch "$work/.relayshelf-release-test-owned"
 file="$work/release-$size.bin"
-trap 'rm -rf "$work"' EXIT
+cleanup() {
+  [ -n "$work" ] && [ "$work" != "/" ] && [ -d "$work" ] || return
+  case "${work##*/}" in relayshelf-release-test.*) ;; *) echo "refusing unsafe scratch cleanup: $work" >&2; return;; esac
+  [ -f "$work/.relayshelf-release-test-owned" ] || { echo "refusing unowned scratch cleanup: $work" >&2; return; }
+  rm -rf -- "$work"
+}
+trap cleanup EXIT
 started=$(date +%s)
 
 echo "== T123 release test: $size bytes against $base =="

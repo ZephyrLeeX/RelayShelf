@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/ZephyrLeeX/RelayShelf/internal/audit"
@@ -31,7 +33,6 @@ type LoginChallenge struct {
 	Token     string
 	ExpiresAt time.Time
 	User      User
-	Device    Device
 }
 
 // UserTOTP is the stored enrollment row. SecretCiphertext stays opaque here;
@@ -56,6 +57,20 @@ type TOTPChallengeRow struct {
 	Attempts   int
 	ConsumedAt *time.Time
 	CreatedAt  time.Time
+	DeviceName string
+	UserAgent  string
+}
+
+type CompleteTOTPLoginCommand struct {
+	ChallengeID       uuid.UUID
+	UserID            uuid.UUID
+	AcceptedStep      int64
+	Now               time.Time
+	Device            Device
+	CandidateDeviceID *uuid.UUID
+	Session           Session
+	SessionTokenHash  []byte
+	ClientIP          netip.Addr
 }
 
 // totpEnabled reports whether the user must complete a second factor.
@@ -72,7 +87,7 @@ func (s *Service) totpEnabled(ctx context.Context, userID uuid.UUID) (UserTOTP, 
 
 // newLoginChallenge persists a single-use challenge capability after a valid
 // password verification and returns it with its raw bearer token.
-func (s *Service) newLoginChallenge(ctx context.Context, user User, device Device) (*LoginChallenge, error) {
+func (s *Service) newLoginChallenge(ctx context.Context, user User, input LoginInput) (*LoginChallenge, error) {
 	raw := make([]byte, SessionTokenBytes)
 	if _, err := rand.Read(raw); err != nil {
 		return nil, err
@@ -84,13 +99,15 @@ func (s *Service) newLoginChallenge(ctx context.Context, user User, device Devic
 		return nil, err
 	}
 	now := s.clock.Now()
-	challenge := &LoginChallenge{Token: token, ExpiresAt: now.Add(TOTPChallengeLifetime), User: user, Device: device}
-	var deviceID *uuid.UUID
-	if device.ID != uuid.Nil {
-		value := device.ID
-		deviceID = &value
+	name := strings.TrimSpace(input.DeviceName)
+	if name == "" {
+		name = "New device"
 	}
-	if err = s.repo.CreateTOTPChallenge(ctx, TOTPChallengeRow{ID: id, UserID: user.ID, DeviceID: deviceID, ExpiresAt: challenge.ExpiresAt, CreatedAt: now}, hash[:]); err != nil {
+	if !validDeviceName(name) {
+		return nil, ErrValidation
+	}
+	challenge := &LoginChallenge{Token: token, ExpiresAt: now.Add(TOTPChallengeLifetime), User: user}
+	if err = s.repo.CreateTOTPChallenge(ctx, TOTPChallengeRow{ID: id, UserID: user.ID, DeviceID: input.DeviceID, ExpiresAt: challenge.ExpiresAt, CreatedAt: now, DeviceName: name, UserAgent: truncate(input.UserAgent, 512)}, hash[:]); err != nil {
 		return nil, err
 	}
 	return challenge, nil
@@ -156,20 +173,6 @@ func (s *Service) CompleteLoginTOTP(ctx context.Context, token, code string, inp
 		s.limiter.Failure(input.ClientIP.String(), user.Username)
 		return LoginResult{}, ErrInvalidCredentials
 	}
-	if err = s.repo.RecordTOTPSuccess(ctx, user.ID, now, step); err != nil {
-		return LoginResult{}, err
-	}
-	consumed, err := s.repo.ConsumeTOTPChallenge(ctx, challenge.ID, now)
-	if err != nil {
-		return LoginResult{}, err
-	}
-	if !consumed {
-		return LoginResult{}, ErrTOTPChallengeExpired
-	}
-	device, err := s.challengeDevice(ctx, user, challenge)
-	if err != nil {
-		return LoginResult{}, err
-	}
 	raw2, tokenHash, err := NewSessionToken()
 	if err != nil {
 		return LoginResult{}, err
@@ -178,9 +181,18 @@ func (s *Service) CompleteLoginTOTP(ctx context.Context, token, code string, inp
 	if err != nil {
 		return LoginResult{}, err
 	}
-	session := Session{ID: sessionID, UserID: user.ID, DeviceID: device.ID, CreatedAt: now, LastSeenAt: now, ExpiresAt: now.Add(IdleLifetime), AbsoluteExpiresAt: now.Add(AbsoluteLifetime), LastIP: input.ClientIP.String()}
-	session, err = s.repo.CreateSession(ctx, session, tokenHash[:], input.ClientIP)
+	deviceID, err := s.newID()
 	if err != nil {
+		return LoginResult{}, err
+	}
+	device := Device{ID: deviceID, UserID: user.ID, Name: challenge.DeviceName, UserAgent: challenge.UserAgent, FirstSeenAt: now, LastSeenAt: now}
+	session := Session{ID: sessionID, UserID: user.ID, CreatedAt: now, LastSeenAt: now, ExpiresAt: now.Add(IdleLifetime), AbsoluteExpiresAt: now.Add(AbsoluteLifetime), LastIP: input.ClientIP.String()}
+	device, session, err = s.repo.CompleteTOTPLogin(ctx, CompleteTOTPLoginCommand{ChallengeID: challenge.ID, UserID: user.ID, AcceptedStep: step, Now: now, Device: device, CandidateDeviceID: challenge.DeviceID, Session: session, SessionTokenHash: tokenHash[:], ClientIP: input.ClientIP})
+	if err != nil {
+		if errors.Is(err, ErrTOTPCodeInvalid) {
+			s.limiter.Failure(input.ClientIP.String(), user.Username)
+			return LoginResult{}, ErrInvalidCredentials
+		}
 		return LoginResult{}, err
 	}
 	s.limiter.Success(input.ClientIP.String(), user.Username)
@@ -189,24 +201,6 @@ func (s *Service) CompleteLoginTOTP(ctx context.Context, token, code string, inp
 	}
 	user.PasswordHash = ""
 	return LoginResult{Authentication: Authentication{User: user, Device: device, Session: session}, RawToken: raw2}, nil
-}
-
-func (s *Service) challengeDevice(ctx context.Context, user User, challenge TOTPChallengeRow) (Device, error) {
-	if challenge.DeviceID != nil {
-		device, err := s.repo.GetOwnedDevice(ctx, *challenge.DeviceID, user.ID)
-		if err == nil {
-			return device, nil
-		}
-		if !errors.Is(err, ErrNotFound) {
-			return Device{}, err
-		}
-	}
-	deviceID, err := s.newID()
-	if err != nil {
-		return Device{}, err
-	}
-	now := s.clock.Now()
-	return s.repo.CreateDevice(ctx, Device{ID: deviceID, UserID: user.ID, Name: "New device", UserAgent: "", FirstSeenAt: now, LastSeenAt: now})
 }
 
 func (s *Service) recordTOTPFailure(ctx context.Context, userID, challengeID uuid.UUID, now time.Time) {

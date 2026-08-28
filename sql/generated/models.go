@@ -166,14 +166,16 @@ type Tag struct {
 }
 
 type TotpChallenge struct {
-	ID         pgtype.UUID
-	UserID     pgtype.UUID
-	DeviceID   pgtype.UUID
-	TokenHash  []byte
-	ExpiresAt  pgtype.Timestamptz
-	Attempts   int32
-	ConsumedAt pgtype.Timestamptz
-	CreatedAt  pgtype.Timestamptz
+	ID                pgtype.UUID
+	UserID            pgtype.UUID
+	DeviceID          pgtype.UUID
+	TokenHash         []byte
+	ExpiresAt         pgtype.Timestamptz
+	Attempts          int32
+	ConsumedAt        pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	PendingDeviceName string
+	PendingUserAgent  string
 }
 
 type UploadPart struct {

@@ -12,9 +12,10 @@ export default defineConfig({
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
   use: {
     baseURL,
-    trace: 'retain-on-failure',
-    screenshot: 'only-on-failure',
-    // The login journeys type real passwords; keep them out of traces.
+    // Every journey authenticates with real credentials, and the TOTP suite
+    // also renders enrollment material. Never retain secret-bearing media.
+    trace: 'off',
+    screenshot: 'off',
     video: 'off',
   },
   projects: [

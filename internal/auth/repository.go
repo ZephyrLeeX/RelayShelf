@@ -50,7 +50,7 @@ type Repository interface {
 	RecordTOTPFailure(context.Context, uuid.UUID, time.Time, int, time.Time) error
 	CreateTOTPChallenge(context.Context, TOTPChallengeRow, []byte) error
 	GetTOTPChallengeByHash(context.Context, []byte) (TOTPChallengeRow, error)
-	ConsumeTOTPChallenge(context.Context, uuid.UUID, time.Time) (bool, error)
+	CompleteTOTPLogin(context.Context, CompleteTOTPLoginCommand) (Device, Session, error)
 	BumpTOTPChallengeAttempts(context.Context, uuid.UUID) error
 	RecordAuditEvent(context.Context, audit.Event) error
 }
@@ -258,11 +258,11 @@ func (r *PostgreSQLRepository) RecordTOTPFailure(ctx context.Context, userID uui
 }
 
 func (r *PostgreSQLRepository) CreateTOTPChallenge(ctx context.Context, row TOTPChallengeRow, tokenHash []byte) error {
-	return r.q.CreateTOTPChallenge(ctx, generated.CreateTOTPChallengeParams{ID: pgu(row.ID), UserID: pgu(row.UserID), DeviceID: ptrUUID(row.DeviceID), TokenHash: append([]byte(nil), tokenHash...), ExpiresAt: pgt(row.ExpiresAt), CreatedAt: pgt(row.CreatedAt)})
+	return r.q.CreateTOTPChallenge(ctx, generated.CreateTOTPChallengeParams{ID: pgu(row.ID), UserID: pgu(row.UserID), DeviceID: ptrUUID(row.DeviceID), TokenHash: append([]byte(nil), tokenHash...), ExpiresAt: pgt(row.ExpiresAt), CreatedAt: pgt(row.CreatedAt), PendingDeviceName: row.DeviceName, PendingUserAgent: row.UserAgent})
 }
 
 func fromTOTPChallenge(row generated.TotpChallenge) TOTPChallengeRow {
-	out := TOTPChallengeRow{ID: uuid.UUID(row.ID.Bytes), UserID: uuid.UUID(row.UserID.Bytes), ExpiresAt: row.ExpiresAt.Time, Attempts: int(row.Attempts)}
+	out := TOTPChallengeRow{ID: uuid.UUID(row.ID.Bytes), UserID: uuid.UUID(row.UserID.Bytes), ExpiresAt: row.ExpiresAt.Time, Attempts: int(row.Attempts), CreatedAt: row.CreatedAt.Time, DeviceName: row.PendingDeviceName, UserAgent: row.PendingUserAgent}
 	if row.DeviceID.Valid {
 		value := uuid.UUID(row.DeviceID.Bytes)
 		out.DeviceID = &value
@@ -279,13 +279,52 @@ func (r *PostgreSQLRepository) GetTOTPChallengeByHash(ctx context.Context, token
 	return fromTOTPChallenge(row), noRows(err)
 }
 
-func (r *PostgreSQLRepository) ConsumeTOTPChallenge(ctx context.Context, id uuid.UUID, now time.Time) (bool, error) {
-	n, err := r.q.ConsumeTOTPChallenge(ctx, generated.ConsumeTOTPChallengeParams{ID: pgu(id), ConsumedAt: pgt(now)})
-	return n > 0, err
-}
-
 func (r *PostgreSQLRepository) BumpTOTPChallengeAttempts(ctx context.Context, id uuid.UUID) error {
 	return r.q.BumpTOTPChallengeAttempts(ctx, pgu(id))
+}
+
+func (r *PostgreSQLRepository) CompleteTOTPLogin(ctx context.Context, command CompleteTOTPLoginCommand) (Device, Session, error) {
+	var device Device
+	var session Session
+	err := r.tx(ctx, func(_ pgx.Tx, q *generated.Queries) error {
+		claimed, claimErr := q.ClaimTOTPStep(ctx, generated.ClaimTOTPStepParams{UserID: pgu(command.UserID), UpdatedAt: pgt(command.Now), LastUsedStep: pgtype.Int8{Int64: command.AcceptedStep, Valid: true}})
+		if claimErr != nil {
+			return claimErr
+		}
+		if claimed != 1 {
+			return ErrTOTPCodeInvalid
+		}
+		consumed, consumeErr := q.ConsumeTOTPChallenge(ctx, generated.ConsumeTOTPChallengeParams{ID: pgu(command.ChallengeID), ConsumedAt: pgt(command.Now), UserID: pgu(command.UserID)})
+		if consumeErr != nil {
+			return consumeErr
+		}
+		if consumed != 1 {
+			return ErrTOTPChallengeExpired
+		}
+		if command.CandidateDeviceID != nil {
+			row, getErr := q.GetOwnedDevice(ctx, generated.GetOwnedDeviceParams{ID: pgu(*command.CandidateDeviceID), UserID: pgu(command.UserID)})
+			if getErr == nil {
+				device = fromDevice(row)
+			} else if !errors.Is(getErr, pgx.ErrNoRows) {
+				return getErr
+			}
+		}
+		if device.ID == uuid.Nil {
+			row, createErr := q.CreateDevice(ctx, generated.CreateDeviceParams{ID: pgu(command.Device.ID), UserID: pgu(command.UserID), Name: command.Device.Name, UserAgent: command.Device.UserAgent, FirstSeenAt: pgt(command.Now)})
+			if createErr != nil {
+				return createErr
+			}
+			device = fromDevice(row)
+		}
+		command.Session.DeviceID = device.ID
+		row, createErr := q.CreateSession(ctx, generated.CreateSessionParams{ID: pgu(command.Session.ID), UserID: pgu(command.UserID), DeviceID: pgu(device.ID), TokenHash: append([]byte(nil), command.SessionTokenHash...), ExpiresAt: pgt(command.Session.ExpiresAt), AbsoluteExpiresAt: pgt(command.Session.AbsoluteExpiresAt), LastSeenAt: pgt(command.Session.LastSeenAt), LastIp: ipPtr(command.ClientIP)})
+		if createErr != nil {
+			return createErr
+		}
+		session = fromSession(row)
+		return nil
+	})
+	return device, session, err
 }
 
 // RecordAuditEvent writes typed audit events through the shared recorder so

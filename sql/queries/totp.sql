@@ -32,6 +32,13 @@ UPDATE user_totp
 SET last_used_step = $3, failed_attempts = 0, locked_until = NULL, updated_at = $2
 WHERE user_id = $1;
 
+-- name: ClaimTOTPStep :execrows
+UPDATE user_totp
+SET last_used_step = $3, failed_attempts = 0, locked_until = NULL, updated_at = $2
+WHERE user_id = $1
+  AND enabled_at IS NOT NULL
+  AND (last_used_step IS NULL OR last_used_step < $3);
+
 -- name: RecordTOTPFailure :exec
 UPDATE user_totp
 SET failed_attempts = failed_attempts + 1,
@@ -40,17 +47,31 @@ SET failed_attempts = failed_attempts + 1,
 WHERE user_id = $1;
 
 -- name: CreateTOTPChallenge :exec
-INSERT INTO totp_challenges (id, user_id, device_id, token_hash, expires_at, created_at)
-VALUES ($1, $2, $3, $4, $5, $6);
+INSERT INTO totp_challenges (id, user_id, device_id, token_hash, expires_at, created_at, pending_device_name, pending_user_agent)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
 
 -- name: GetTOTPChallengeByHash :one
 SELECT * FROM totp_challenges WHERE token_hash = $1;
 
 -- name: ConsumeTOTPChallenge :execrows
-UPDATE totp_challenges SET consumed_at = $2 WHERE id = $1 AND consumed_at IS NULL;
+UPDATE totp_challenges
+SET consumed_at = $2
+WHERE id = $1 AND user_id = $3 AND consumed_at IS NULL AND expires_at > $2;
 
 -- name: BumpTOTPChallengeAttempts :exec
 UPDATE totp_challenges SET attempts = attempts + 1 WHERE id = $1;
+
+-- name: DeleteExpiredTOTPChallenges :execrows
+WITH doomed AS (
+  SELECT c.id
+  FROM totp_challenges AS c
+  WHERE c.expires_at < $1 OR (c.consumed_at IS NOT NULL AND c.consumed_at < $1)
+  ORDER BY c.expires_at, c.id
+  LIMIT $2
+  FOR UPDATE SKIP LOCKED
+)
+DELETE FROM totp_challenges
+WHERE id IN (SELECT id FROM doomed);
 
 -- name: CountActiveAdmins :one
 SELECT count(*)::int FROM users WHERE status = 'ACTIVE' AND is_admin;

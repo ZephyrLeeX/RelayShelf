@@ -80,6 +80,12 @@ func TestSchedulerMaintenanceOrderingIsolationAndLock(t *testing.T) {
 	if _, err := db.Exec(ctx, `INSERT INTO audit_logs(id,event_type,created_at) VALUES($1,'OLD',$2)`, auditID, now.Add(-100*24*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
+	challengeID := uuid.Must(uuid.NewV7())
+	challengeHash := make([]byte, 32)
+	challengeHash[0] = 9
+	if _, err := db.Exec(ctx, `INSERT INTO totp_challenges(id,user_id,token_hash,expires_at,created_at) VALUES($1,$2,$3,$4,$4)`, challengeID, user, challengeHash, now.Add(-2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
 	stuckID := uuid.Must(uuid.NewV7())
 	if _, err := db.Exec(ctx, `INSERT INTO background_jobs(id,job_type,subject_type,status,attempts,next_run_at,started_at,created_at,updated_at) VALUES($1,'OTHER','TEST','RUNNING',1,$2,$3,$3,$3)`, stuckID, now, now.Add(-20*time.Minute)); err != nil {
 		t.Fatal(err)
@@ -104,6 +110,9 @@ func TestSchedulerMaintenanceOrderingIsolationAndLock(t *testing.T) {
 	}
 	if err = db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM audit_logs WHERE id=$1)`, auditID).Scan(&exists); err != nil || exists {
 		t.Fatalf("old audit exists=%v err=%v", exists, err)
+	}
+	if err = db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM totp_challenges WHERE id=$1)`, challengeID).Scan(&exists); err != nil || exists {
+		t.Fatalf("expired TOTP challenge exists=%v err=%v", exists, err)
 	}
 	var jobStatus string
 	if err = db.QueryRow(ctx, `SELECT status FROM background_jobs WHERE id=$1`, stuckID).Scan(&jobStatus); err != nil || jobStatus != "PENDING" {

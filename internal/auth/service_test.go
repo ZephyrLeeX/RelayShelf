@@ -186,18 +186,35 @@ func (m *memoryRepo) GetTOTPChallengeByHash(_ context.Context, hash []byte) (TOT
 	}
 	return row, nil
 }
-func (m *memoryRepo) ConsumeTOTPChallenge(_ context.Context, id uuid.UUID, at time.Time) (bool, error) {
+func (m *memoryRepo) CompleteTOTPLogin(_ context.Context, command CompleteTOTPLoginCommand) (Device, Session, error) {
+	if m.totp == nil || m.totp.EnabledAt == nil || (m.totp.LastUsedStep != nil && *m.totp.LastUsedStep >= command.AcceptedStep) {
+		return Device{}, Session{}, ErrTOTPCodeInvalid
+	}
 	for hash, row := range m.challenges {
-		if row.ID == id {
-			if row.ConsumedAt != nil {
-				return false, nil
+		if row.ID == command.ChallengeID {
+			if row.ConsumedAt != nil || !row.ExpiresAt.After(command.Now) {
+				return Device{}, Session{}, ErrTOTPChallengeExpired
 			}
-			row.ConsumedAt = &at
+			row.ConsumedAt = &command.Now
 			m.challenges[hash] = row
-			return true, nil
+			m.totp.LastUsedStep = &command.AcceptedStep
+			device := command.Device
+			if command.CandidateDeviceID != nil {
+				if existing, ok := m.devices[*command.CandidateDeviceID]; ok && existing.UserID == command.UserID {
+					device = existing
+				}
+			}
+			if m.devices == nil {
+				m.devices = map[uuid.UUID]Device{}
+			}
+			m.devices[device.ID] = device
+			session := command.Session
+			session.DeviceID = device.ID
+			m.sessions = append(m.sessions, session)
+			return device, session, nil
 		}
 	}
-	return false, nil
+	return Device{}, Session{}, ErrTOTPChallengeExpired
 }
 func (m *memoryRepo) BumpTOTPChallengeAttempts(_ context.Context, id uuid.UUID) error {
 	for hash, row := range m.challenges {

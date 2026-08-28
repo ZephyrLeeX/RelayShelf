@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,7 +20,9 @@ import (
 	postgresutil "github.com/ZephyrLeeX/RelayShelf/internal/platform/database/testutil"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/httpx"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/id"
+	"github.com/ZephyrLeeX/RelayShelf/sql/generated"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -156,6 +159,9 @@ func TestTOTPEnrollmentConfirmationAndLogin(t *testing.T) {
 	if response.Code != http.StatusCreated {
 		t.Fatalf("enroll status=%d body=%v", response.Code, body)
 	}
+	if response.Header().Get("Cache-Control") != "no-store" || response.Header().Get("Pragma") != "no-cache" {
+		t.Fatalf("enrollment cache headers=%v", response.Header())
+	}
 	secret, _ := body["secret"].(string)
 	if len(secret) != 32 {
 		t.Fatalf("secret length=%d", len(secret))
@@ -197,6 +203,9 @@ func TestTOTPEnrollmentConfirmationAndLogin(t *testing.T) {
 	if response.Code != http.StatusAccepted {
 		t.Fatalf("gated login status=%d body=%v", response.Code, body)
 	}
+	if response.Header().Get("Cache-Control") != "no-store" || response.Header().Get("Pragma") != "no-cache" {
+		t.Fatalf("challenge cache headers=%v", response.Header())
+	}
 	challengeToken, _ := body["challengeToken"].(string)
 	if challengeToken == "" {
 		t.Fatal("no challenge token")
@@ -219,6 +228,9 @@ func TestTOTPEnrollmentConfirmationAndLogin(t *testing.T) {
 	if response.Code != http.StatusOK || body["csrfToken"] == nil {
 		t.Fatalf("complete status=%d body=%v", response.Code, body)
 	}
+	if response.Header().Get("Cache-Control") != "no-store" || response.Header().Get("Pragma") != "no-cache" {
+		t.Fatalf("completion cache headers=%v", response.Header())
+	}
 	if !strings.Contains(response.Header().Get("Set-Cookie"), "relayshelf_session=") {
 		t.Fatalf("no session cookie: %q", response.Header().Get("Set-Cookie"))
 	}
@@ -236,6 +248,152 @@ func TestTOTPEnrollmentConfirmationAndLogin(t *testing.T) {
 	secondToken, _ := body["challengeToken"].(string)
 	if response, _ = h.call(t, http.MethodPost, "/api/v1/auth/login/totp", map[string]any{"challengeToken": secondToken, "code": code}, nil); response.Code != http.StatusUnauthorized {
 		t.Fatalf("replayed code accepted: status=%d", response.Code)
+	}
+}
+
+func TestConcurrentTOTPChallengesClaimOneStepAndCreateOneDeviceSession(t *testing.T) {
+	h := newTOTPHarness(t)
+	user := h.createUser(t, "race-user", false)
+	secret := h.enrollAndConfirm(t, user)
+
+	tokens := make([]string, 2)
+	for i := range tokens {
+		response, body := h.call(t, http.MethodPost, "/api/v1/auth/login", map[string]any{"username": user.username, "password": user.password, "deviceName": "pending-race-device"}, nil)
+		if response.Code != http.StatusAccepted {
+			t.Fatalf("challenge %d status=%d body=%v", i, response.Code, body)
+		}
+		tokens[i], _ = body["challengeToken"].(string)
+	}
+	var beforeDevices int
+	if err := h.pool.QueryRow(context.Background(), `SELECT count(*) FROM devices WHERE user_id=$1`, user.id).Scan(&beforeDevices); err != nil {
+		t.Fatal(err)
+	}
+	if beforeDevices != 0 {
+		t.Fatalf("password-only challenge persisted %d device(s)", beforeDevices)
+	}
+
+	code := h.code(secret)
+	start := make(chan struct{})
+	statuses := make([]int, 2)
+	var wg sync.WaitGroup
+	for i := range tokens {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			body := strings.NewReader(`{"challengeToken":"` + tokens[i] + `","code":"` + code + `"}`)
+			request := httptest.NewRequest(http.MethodPost, "http://relayshelf.test/api/v1/auth/login/totp", body)
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Origin", "http://relayshelf.test")
+			recorder := httptest.NewRecorder()
+			h.router.ServeHTTP(recorder, request)
+			statuses[i] = recorder.Code
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	successes, rejections := 0, 0
+	for _, status := range statuses {
+		switch status {
+		case http.StatusOK:
+			successes++
+		case http.StatusUnauthorized:
+			rejections++
+		default:
+			t.Fatalf("unexpected concurrent statuses=%v", statuses)
+		}
+	}
+	if successes != 1 || rejections != 1 {
+		t.Fatalf("concurrent statuses=%v successes=%d rejections=%d", statuses, successes, rejections)
+	}
+	var sessions, devices int
+	var lastStep int64
+	if err := h.pool.QueryRow(context.Background(), `SELECT count(*) FROM sessions WHERE user_id=$1`, user.id).Scan(&sessions); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.pool.QueryRow(context.Background(), `SELECT count(*) FROM devices WHERE user_id=$1`, user.id).Scan(&devices); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.pool.QueryRow(context.Background(), `SELECT last_used_step FROM user_totp WHERE user_id=$1`, user.id).Scan(&lastStep); err != nil {
+		t.Fatal(err)
+	}
+	if sessions != 1 || devices != 1 || lastStep != h.clock.Now().Unix()/TOTPPeriodSeconds {
+		t.Fatalf("sessions=%d devices=%d lastStep=%d", sessions, devices, lastStep)
+	}
+	var name, userAgent string
+	if err := h.pool.QueryRow(context.Background(), `SELECT d.name,d.user_agent FROM sessions s JOIN devices d ON d.id=s.device_id WHERE s.user_id=$1`, user.id).Scan(&name, &userAgent); err != nil {
+		t.Fatal(err)
+	}
+	if name != "pending-race-device" || userAgent != "" {
+		t.Fatalf("device name=%q userAgent=%q", name, userAgent)
+	}
+}
+
+func TestTOTPCompletionReusesOwnedDevice(t *testing.T) {
+	h := newTOTPHarness(t)
+	user := h.createUser(t, "reuse-user", false)
+	first, err := h.service.Login(context.Background(), LoginInput{Username: user.username, Password: user.password, DeviceName: "owned-device", UserAgent: "original-agent", ClientIP: netip.MustParseAddr("192.0.2.20")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := h.enrollAndConfirm(t, user)
+	response, body := h.call(t, http.MethodPost, "/api/v1/auth/login", map[string]any{"username": user.username, "password": user.password, "deviceId": first.Device.ID.String(), "deviceName": "ignored-name"}, nil)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("challenge status=%d body=%v", response.Code, body)
+	}
+	response, body = h.call(t, http.MethodPost, "/api/v1/auth/login/totp", map[string]any{"challengeToken": body["challengeToken"], "code": h.code(secret)}, nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("completion status=%d body=%v", response.Code, body)
+	}
+	var devices, reusedSessions int
+	if err := h.pool.QueryRow(context.Background(), `SELECT count(*) FROM devices WHERE user_id=$1`, user.id).Scan(&devices); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.pool.QueryRow(context.Background(), `SELECT count(*) FROM sessions WHERE user_id=$1 AND device_id=$2`, user.id, first.Device.ID).Scan(&reusedSessions); err != nil {
+		t.Fatal(err)
+	}
+	if devices != 1 || reusedSessions != 2 {
+		t.Fatalf("devices=%d sessions on owned device=%d", devices, reusedSessions)
+	}
+}
+
+func TestTOTPChallengeCleanupIsBoundedAndPreservesRecentRows(t *testing.T) {
+	h := newTOTPHarness(t)
+	user := h.createUser(t, "cleanup-user", false)
+	now := h.clock.Now()
+	insert := func(id uuid.UUID, marker byte, expires time.Time, consumed *time.Time) {
+		t.Helper()
+		hash := make([]byte, 32)
+		hash[0] = marker
+		if _, err := h.pool.Exec(context.Background(), `INSERT INTO totp_challenges(id,user_id,token_hash,expires_at,consumed_at,created_at) VALUES($1,$2,$3,$4,$5,$6)`, id, user.id, hash, expires, consumed, now.Add(-3*time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := now.Add(-2 * time.Hour)
+	recent := now.Add(-10 * time.Minute)
+	for i := byte(1); i <= 3; i++ {
+		insert(uuid.Must(uuid.NewV7()), i, old, nil)
+	}
+	insert(uuid.Must(uuid.NewV7()), 4, now.Add(time.Minute), &old)
+	liveID := uuid.Must(uuid.NewV7())
+	insert(liveID, 5, now.Add(time.Minute), nil)
+	recentID := uuid.Must(uuid.NewV7())
+	insert(recentID, 6, now.Add(time.Minute), &recent)
+
+	q := generated.New(h.pool)
+	params := generated.DeleteExpiredTOTPChallengesParams{ExpiresAt: pgtype.Timestamptz{Time: now.Add(-time.Hour), Valid: true}, Limit: 2}
+	if deleted, err := q.DeleteExpiredTOTPChallenges(context.Background(), params); err != nil || deleted != 2 {
+		t.Fatalf("first cleanup deleted=%d err=%v", deleted, err)
+	}
+	if deleted, err := q.DeleteExpiredTOTPChallenges(context.Background(), params); err != nil || deleted != 2 {
+		t.Fatalf("second cleanup deleted=%d err=%v", deleted, err)
+	}
+	if deleted, err := q.DeleteExpiredTOTPChallenges(context.Background(), params); err != nil || deleted != 0 {
+		t.Fatalf("idempotent cleanup deleted=%d err=%v", deleted, err)
+	}
+	var survivors int
+	if err := h.pool.QueryRow(context.Background(), `SELECT count(*) FROM totp_challenges WHERE id=ANY($1)`, []uuid.UUID{liveID, recentID}).Scan(&survivors); err != nil || survivors != 2 {
+		t.Fatalf("survivors=%d err=%v", survivors, err)
 	}
 }
 

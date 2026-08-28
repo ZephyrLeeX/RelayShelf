@@ -35,6 +35,11 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }
+func writeSensitiveJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+	writeJSON(w, status, value)
+}
 func WriteError(w http.ResponseWriter, r *http.Request, status int, code, message string) {
 	writeJSON(w, status, httpapi.Error{Code: code, Message: message, TraceId: httpx.TraceID(r), Details: nil})
 }
@@ -89,11 +94,11 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	if result.Challenge != nil {
 		// A TOTP-gated login never receives a session cookie here; the
 		// challenge is the only thing the browser learns.
-		writeJSON(w, http.StatusAccepted, httpapi.TOTPLoginChallenge{ChallengeToken: result.Challenge.Token, ExpiresAt: result.Challenge.ExpiresAt.UTC()})
+		writeSensitiveJSON(w, http.StatusAccepted, httpapi.TOTPLoginChallenge{ChallengeToken: result.Challenge.Token, ExpiresAt: result.Challenge.ExpiresAt.UTC()})
 		return
 	}
 	h.cookies.Set(w, result.RawToken, result.Session.AbsoluteExpiresAt)
-	writeJSON(w, http.StatusOK, h.bootstrap(result.Authentication))
+	writeSensitiveJSON(w, http.StatusOK, h.bootstrap(result.Authentication))
 }
 
 func (h *Handler) CompleteLoginTOTP(w http.ResponseWriter, r *http.Request) {
@@ -107,7 +112,7 @@ func (h *Handler) CompleteLoginTOTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.cookies.Set(w, result.RawToken, result.Session.AbsoluteExpiresAt)
-	writeJSON(w, http.StatusOK, h.bootstrap(result.Authentication))
+	writeSensitiveJSON(w, http.StatusOK, h.bootstrap(result.Authentication))
 }
 
 func (h *Handler) GetTOTPStatus(w http.ResponseWriter, r *http.Request) {
@@ -135,7 +140,7 @@ func (h *Handler) StartTOTPEnrollment(w http.ResponseWriter, r *http.Request) {
 		mapError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, httpapi.TOTPEnrollmentPending{Secret: enrollment.Secret, OtpauthUrl: enrollment.OtpauthURL, Digits: httpapi.TOTPEnrollmentPendingDigits(enrollment.Digits), PeriodSeconds: httpapi.TOTPEnrollmentPendingPeriodSeconds(enrollment.PeriodSeconds), Algorithm: httpapi.TOTPEnrollmentPendingAlgorithm(enrollment.Algorithm)})
+	writeSensitiveJSON(w, http.StatusCreated, httpapi.TOTPEnrollmentPending{Secret: enrollment.Secret, OtpauthUrl: enrollment.OtpauthURL, Digits: httpapi.TOTPEnrollmentPendingDigits(enrollment.Digits), PeriodSeconds: httpapi.TOTPEnrollmentPendingPeriodSeconds(enrollment.PeriodSeconds), Algorithm: httpapi.TOTPEnrollmentPendingAlgorithm(enrollment.Algorithm)})
 }
 
 func (h *Handler) ConfirmTOTPEnrollment(w http.ResponseWriter, r *http.Request) {

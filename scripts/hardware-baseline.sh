@@ -48,23 +48,40 @@ trap cleanup EXIT
 json() { python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$1"; }
 num() { python3 -c 'import sys; print(float(sys.argv[1]))' "$1"; }
 
+flush_file() {
+  local file=$1
+  if sync -f "$file" 2>/dev/null; then
+    return 0
+  fi
+  python3 - "$file" <<'PY'
+import os, sys
+fd = os.open(sys.argv[1], os.O_RDONLY)
+try:
+    os.fsync(fd)
+finally:
+    os.close(fd)
+PY
+}
+
 # seq_rw <dir> <label>: sequential write throughput, fsync, read throughput.
 seq_rw() {
-  local dir=$1 file block started written synced read
+  local dir=$1 file block write_start write_end sync_start sync_end read_start read_end
   file="$dir/${stamp_prefix}-seq.bin"
   block="$(head -c 1048576 /dev/zero | tr '\0' 'B')"
-  started=$(date +%s%N)
+  write_start=$(date +%s%N)
   for (( i=0; i<seq_bytes/1048576; i++ )); do printf '%s' "$block"; done > "$file"
-  written=$(date +%s%N)
-  sync
-  synced=$(date +%s%N)
+  write_end=$(date +%s%N)
+  sync_start=$(date +%s%N)
+  flush_file "$file"
+  sync_end=$(date +%s%N)
+  read_start=$(date +%s%N)
   cat "$file" > /dev/null
-  read=$(date +%s%N)
+  read_end=$(date +%s%N)
   rm -f "$file"
-  python3 - "$seq_bytes" "$written" "$started" "$synced" "$written" "$read" <<'PY'
+  python3 - "$seq_bytes" "$write_start" "$write_end" "$sync_start" "$sync_end" "$read_start" "$read_end" <<'PY'
 import sys
-size, w_end, w_start, s_end, s_start, r_end = (int(v) for v in sys.argv[1:7])
-print(f"write_mbps={size/((w_end-w_start)/1e9)/1e6:.1f} fsync_s={(s_end-s_start)/1e9:.3f} read_mbps={size/((r_end-s_start)/1e9)/1e6:.1f}")
+size, w_start, w_end, s_start, s_end, r_start, r_end = (int(v) for v in sys.argv[1:8])
+print(f"write_mbps={size/((w_end-w_start)/1e9)/1e6:.1f} fsync_s={(s_end-s_start)/1e9:.3f} read_mbps={size/((r_end-r_start)/1e9)/1e6:.1f}")
 PY
 }
 
@@ -75,7 +92,7 @@ fsync_rename() {
     local f="$dir/${stamp_prefix}-rename-$i" started done
     started=$(date +%s%N)
     printf 'relayshelf-fsync-rename-probe' > "$f"
-    sync -f "$f" 2>/dev/null || fsync "$f" 2>/dev/null || true
+    flush_file "$f"
     mv "$f" "$f.final"
     done=$(date +%s%N)
     results="$results $(( (done - started) / 1000000 ))"
@@ -142,6 +159,9 @@ else
 fi
 thumb_mean="$(grep -o 'mean=[0-9.]*[a-z]*' "$thumb_log" | head -1 | cut -d= -f2 || true)"
 rm -f "$thumb_log"
+
+[ "$search_status" = PASS ] && [ -n "$search_p95" ] || fail "PostgreSQL search benchmark failed or produced no metric"
+[ "$thumb_status" = PASS ] && [ -n "$thumb_mean" ] || fail "thumbnail benchmark failed or produced no metric"
 
 BENCH_KV="$(mktemp)"
 printf "timestamp=%s\n" "$timestamp" >> "$BENCH_KV"

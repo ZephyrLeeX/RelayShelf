@@ -20,6 +20,28 @@ func (q *Queries) BumpTOTPChallengeAttempts(ctx context.Context, id pgtype.UUID)
 	return err
 }
 
+const claimTOTPStep = `-- name: ClaimTOTPStep :execrows
+UPDATE user_totp
+SET last_used_step = $3, failed_attempts = 0, locked_until = NULL, updated_at = $2
+WHERE user_id = $1
+  AND enabled_at IS NOT NULL
+  AND (last_used_step IS NULL OR last_used_step < $3)
+`
+
+type ClaimTOTPStepParams struct {
+	UserID       pgtype.UUID
+	UpdatedAt    pgtype.Timestamptz
+	LastUsedStep pgtype.Int8
+}
+
+func (q *Queries) ClaimTOTPStep(ctx context.Context, arg ClaimTOTPStepParams) (int64, error) {
+	result, err := q.db.Exec(ctx, claimTOTPStep, arg.UserID, arg.UpdatedAt, arg.LastUsedStep)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const confirmTOTP = `-- name: ConfirmTOTP :execrows
 UPDATE user_totp
 SET enabled_at = $2, updated_at = $2
@@ -40,16 +62,19 @@ func (q *Queries) ConfirmTOTP(ctx context.Context, arg ConfirmTOTPParams) (int64
 }
 
 const consumeTOTPChallenge = `-- name: ConsumeTOTPChallenge :execrows
-UPDATE totp_challenges SET consumed_at = $2 WHERE id = $1 AND consumed_at IS NULL
+UPDATE totp_challenges
+SET consumed_at = $2
+WHERE id = $1 AND user_id = $3 AND consumed_at IS NULL AND expires_at > $2
 `
 
 type ConsumeTOTPChallengeParams struct {
 	ID         pgtype.UUID
 	ConsumedAt pgtype.Timestamptz
+	UserID     pgtype.UUID
 }
 
 func (q *Queries) ConsumeTOTPChallenge(ctx context.Context, arg ConsumeTOTPChallengeParams) (int64, error) {
-	result, err := q.db.Exec(ctx, consumeTOTPChallenge, arg.ID, arg.ConsumedAt)
+	result, err := q.db.Exec(ctx, consumeTOTPChallenge, arg.ID, arg.ConsumedAt, arg.UserID)
 	if err != nil {
 		return 0, err
 	}
@@ -83,17 +108,19 @@ func (q *Queries) CountActiveAdminsWithoutTOTP(ctx context.Context) (int32, erro
 }
 
 const createTOTPChallenge = `-- name: CreateTOTPChallenge :exec
-INSERT INTO totp_challenges (id, user_id, device_id, token_hash, expires_at, created_at)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO totp_challenges (id, user_id, device_id, token_hash, expires_at, created_at, pending_device_name, pending_user_agent)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 `
 
 type CreateTOTPChallengeParams struct {
-	ID        pgtype.UUID
-	UserID    pgtype.UUID
-	DeviceID  pgtype.UUID
-	TokenHash []byte
-	ExpiresAt pgtype.Timestamptz
-	CreatedAt pgtype.Timestamptz
+	ID                pgtype.UUID
+	UserID            pgtype.UUID
+	DeviceID          pgtype.UUID
+	TokenHash         []byte
+	ExpiresAt         pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	PendingDeviceName string
+	PendingUserAgent  string
 }
 
 func (q *Queries) CreateTOTPChallenge(ctx context.Context, arg CreateTOTPChallengeParams) error {
@@ -104,8 +131,36 @@ func (q *Queries) CreateTOTPChallenge(ctx context.Context, arg CreateTOTPChallen
 		arg.TokenHash,
 		arg.ExpiresAt,
 		arg.CreatedAt,
+		arg.PendingDeviceName,
+		arg.PendingUserAgent,
 	)
 	return err
+}
+
+const deleteExpiredTOTPChallenges = `-- name: DeleteExpiredTOTPChallenges :execrows
+WITH doomed AS (
+  SELECT c.id
+  FROM totp_challenges AS c
+  WHERE c.expires_at < $1 OR (c.consumed_at IS NOT NULL AND c.consumed_at < $1)
+  ORDER BY c.expires_at, c.id
+  LIMIT $2
+  FOR UPDATE SKIP LOCKED
+)
+DELETE FROM totp_challenges
+WHERE id IN (SELECT id FROM doomed)
+`
+
+type DeleteExpiredTOTPChallengesParams struct {
+	ExpiresAt pgtype.Timestamptz
+	Limit     int32
+}
+
+func (q *Queries) DeleteExpiredTOTPChallenges(ctx context.Context, arg DeleteExpiredTOTPChallengesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredTOTPChallenges, arg.ExpiresAt, arg.Limit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteUserTOTP = `-- name: DeleteUserTOTP :execrows
@@ -121,7 +176,7 @@ func (q *Queries) DeleteUserTOTP(ctx context.Context, userID pgtype.UUID) (int64
 }
 
 const getTOTPChallengeByHash = `-- name: GetTOTPChallengeByHash :one
-SELECT id, user_id, device_id, token_hash, expires_at, attempts, consumed_at, created_at FROM totp_challenges WHERE token_hash = $1
+SELECT id, user_id, device_id, token_hash, expires_at, attempts, consumed_at, created_at, pending_device_name, pending_user_agent FROM totp_challenges WHERE token_hash = $1
 `
 
 func (q *Queries) GetTOTPChallengeByHash(ctx context.Context, tokenHash []byte) (TotpChallenge, error) {
@@ -136,6 +191,8 @@ func (q *Queries) GetTOTPChallengeByHash(ctx context.Context, tokenHash []byte) 
 		&i.Attempts,
 		&i.ConsumedAt,
 		&i.CreatedAt,
+		&i.PendingDeviceName,
+		&i.PendingUserAgent,
 	)
 	return i, err
 }

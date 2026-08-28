@@ -81,14 +81,26 @@ func securityCheck() {
 	}
 
 	// Operator confirmations that cannot be automated.
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("RELAYSHELF_KEY_BACKUP_CONFIRMED")), "yes") {
+	if operatorConfirmed("RELAYSHELF_KEY_BACKUP_CONFIRMED") {
 		pass("encryption key backup confirmed by operator (RELAYSHELF_KEY_BACKUP_CONFIRMED)")
 	} else {
 		manualRequired("APP_ENCRYPTION_KEY has no confirmed off-machine backup; set RELAYSHELF_KEY_BACKUP_CONFIRMED=yes only after storing a copy")
 	}
-	manualRequired("TLS certificate health at the OpenWrt nginx terminator (must be verified at the proxy)")
-	manualRequired("external nginx forwarding configuration (Host/X-Forwarded-*, cache and buffering rules)")
+	if operatorConfirmed("RELAYSHELF_TLS_TERMINATION_CONFIRMED") {
+		pass("operator confirmed TLS terminator qualification (RELAYSHELF_TLS_TERMINATION_CONFIRMED)")
+	} else {
+		manualRequired("TLS certificate health at the OpenWrt nginx terminator; set RELAYSHELF_TLS_TERMINATION_CONFIRMED=yes only after qualification")
+	}
+	if operatorConfirmed("RELAYSHELF_PROXY_CONFIG_CONFIRMED") {
+		pass("operator confirmed external proxy qualification (RELAYSHELF_PROXY_CONFIG_CONFIRMED)")
+	} else {
+		manualRequired("external nginx forwarding configuration; set RELAYSHELF_PROXY_CONFIG_CONFIRMED=yes only after checking Host/X-Forwarded-*, cache and buffering rules")
+	}
 	finishSecurity(failures, manual)
+}
+
+func operatorConfirmed(name string) bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv(name)), "yes")
 }
 
 func securityAdminTotp(ctx context.Context, db *pgxpool.Pool, pass func(string, ...any), fail func(string, ...any)) {
@@ -113,13 +125,16 @@ func securityAdminTotp(ctx context.Context, db *pgxpool.Pool, pass func(string, 
 
 func finishSecurity(failures, manual int) {
 	fmt.Println("---")
+	if securityGateReady(failures, manual) {
+		fmt.Println("PUBLIC EXPOSURE SAFETY GATE: READY")
+		return
+	}
 	if failures > 0 {
 		fmt.Printf("PUBLIC EXPOSURE SAFETY GATE: NOT READY (%d failing check(s), %d manual)\n", failures, manual)
 		os.Exit(1)
 	}
-	if manual > 0 {
-		fmt.Printf("PUBLIC EXPOSURE SAFETY GATE: NOT READY (0 failing, %d manual qualification(s) pending)\n", manual)
-		os.Exit(1)
-	}
-	fmt.Println("PUBLIC EXPOSURE SAFETY GATE: READY")
+	fmt.Printf("PUBLIC EXPOSURE SAFETY GATE: NOT READY (0 failing, %d manual qualification(s) pending)\n", manual)
+	os.Exit(1)
 }
+
+func securityGateReady(failures, manual int) bool { return failures == 0 && manual == 0 }

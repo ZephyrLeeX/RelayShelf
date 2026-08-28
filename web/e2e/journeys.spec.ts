@@ -120,9 +120,11 @@ test.describe('search journey', () => {
     try {
       await login(bobPage, bob)
       await bobPage.getByLabel('搜索内容').fill(needle)
+      const settled = bobPage.waitForResponse((response) => response.url().includes('/api/v1/search') && response.request().method() === 'GET' && response.ok())
       await bobPage.getByRole('button', { name: '搜索', exact: true }).click()
+      await settled
       await expect(bobPage.locator('.message-card', { hasText: needle })).toHaveCount(0)
-      await expect(bobPage.getByText('暂无', { exact: false })).toBeVisible()
+      await expect(bobPage.locator('.feed[aria-busy="false"] .empty')).toBeVisible()
     } finally {
       await bobContext.close()
     }

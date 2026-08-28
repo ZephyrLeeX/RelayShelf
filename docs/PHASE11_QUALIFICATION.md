@@ -87,7 +87,11 @@ relayshelf security check
 Every automated check must print PASS and every MANUAL line must be
 resolved by an operator (TLS health at the proxy, forwarded-header rules,
 and a confirmed off-machine APP_ENCRYPTION_KEY backup recorded via
-`RELAYSHELF_KEY_BACKUP_CONFIRMED=yes`). All active administrators must
+`RELAYSHELF_KEY_BACKUP_CONFIRMED=yes`). After actually qualifying the external
+TLS terminator and nginx forwarding/cache/buffering rules, attest them with
+`RELAYSHELF_TLS_TERMINATION_CONFIRMED=yes` and
+`RELAYSHELF_PROXY_CONFIG_CONFIRMED=yes`. These values are operator attestations,
+not technical verification; never set them before performing the checks. All active administrators must
 have confirmed TOTP enrollments; the admin status page shows the same
 projection.
 

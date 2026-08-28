@@ -118,6 +118,18 @@ func (s *Service) Login(ctx context.Context, input LoginInput) (LoginResult, err
 		}
 		user.PasswordHash = encoded
 	}
+	// A confirmed TOTP enrollment means a correct password is not a complete
+	// authentication. Pending device metadata stays in the bounded challenge;
+	// no persistent device is created until the second factor succeeds.
+	if _, enabled, totpErr := s.totpEnabled(ctx, user.ID); totpErr != nil {
+		return LoginResult{}, totpErr
+	} else if enabled {
+		challenge, challengeErr := s.newLoginChallenge(ctx, user, input)
+		if challengeErr != nil {
+			return LoginResult{}, challengeErr
+		}
+		return LoginResult{Challenge: challenge}, nil
+	}
 	var device Device
 	if input.DeviceID != nil {
 		device, err = s.repo.GetOwnedDevice(ctx, *input.DeviceID, user.ID)
@@ -141,19 +153,6 @@ func (s *Service) Login(ctx context.Context, input LoginInput) (LoginResult, err
 	}
 	if err != nil {
 		return LoginResult{}, err
-	}
-	// A confirmed TOTP enrollment means a correct password is not a complete
-	// authentication: issue a bounded challenge instead of a session. The
-	// device row already exists and the challenge references it, so completing
-	// the second factor reuses this device without a second password check.
-	if _, enabled, totpErr := s.totpEnabled(ctx, user.ID); totpErr != nil {
-		return LoginResult{}, totpErr
-	} else if enabled {
-		challenge, challengeErr := s.newLoginChallenge(ctx, user, device)
-		if challengeErr != nil {
-			return LoginResult{}, challengeErr
-		}
-		return LoginResult{Challenge: challenge}, nil
 	}
 	raw, tokenHash, err := NewSessionToken()
 	if err != nil {
