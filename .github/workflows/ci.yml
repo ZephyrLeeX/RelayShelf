@@ -69,6 +69,7 @@ jobs:
           context: .
           push: false
           load: true
+          tags: relayshelf:ci
           build-args: |
             VERSION=${{ steps.meta.outputs.version }}
             GIT_COMMIT=${{ github.sha }}
