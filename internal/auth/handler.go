@@ -44,6 +44,14 @@ func mapError(w http.ResponseWriter, r *http.Request, err error) {
 		WriteError(w, r, http.StatusTooManyRequests, "AUTH_RATE_LIMITED", "too many attempts")
 	case errors.Is(err, ErrInvalidCredentials):
 		WriteError(w, r, http.StatusUnauthorized, "AUTH_INVALID_CREDENTIALS", "invalid username or password")
+	case errors.Is(err, ErrTOTPCodeInvalid):
+		WriteError(w, r, http.StatusUnauthorized, "TOTP_INVALID", "invalid totp code")
+	case errors.Is(err, ErrTOTPChallengeExpired):
+		WriteError(w, r, http.StatusGone, "TOTP_CHALLENGE_EXPIRED", "totp challenge expired")
+	case errors.Is(err, ErrTOTPAlreadyEnabled):
+		WriteError(w, r, http.StatusConflict, "TOTP_ALREADY_ENABLED", "totp is already enabled")
+	case errors.Is(err, ErrTOTPNotEnabled):
+		WriteError(w, r, http.StatusNotFound, "TOTP_NOT_ENROLLED", "totp is not enrolled")
 	case errors.Is(err, ErrForbidden):
 		WriteError(w, r, http.StatusForbidden, "FORBIDDEN", "forbidden")
 	case errors.Is(err, ErrNotFound):
@@ -78,8 +86,90 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		mapError(w, r, err)
 		return
 	}
+	if result.Challenge != nil {
+		// A TOTP-gated login never receives a session cookie here; the
+		// challenge is the only thing the browser learns.
+		writeJSON(w, http.StatusAccepted, httpapi.TOTPLoginChallenge{ChallengeToken: result.Challenge.Token, ExpiresAt: result.Challenge.ExpiresAt.UTC()})
+		return
+	}
 	h.cookies.Set(w, result.RawToken, result.Session.AbsoluteExpiresAt)
 	writeJSON(w, http.StatusOK, h.bootstrap(result.Authentication))
+}
+
+func (h *Handler) CompleteLoginTOTP(w http.ResponseWriter, r *http.Request) {
+	var body httpapi.TOTPChallengeRequest
+	if !decode(w, r, &body) {
+		return
+	}
+	result, err := h.service.CompleteLoginTOTP(r.Context(), body.ChallengeToken, body.Code, requestInput(r))
+	if err != nil {
+		mapError(w, r, err)
+		return
+	}
+	h.cookies.Set(w, result.RawToken, result.Session.AbsoluteExpiresAt)
+	writeJSON(w, http.StatusOK, h.bootstrap(result.Authentication))
+}
+
+func (h *Handler) GetTOTPStatus(w http.ResponseWriter, r *http.Request) {
+	actor, ok := FromContext(r.Context())
+	if !ok {
+		WriteError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required")
+		return
+	}
+	enabled, err := h.service.TOTPStatus(r.Context(), actor.Authentication)
+	if err != nil {
+		mapError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, httpapi.TOTPStatus{Enabled: enabled})
+}
+
+func (h *Handler) StartTOTPEnrollment(w http.ResponseWriter, r *http.Request) {
+	actor, ok := FromContext(r.Context())
+	if !ok {
+		WriteError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required")
+		return
+	}
+	enrollment, err := h.service.StartTOTPEnrollment(r.Context(), actor.Authentication, requestInput(r))
+	if err != nil {
+		mapError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, httpapi.TOTPEnrollmentPending{Secret: enrollment.Secret, OtpauthUrl: enrollment.OtpauthURL, Digits: httpapi.TOTPEnrollmentPendingDigits(enrollment.Digits), PeriodSeconds: httpapi.TOTPEnrollmentPendingPeriodSeconds(enrollment.PeriodSeconds), Algorithm: httpapi.TOTPEnrollmentPendingAlgorithm(enrollment.Algorithm)})
+}
+
+func (h *Handler) ConfirmTOTPEnrollment(w http.ResponseWriter, r *http.Request) {
+	actor, ok := FromContext(r.Context())
+	if !ok {
+		WriteError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required")
+		return
+	}
+	var body httpapi.TOTPCodeRequest
+	if !decode(w, r, &body) {
+		return
+	}
+	if err := h.service.ConfirmTOTPEnrollment(r.Context(), actor.Authentication, body.Code, requestInput(r)); err != nil {
+		mapError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, httpapi.TOTPStatus{Enabled: true})
+}
+
+func (h *Handler) DisableTOTP(w http.ResponseWriter, r *http.Request) {
+	actor, ok := FromContext(r.Context())
+	if !ok {
+		WriteError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required")
+		return
+	}
+	var body httpapi.TOTPCodeRequest
+	if !decode(w, r, &body) {
+		return
+	}
+	if err := h.service.DisableTOTP(r.Context(), actor.Authentication, body.Code, requestInput(r)); err != nil {
+		mapError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, httpapi.TOTPStatus{Enabled: false})
 }
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	actor, ok := FromContext(r.Context())

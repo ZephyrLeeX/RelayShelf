@@ -42,7 +42,8 @@ type LoginInput struct {
 }
 type LoginResult struct {
 	Authentication
-	RawToken string
+	RawToken  string
+	Challenge *LoginChallenge
 }
 
 func (a Authentication) Valid(now time.Time) error {

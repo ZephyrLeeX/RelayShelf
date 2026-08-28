@@ -9,6 +9,7 @@ const operationalStatus: AdminStatus = {
   build: { version: '1.0.0', gitCommit: 'abcdef1234567890', buildTime: '2026-08-28T00:00:00Z' },
   migration: { currentVersion: 5, latestVersion: 5, compatible: true }, failedJobs: [],
   storage: { state: HealthState.HEALTHY, logicalUsageBytes: 8, maxStorageBytes: 100, thresholdState: StorageThresholdState.NORMAL, nasAvailableBytes: 80, nasTotalBytes: 100, stagingUsageBytes: 4, stagingAvailableBytes: 90, stagingTotalBytes: 100, degradedReasons: [] },
+  security: { activeAdmins: 1, activeAdminsWithoutTOTP: 1, adminTotpSatisfied: false },
 }
 
 async function render() {

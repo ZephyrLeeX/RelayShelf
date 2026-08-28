@@ -9,6 +9,10 @@ export const apiCodes = {
   messageTrashed: 'MESSAGE_TRASHED',
   favoriteRequiresPermanent: 'MESSAGE_FAVORITE_REQUIRES_PERMANENT',
   validation: 'VALIDATION_ERROR',
+  totpInvalid: 'TOTP_INVALID',
+  totpChallengeExpired: 'TOTP_CHALLENGE_EXPIRED',
+  totpAlreadyEnabled: 'TOTP_ALREADY_ENABLED',
+  totpNotEnrolled: 'TOTP_NOT_ENROLLED',
 } as const
 
 export interface AppApiError {

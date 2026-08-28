@@ -62,7 +62,7 @@ func TestAdminRoutesAreEnforcedServerSide(t *testing.T) {
 	}
 	repo := auth.NewPostgreSQLRepository(db, audit.NewRecorder(id.UUIDv7{}, clock.Real{}))
 	now := clock.Real{}
-	service := auth.NewService(repo, hasher, id.UUIDv7{}, now, auth.NewRateLimiter(now, 100))
+	service := auth.NewService(repo, hasher, id.UUIDv7{}, now, auth.NewRateLimiter(now, 100), nil)
 	ip := netip.MustParseAddr("192.0.2.10")
 	login := func(name string) auth.LoginResult {
 		result, err := service.Login(ctx, auth.LoginInput{Username: name, Password: password, ClientIP: ip, UserAgent: "integration"})

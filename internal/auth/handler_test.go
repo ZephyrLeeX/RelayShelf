@@ -31,7 +31,7 @@ func loginRequest(t *testing.T, handler http.Handler, username string) (int, htt
 func TestLoginRequiresSameOrigin(t *testing.T) {
 	origin, _ := url.Parse("http://example.test")
 	clock := &fakeClock{now: time.Now()}
-	service := NewService(&memoryRepo{findUserErr: ErrNotFound}, &countingHasher{}, &sequenceIDs{}, clock, NewRateLimiter(clock, 32))
+	service := NewService(&memoryRepo{findUserErr: ErrNotFound}, &countingHasher{}, &sequenceIDs{}, clock, NewRateLimiter(clock, 32), nil)
 	csrf := NewCSRF([]byte("01234567890123456789012345678901"))
 	cookies := NewCookiePolicy(origin)
 	router := Router(NewHandler(service, csrf, cookies), NewMiddleware(service, cookies, csrf, origin, httpx.NewResolver(nil)))
@@ -67,7 +67,7 @@ func TestLoginCookieExpiresAtAbsoluteExpiry(t *testing.T) {
 	clock := &fakeClock{now: now}
 	user := User{ID: uuid.New(), Username: "alice", Status: "ACTIVE", PasswordHash: "hash"}
 	repo := &memoryRepo{user: user}
-	service := NewService(repo, &countingHasher{ok: true}, &sequenceIDs{}, clock, NewRateLimiter(clock, 32))
+	service := NewService(repo, &countingHasher{ok: true}, &sequenceIDs{}, clock, NewRateLimiter(clock, 32), nil)
 	csrf := NewCSRF([]byte("01234567890123456789012345678901"))
 	cookies := NewCookiePolicy(origin)
 	router := Router(NewHandler(service, csrf, cookies), NewMiddleware(service, cookies, csrf, origin, httpx.NewResolver(nil)))
@@ -104,7 +104,7 @@ func TestLoginHTTPEnumerationAndRateLimitContract(t *testing.T) {
 	clock := &fakeClock{now: time.Now()}
 	csrf := NewCSRF([]byte("01234567890123456789012345678901"))
 	build := func(repo *memoryRepo, hasher PasswordHasher) http.Handler {
-		service := NewService(repo, hasher, &sequenceIDs{}, clock, NewRateLimiter(clock, 32))
+		service := NewService(repo, hasher, &sequenceIDs{}, clock, NewRateLimiter(clock, 32), nil)
 		cookies := NewCookiePolicy(origin)
 		middleware := NewMiddleware(service, cookies, csrf, origin, httpx.NewResolver(nil))
 		return Router(NewHandler(service, csrf, cookies), middleware)

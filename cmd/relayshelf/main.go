@@ -112,6 +112,10 @@ func main() {
 		storageCheck()
 		return
 	}
+	if command == "security" && len(os.Args) > 2 && os.Args[2] == "check" {
+		securityCheck()
+		return
+	}
 	if command == "version" {
 		info := buildinfo.Current()
 		log.Printf("RelayShelf %s (commit %s, built %s)", info.Version, info.GitCommit, info.BuildTime)
@@ -163,7 +167,12 @@ func main() {
 		authRepo := auth.NewPostgreSQLRepository(db, auditRecorder)
 		hasher := auth.NewPasswordHasher(auth.DefaultArgon2Params)
 		limiter := auth.NewRateLimiter(now, auth.DefaultRateLimitEntries)
-		authService := auth.NewService(authRepo, hasher, id.UUIDv7{}, now, limiter)
+		totpCipher, totpErr := auth.NewTOTPCipher(cfg.AppEncryptionKey.Bytes())
+		if totpErr != nil {
+			log.Printf("totp encryption unavailable")
+			os.Exit(1)
+		}
+		authService := auth.NewService(authRepo, hasher, id.UUIDv7{}, now, limiter, totpCipher)
 		csrf := auth.NewCSRF(cfg.CSRFSecret.Bytes())
 		cookies := auth.NewCookiePolicy(cfg.PublicOrigin)
 		authMiddleware := auth.NewMiddleware(authService, cookies, csrf, cfg.PublicOrigin, httpx.NewResolver(cfg.TrustedProxies))
@@ -260,7 +269,7 @@ func main() {
 			log.Printf("background shutdown deadline reached")
 		}
 	default:
-		log.Printf("unknown command %q (use serve, migrate, or storage check)", command)
+		log.Printf("unknown command %q (use serve, migrate, storage check, or security check)", command)
 		os.Exit(2)
 	}
 }

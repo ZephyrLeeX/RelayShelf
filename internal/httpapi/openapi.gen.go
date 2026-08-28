@@ -146,6 +146,54 @@ func (e StorageThresholdState) Valid() bool {
 	}
 }
 
+// Defines values for TOTPEnrollmentPendingAlgorithm.
+const (
+	SHA1 TOTPEnrollmentPendingAlgorithm = "SHA1"
+)
+
+// Valid indicates whether the value is a known member of the TOTPEnrollmentPendingAlgorithm enum.
+func (e TOTPEnrollmentPendingAlgorithm) Valid() bool {
+	switch e {
+	case SHA1:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TOTPEnrollmentPendingDigits.
+const (
+	N6 TOTPEnrollmentPendingDigits = 6
+	N8 TOTPEnrollmentPendingDigits = 8
+)
+
+// Valid indicates whether the value is a known member of the TOTPEnrollmentPendingDigits enum.
+func (e TOTPEnrollmentPendingDigits) Valid() bool {
+	switch e {
+	case N6:
+		return true
+	case N8:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TOTPEnrollmentPendingPeriodSeconds.
+const (
+	N30 TOTPEnrollmentPendingPeriodSeconds = 30
+)
+
+// Valid indicates whether the value is a known member of the TOTPEnrollmentPendingPeriodSeconds enum.
+func (e TOTPEnrollmentPendingPeriodSeconds) Valid() bool {
+	switch e {
+	case N30:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for UploadStatus.
 const (
 	COMPLETED  UploadStatus = "COMPLETED"
@@ -182,14 +230,24 @@ type AddAttachmentsRequest struct {
 	UploadIds       []openapi_types.UUID `json:"uploadIds"`
 }
 
+// AdminSecurityStatus defines model for AdminSecurityStatus.
+type AdminSecurityStatus struct {
+	ActiveAdmins            int `json:"activeAdmins"`
+	ActiveAdminsWithoutTOTP int `json:"activeAdminsWithoutTOTP"`
+
+	// AdminTotpSatisfied True when at least one active admin exists and every active admin has confirmed TOTP
+	AdminTotpSatisfied bool `json:"adminTotpSatisfied"`
+}
+
 // AdminStatus defines model for AdminStatus.
 type AdminStatus struct {
-	Build         BuildInfo       `json:"build"`
-	DatabaseState HealthState     `json:"databaseState"`
-	FailedJobs    []FailedJob     `json:"failedJobs"`
-	Migration     MigrationStatus `json:"migration"`
-	State         HealthState     `json:"state"`
-	Storage       StorageStatus   `json:"storage"`
+	Build         BuildInfo           `json:"build"`
+	DatabaseState HealthState         `json:"databaseState"`
+	FailedJobs    []FailedJob         `json:"failedJobs"`
+	Migration     MigrationStatus     `json:"migration"`
+	Security      AdminSecurityStatus `json:"security"`
+	State         HealthState         `json:"state"`
+	Storage       StorageStatus       `json:"storage"`
 }
 
 // AdminUser defines model for AdminUser.
@@ -487,6 +545,49 @@ type StorageStatusDegradedReasons string
 // StorageThresholdState defines model for StorageThresholdState.
 type StorageThresholdState string
 
+// TOTPChallengeRequest defines model for TOTPChallengeRequest.
+type TOTPChallengeRequest struct {
+	ChallengeToken string `json:"challengeToken"`
+	Code           string `json:"code"`
+}
+
+// TOTPCodeRequest defines model for TOTPCodeRequest.
+type TOTPCodeRequest struct {
+	Code string `json:"code"`
+}
+
+// TOTPEnrollmentPending defines model for TOTPEnrollmentPending.
+type TOTPEnrollmentPending struct {
+	Algorithm     TOTPEnrollmentPendingAlgorithm     `json:"algorithm"`
+	Digits        TOTPEnrollmentPendingDigits        `json:"digits"`
+	OtpauthUrl    string                             `json:"otpauthUrl"`
+	PeriodSeconds TOTPEnrollmentPendingPeriodSeconds `json:"periodSeconds"`
+
+	// Secret Base32 shared secret returned exactly once during enrollment
+	Secret string `json:"secret"`
+}
+
+// TOTPEnrollmentPendingAlgorithm defines model for TOTPEnrollmentPending.Algorithm.
+type TOTPEnrollmentPendingAlgorithm string
+
+// TOTPEnrollmentPendingDigits defines model for TOTPEnrollmentPending.Digits.
+type TOTPEnrollmentPendingDigits int
+
+// TOTPEnrollmentPendingPeriodSeconds defines model for TOTPEnrollmentPending.PeriodSeconds.
+type TOTPEnrollmentPendingPeriodSeconds int
+
+// TOTPLoginChallenge defines model for TOTPLoginChallenge.
+type TOTPLoginChallenge struct {
+	// ChallengeToken Single-purpose
+	ChallengeToken string    `json:"challengeToken"`
+	ExpiresAt      time.Time `json:"expiresAt"`
+}
+
+// TOTPStatus defines model for TOTPStatus.
+type TOTPStatus struct {
+	Enabled bool `json:"enabled"`
+}
+
 // Tag defines model for Tag.
 type Tag struct {
 	Color     string             `json:"color"`
@@ -643,8 +744,17 @@ type ResetAdminUserPasswordJSONRequestBody = ResetAdminUserPasswordRequest
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody = LoginRequest
 
+// CompleteLoginTOTPJSONRequestBody defines body for CompleteLoginTOTP for application/json ContentType.
+type CompleteLoginTOTPJSONRequestBody = TOTPChallengeRequest
+
 // ChangePasswordJSONRequestBody defines body for ChangePassword for application/json ContentType.
 type ChangePasswordJSONRequestBody = PasswordChangeRequest
+
+// ConfirmTOTPEnrollmentJSONRequestBody defines body for ConfirmTOTPEnrollment for application/json ContentType.
+type ConfirmTOTPEnrollmentJSONRequestBody = TOTPCodeRequest
+
+// DisableTOTPJSONRequestBody defines body for DisableTOTP for application/json ContentType.
+type DisableTOTPJSONRequestBody = TOTPCodeRequest
 
 // RenameDeviceJSONRequestBody defines body for RenameDevice for application/json ContentType.
 type RenameDeviceJSONRequestBody = RenameDeviceRequest
@@ -739,6 +849,9 @@ type ServerInterface interface {
 	// (POST /auth/login)
 	Login(w http.ResponseWriter, r *http.Request)
 
+	// (POST /auth/login/totp)
+	CompleteLoginTOTP(w http.ResponseWriter, r *http.Request)
+
 	// (POST /auth/logout)
 	Logout(w http.ResponseWriter, r *http.Request)
 
@@ -747,6 +860,18 @@ type ServerInterface interface {
 
 	// (GET /auth/session)
 	GetAuthSession(w http.ResponseWriter, r *http.Request)
+
+	// (GET /auth/totp)
+	GetTOTPStatus(w http.ResponseWriter, r *http.Request)
+
+	// (POST /auth/totp/confirm)
+	ConfirmTOTPEnrollment(w http.ResponseWriter, r *http.Request)
+
+	// (POST /auth/totp/disable)
+	DisableTOTP(w http.ResponseWriter, r *http.Request)
+
+	// (POST /auth/totp/enroll)
+	StartTOTPEnrollment(w http.ResponseWriter, r *http.Request)
 
 	// (GET /devices)
 	ListDevices(w http.ResponseWriter, r *http.Request)
@@ -914,6 +1039,11 @@ func (_ Unimplemented) Login(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// (POST /auth/login/totp)
+func (_ Unimplemented) CompleteLoginTOTP(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // (POST /auth/logout)
 func (_ Unimplemented) Logout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -926,6 +1056,26 @@ func (_ Unimplemented) ChangePassword(w http.ResponseWriter, r *http.Request) {
 
 // (GET /auth/session)
 func (_ Unimplemented) GetAuthSession(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /auth/totp)
+func (_ Unimplemented) GetTOTPStatus(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /auth/totp/confirm)
+func (_ Unimplemented) ConfirmTOTPEnrollment(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /auth/totp/disable)
+func (_ Unimplemented) DisableTOTP(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /auth/totp/enroll)
+func (_ Unimplemented) StartTOTPEnrollment(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1384,6 +1534,20 @@ func (siw *ServerInterfaceWrapper) Login(w http.ResponseWriter, r *http.Request)
 	handler.ServeHTTP(w, r)
 }
 
+// CompleteLoginTOTP operation middleware
+func (siw *ServerInterfaceWrapper) CompleteLoginTOTP(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CompleteLoginTOTP(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // Logout operation middleware
 func (siw *ServerInterfaceWrapper) Logout(w http.ResponseWriter, r *http.Request) {
 
@@ -1417,6 +1581,62 @@ func (siw *ServerInterfaceWrapper) GetAuthSession(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetAuthSession(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetTOTPStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetTOTPStatus(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetTOTPStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ConfirmTOTPEnrollment operation middleware
+func (siw *ServerInterfaceWrapper) ConfirmTOTPEnrollment(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ConfirmTOTPEnrollment(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DisableTOTP operation middleware
+func (siw *ServerInterfaceWrapper) DisableTOTP(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DisableTOTP(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartTOTPEnrollment operation middleware
+func (siw *ServerInterfaceWrapper) StartTOTPEnrollment(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartTOTPEnrollment(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2578,6 +2798,21 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/auth/login", wrapper.Login)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/auth/login/totp", wrapper.CompleteLoginTOTP)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/auth/totp", wrapper.GetTOTPStatus)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/auth/totp/enroll", wrapper.StartTOTPEnrollment)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/auth/totp/confirm", wrapper.ConfirmTOTPEnrollment)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/auth/totp/disable", wrapper.DisableTOTP)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/auth/logout", wrapper.Logout)

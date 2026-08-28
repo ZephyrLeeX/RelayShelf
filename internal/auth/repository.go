@@ -42,6 +42,17 @@ type Repository interface {
 	ChangePasswordAndRevokeOthers(context.Context, uuid.UUID, uuid.UUID, string, time.Time, AuditEvent) error
 	ResetPasswordAndRevokeAll(context.Context, uuid.UUID, string, time.Time, audit.Event) error
 	Audit(context.Context, AuditEvent) error
+	GetUserTOTP(context.Context, uuid.UUID) (UserTOTP, error)
+	UpsertPendingTOTP(context.Context, UserTOTP, uuid.UUID, time.Time) (bool, error)
+	ConfirmTOTP(context.Context, uuid.UUID, time.Time) (bool, error)
+	DeleteUserTOTP(context.Context, uuid.UUID) (bool, error)
+	RecordTOTPSuccess(context.Context, uuid.UUID, time.Time, int64) error
+	RecordTOTPFailure(context.Context, uuid.UUID, time.Time, int, time.Time) error
+	CreateTOTPChallenge(context.Context, TOTPChallengeRow, []byte) error
+	GetTOTPChallengeByHash(context.Context, []byte) (TOTPChallengeRow, error)
+	ConsumeTOTPChallenge(context.Context, uuid.UUID, time.Time) (bool, error)
+	BumpTOTPChallengeAttempts(context.Context, uuid.UUID) error
+	RecordAuditEvent(context.Context, audit.Event) error
 }
 
 type PostgreSQLRepository struct {
@@ -198,6 +209,103 @@ func insertAudit(ctx context.Context, q *generated.Queries, event AuditEvent) er
 }
 func (r *PostgreSQLRepository) Audit(ctx context.Context, event AuditEvent) error {
 	return insertAudit(ctx, r.q, event)
+}
+
+func nullableTotpTime(value *time.Time) pgtype.Timestamptz {
+	if value == nil {
+		return pgtype.Timestamptz{}
+	}
+	return pgtype.Timestamptz{Time: *value, Valid: true}
+}
+
+func nullableTotpStep(value *int64) pgtype.Int8 {
+	if value == nil {
+		return pgtype.Int8{}
+	}
+	return pgtype.Int8{Int64: *value, Valid: true}
+}
+
+func fromUserTOTP(row generated.UserTotp) UserTOTP {
+	var enabledAt, lockedUntil *time.Time
+	if row.EnabledAt.Valid {
+		value := row.EnabledAt.Time
+		enabledAt = &value
+	}
+	if row.LockedUntil.Valid {
+		value := row.LockedUntil.Time
+		lockedUntil = &value
+	}
+	var lastStep *int64
+	if row.LastUsedStep.Valid {
+		value := row.LastUsedStep.Int64
+		lastStep = &value
+	}
+	return UserTOTP{UserID: uuid.UUID(row.UserID.Bytes), SecretCiphertext: row.SecretCiphertext, SecretNonce: row.SecretNonce, SecretEncryptionVersion: row.SecretEncryptionVersion, EnabledAt: enabledAt, LastUsedStep: lastStep, FailedAttempts: int(row.FailedAttempts), LockedUntil: lockedUntil}
+}
+
+func (r *PostgreSQLRepository) GetUserTOTP(ctx context.Context, userID uuid.UUID) (UserTOTP, error) {
+	row, err := r.q.GetUserTOTP(ctx, pgu(userID))
+	return fromUserTOTP(row), noRows(err)
+}
+
+func (r *PostgreSQLRepository) UpsertPendingTOTP(ctx context.Context, enrollment UserTOTP, id uuid.UUID, now time.Time) (bool, error) {
+	n, err := r.q.UpsertPendingTOTP(ctx, generated.UpsertPendingTOTPParams{ID: pgu(id), UserID: pgu(enrollment.UserID), SecretCiphertext: enrollment.SecretCiphertext, SecretNonce: enrollment.SecretNonce, SecretEncryptionVersion: enrollment.SecretEncryptionVersion, Digits: TOTPDigits, PeriodSeconds: TOTPPeriodSeconds, Algorithm: "SHA1", CreatedAt: pgt(now)})
+	return n > 0, err
+}
+
+func (r *PostgreSQLRepository) ConfirmTOTP(ctx context.Context, userID uuid.UUID, now time.Time) (bool, error) {
+	n, err := r.q.ConfirmTOTP(ctx, generated.ConfirmTOTPParams{UserID: pgu(userID), EnabledAt: pgt(now)})
+	return n > 0, err
+}
+
+func (r *PostgreSQLRepository) DeleteUserTOTP(ctx context.Context, userID uuid.UUID) (bool, error) {
+	n, err := r.q.DeleteUserTOTP(ctx, pgu(userID))
+	return n > 0, err
+}
+
+func (r *PostgreSQLRepository) RecordTOTPSuccess(ctx context.Context, userID uuid.UUID, now time.Time, step int64) error {
+	return r.q.RecordTOTPSuccess(ctx, generated.RecordTOTPSuccessParams{UserID: pgu(userID), UpdatedAt: pgt(now), LastUsedStep: pgtype.Int8{Int64: step, Valid: true}})
+}
+
+func (r *PostgreSQLRepository) RecordTOTPFailure(ctx context.Context, userID uuid.UUID, now time.Time, maxFailures int, lockedUntil time.Time) error {
+	return r.q.RecordTOTPFailure(ctx, generated.RecordTOTPFailureParams{UserID: pgu(userID), UpdatedAt: pgt(now), FailedAttempts: int32(maxFailures), LockedUntil: pgt(lockedUntil)})
+}
+
+func (r *PostgreSQLRepository) CreateTOTPChallenge(ctx context.Context, row TOTPChallengeRow, tokenHash []byte) error {
+	return r.q.CreateTOTPChallenge(ctx, generated.CreateTOTPChallengeParams{ID: pgu(row.ID), UserID: pgu(row.UserID), DeviceID: ptrUUID(row.DeviceID), TokenHash: append([]byte(nil), tokenHash...), ExpiresAt: pgt(row.ExpiresAt), CreatedAt: pgt(row.CreatedAt)})
+}
+
+func fromTOTPChallenge(row generated.TotpChallenge) TOTPChallengeRow {
+	out := TOTPChallengeRow{ID: uuid.UUID(row.ID.Bytes), UserID: uuid.UUID(row.UserID.Bytes), ExpiresAt: row.ExpiresAt.Time, Attempts: int(row.Attempts)}
+	if row.DeviceID.Valid {
+		value := uuid.UUID(row.DeviceID.Bytes)
+		out.DeviceID = &value
+	}
+	if row.ConsumedAt.Valid {
+		value := row.ConsumedAt.Time
+		out.ConsumedAt = &value
+	}
+	return out
+}
+
+func (r *PostgreSQLRepository) GetTOTPChallengeByHash(ctx context.Context, tokenHash []byte) (TOTPChallengeRow, error) {
+	row, err := r.q.GetTOTPChallengeByHash(ctx, append([]byte(nil), tokenHash...))
+	return fromTOTPChallenge(row), noRows(err)
+}
+
+func (r *PostgreSQLRepository) ConsumeTOTPChallenge(ctx context.Context, id uuid.UUID, now time.Time) (bool, error) {
+	n, err := r.q.ConsumeTOTPChallenge(ctx, generated.ConsumeTOTPChallengeParams{ID: pgu(id), ConsumedAt: pgt(now)})
+	return n > 0, err
+}
+
+func (r *PostgreSQLRepository) BumpTOTPChallengeAttempts(ctx context.Context, id uuid.UUID) error {
+	return r.q.BumpTOTPChallengeAttempts(ctx, pgu(id))
+}
+
+// RecordAuditEvent writes typed audit events through the shared recorder so
+// metadata can only come from the constructor allowlist.
+func (r *PostgreSQLRepository) RecordAuditEvent(ctx context.Context, event audit.Event) error {
+	return r.recorder.Record(ctx, r.pool, event)
 }
 func (r *PostgreSQLRepository) tx(ctx context.Context, fn func(pgx.Tx, *generated.Queries) error) error {
 	tx, err := r.pool.Begin(ctx)

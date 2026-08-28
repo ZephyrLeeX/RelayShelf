@@ -142,6 +142,7 @@ function percent(used: number, total?: number | null) { return total ? Math.min(
           <article><span :data-state="status.data.value.databaseState" /><div><small>PostgreSQL</small><strong>{{ stateLabel(status.data.value.databaseState) }}</strong></div></article>
           <article><span :data-state="status.data.value.storage.state" /><div><small>NAS / staging</small><strong>{{ stateLabel(status.data.value.storage.state) }}</strong></div></article>
           <article><span :data-state="status.data.value.migration.compatible ? 'HEALTHY' : 'DEGRADED'" /><div><small>Schema</small><strong>{{ status.data.value.migration.currentVersion }} / {{ status.data.value.migration.latestVersion }}</strong></div></article>
+          <article><span :data-state="status.data.value.security.adminTotpSatisfied ? 'HEALTHY' : 'DEGRADED'" /><div><small>管理员 TOTP</small><strong>{{ status.data.value.security.adminTotpSatisfied ? '满足' : `${status.data.value.security.activeAdminsWithoutTOTP} 名未启用` }}</strong></div></article>
         </section>
         <div class="overview-grid">
           <section class="panel metric">

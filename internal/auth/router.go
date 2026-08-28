@@ -34,7 +34,7 @@ func Router(handler any, middleware *Middleware) http.Handler {
 			w.Header().Set("Cache-Control", "no-store")
 			w.Header().Set("Pragma", "no-cache")
 		}
-		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/login" {
+		if r.Method == http.MethodPost && (r.URL.Path == "/api/v1/auth/login" || r.URL.Path == "/api/v1/auth/login/totp") {
 			login.ServeHTTP(w, r)
 			return
 		}
@@ -59,6 +59,21 @@ type authServer struct {
 
 func (s authServer) Login(w http.ResponseWriter, r *http.Request)  { s.Handler.Login(w, r) }
 func (s authServer) Logout(w http.ResponseWriter, r *http.Request) { s.Handler.Logout(w, r) }
+func (s authServer) CompleteLoginTOTP(w http.ResponseWriter, r *http.Request) {
+	s.Handler.CompleteLoginTOTP(w, r)
+}
+func (s authServer) GetTOTPStatus(w http.ResponseWriter, r *http.Request) {
+	s.Handler.GetTOTPStatus(w, r)
+}
+func (s authServer) StartTOTPEnrollment(w http.ResponseWriter, r *http.Request) {
+	s.Handler.StartTOTPEnrollment(w, r)
+}
+func (s authServer) ConfirmTOTPEnrollment(w http.ResponseWriter, r *http.Request) {
+	s.Handler.ConfirmTOTPEnrollment(w, r)
+}
+func (s authServer) DisableTOTP(w http.ResponseWriter, r *http.Request) {
+	s.Handler.DisableTOTP(w, r)
+}
 func (s authServer) GetAuthSession(w http.ResponseWriter, r *http.Request) {
 	s.Handler.GetAuthSession(w, r)
 }

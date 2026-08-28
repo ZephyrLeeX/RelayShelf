@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { DefaultService, type AuthBootstrap, type Device, type Session, type User } from '@/api/generated'
+import { DefaultService, type AuthBootstrap, type Device, type Session, type TOTPLoginChallenge, type User } from '@/api/generated'
 import { queryClient } from '@/app/queryClient'
 import { setCsrfToken } from '@/shared/api/configure'
 import { isAuthExpired, toApiError } from '@/shared/api/errors'
@@ -60,8 +60,15 @@ export const useAuthStore = defineStore('auth', {
       })()
       return bootstrapRequest
     },
-    async login(username: string, password: string) {
+    async login(username: string, password: string): Promise<TOTPLoginChallenge | null> {
       const data = await DefaultService.login({ username, password, deviceName: defaultDeviceName() })
+      if ('challengeToken' in data) return data
+      queryClient.clear()
+      this.accept(data)
+      return null
+    },
+    async completeTotpLogin(challengeToken: string, code: string) {
+      const data = await DefaultService.completeLoginTotp({ challengeToken, code })
       queryClient.clear()
       this.accept(data)
     },

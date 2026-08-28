@@ -122,6 +122,24 @@ func (s *StatusService) Storage(ctx context.Context) StorageStatus {
 	return result
 }
 
+// security computes the admin TOTP half of the public-exposure safety gate:
+// the gate is only satisfiable when at least one active admin exists and all
+// of them have confirmed TOTP enrollments.
+func (s *StatusService) security(ctx context.Context) SecurityStatus {
+	security := SecurityStatus{}
+	admins, err := generated.New(s.pool).CountActiveAdmins(ctx)
+	if err != nil {
+		return security
+	}
+	without, err := generated.New(s.pool).CountActiveAdminsWithoutTOTP(ctx)
+	if err != nil {
+		return SecurityStatus{ActiveAdmins: int(admins)}
+	}
+	security.ActiveAdmins, security.ActiveAdminsWithoutTOTP = int(admins), int(without)
+	security.AdminTotpSatisfied = admins > 0 && without == 0
+	return security
+}
+
 func threshold(used int64, maximum *int64) ThresholdState {
 	if maximum == nil {
 		return ThresholdUnconfigured
@@ -173,16 +191,26 @@ type MigrationStatus struct {
 	Current, Latest int64
 	Compatible      bool
 }
+
+// SecurityStatus is the admin-visible projection of the public-exposure TOTP
+// requirement. It counts active administrators, never exposes who they are
+// beyond what the user admin list already shows, and carries no TOTP secrets.
+type SecurityStatus struct {
+	ActiveAdmins            int
+	ActiveAdminsWithoutTOTP int
+	AdminTotpSatisfied      bool
+}
 type AdminStatus struct {
 	State, DatabaseState HealthState
 	Build                buildinfo.Info
 	Migration            MigrationStatus
 	FailedJobs           []FailedJob
 	Storage              StorageStatus
+	Security             SecurityStatus
 }
 
 func (s *StatusService) Status(ctx context.Context) AdminStatus {
-	result := AdminStatus{State: Healthy, DatabaseState: Healthy, Build: buildinfo.Current(), FailedJobs: []FailedJob{}}
+	result := AdminStatus{State: Healthy, DatabaseState: Healthy, Build: buildinfo.Current(), FailedJobs: []FailedJob{}, Security: s.security(ctx)}
 	dbCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	current, currentErr := database.CurrentVersion(dbCtx, s.pool)

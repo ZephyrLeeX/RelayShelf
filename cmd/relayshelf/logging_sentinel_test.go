@@ -129,7 +129,11 @@ func TestApplicationLogsNeverContainSecrets(t *testing.T) {
 	authRepo := auth.NewPostgreSQLRepository(db, auditRecorder)
 	hasher := auth.NewPasswordHasher(auth.DefaultArgon2Params)
 	limiter := auth.NewRateLimiter(now, auth.DefaultRateLimitEntries)
-	authService := auth.NewService(authRepo, hasher, id.UUIDv7{}, now, limiter)
+	totpCipher, totpErr := auth.NewTOTPCipher(keyBytes)
+	if totpErr != nil {
+		t.Fatal(totpErr)
+	}
+	authService := auth.NewService(authRepo, hasher, id.UUIDv7{}, now, limiter, totpCipher)
 	csrf := auth.NewCSRF(csrfBytes)
 	cookies := auth.NewCookiePolicy(origin)
 	authMiddleware := auth.NewMiddleware(authService, cookies, csrf, origin, httpx.NewResolver(nil))

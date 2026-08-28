@@ -33,6 +33,8 @@ type memoryRepo struct {
 	resetHash   string
 	rehashed    string
 	revoked     []uuid.UUID
+	totp        *UserTOTP
+	challenges  map[string]TOTPChallengeRow
 }
 
 func (m *memoryRepo) FindUser(context.Context, string) (User, error) { return m.user, m.findUserErr }
@@ -132,6 +134,82 @@ func (m *memoryRepo) Audit(_ context.Context, e AuditEvent) error {
 	return nil
 }
 
+// TOTP-backed memory state lets unit tests drive the second-factor flow.
+func (m *memoryRepo) GetUserTOTP(context.Context, uuid.UUID) (UserTOTP, error) {
+	if m.totp == nil {
+		return UserTOTP{}, ErrNotFound
+	}
+	return *m.totp, nil
+}
+func (m *memoryRepo) UpsertPendingTOTP(_ context.Context, enrollment UserTOTP, _ uuid.UUID, _ time.Time) (bool, error) {
+	if m.totp != nil && m.totp.EnabledAt != nil {
+		return false, nil
+	}
+	m.totp = &enrollment
+	return true, nil
+}
+func (m *memoryRepo) ConfirmTOTP(_ context.Context, user uuid.UUID, at time.Time) (bool, error) {
+	if m.totp == nil || m.totp.EnabledAt != nil {
+		return false, nil
+	}
+	m.totp.EnabledAt = &at
+	return true, nil
+}
+func (m *memoryRepo) DeleteUserTOTP(context.Context, uuid.UUID) (bool, error) {
+	if m.totp == nil || m.totp.EnabledAt == nil {
+		return false, nil
+	}
+	m.totp = nil
+	return true, nil
+}
+func (m *memoryRepo) RecordTOTPSuccess(_ context.Context, _ uuid.UUID, _ time.Time, step int64) error {
+	if m.totp != nil {
+		m.totp.LastUsedStep = &step
+		m.totp.FailedAttempts = 0
+	}
+	return nil
+}
+func (m *memoryRepo) RecordTOTPFailure(_ context.Context, _ uuid.UUID, _ time.Time, _ int, _ time.Time) error {
+	return nil
+}
+func (m *memoryRepo) CreateTOTPChallenge(_ context.Context, row TOTPChallengeRow, hash []byte) error {
+	if m.challenges == nil {
+		m.challenges = map[string]TOTPChallengeRow{}
+	}
+	m.challenges[string(hash)] = row
+	return nil
+}
+func (m *memoryRepo) GetTOTPChallengeByHash(_ context.Context, hash []byte) (TOTPChallengeRow, error) {
+	row, ok := m.challenges[string(hash)]
+	if !ok {
+		return TOTPChallengeRow{}, ErrNotFound
+	}
+	return row, nil
+}
+func (m *memoryRepo) ConsumeTOTPChallenge(_ context.Context, id uuid.UUID, at time.Time) (bool, error) {
+	for hash, row := range m.challenges {
+		if row.ID == id {
+			if row.ConsumedAt != nil {
+				return false, nil
+			}
+			row.ConsumedAt = &at
+			m.challenges[hash] = row
+			return true, nil
+		}
+	}
+	return false, nil
+}
+func (m *memoryRepo) BumpTOTPChallengeAttempts(_ context.Context, id uuid.UUID) error {
+	for hash, row := range m.challenges {
+		if row.ID == id {
+			row.Attempts++
+			m.challenges[hash] = row
+		}
+	}
+	return nil
+}
+func (m *memoryRepo) RecordAuditEvent(context.Context, audit.Event) error { return nil }
+
 type countingHasher struct {
 	verifies []string
 	ok       bool
@@ -152,7 +230,7 @@ func TestUnknownUserRunsDummyVerify(t *testing.T) {
 	clock := &fakeClock{now: time.Now()}
 	repo := &memoryRepo{findUserErr: ErrNotFound}
 	hasher := &countingHasher{}
-	service := NewService(repo, hasher, &sequenceIDs{}, clock, NewRateLimiter(clock, 10))
+	service := NewService(repo, hasher, &sequenceIDs{}, clock, NewRateLimiter(clock, 10), nil)
 	_, err := service.Login(context.Background(), LoginInput{Username: "missing", Password: "password", ClientIP: netip.MustParseAddr("192.0.2.1")})
 	if !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatal(err)
@@ -166,7 +244,7 @@ func TestAuthenticateTouchThrottleAndNonTouch(t *testing.T) {
 	clock := &fakeClock{now: time.Now()}
 	authn := validAuthentication(clock.now)
 	repo := &memoryRepo{auth: authn}
-	service := NewService(repo, testHasher(), &sequenceIDs{}, clock, NewRateLimiter(clock, 10))
+	service := NewService(repo, testHasher(), &sequenceIDs{}, clock, NewRateLimiter(clock, 10), nil)
 	token, _, _ := NewSessionToken()
 	if _, err := service.Authenticate(context.Background(), token, false, netip.MustParseAddr("192.0.2.1")); err != nil {
 		t.Fatal(err)
@@ -205,7 +283,7 @@ func TestPasswordChangeAndAdminResetRevocation(t *testing.T) {
 	actor.User.IsAdmin = true
 	repo := &memoryRepo{sessions: []Session{actor.Session, {ID: uuid.New(), UserID: actor.User.ID}}}
 	hasher := &countingHasher{ok: true}
-	service := NewService(repo, hasher, &sequenceIDs{}, clock, NewRateLimiter(clock, 10))
+	service := NewService(repo, hasher, &sequenceIDs{}, clock, NewRateLimiter(clock, 10), nil)
 	input := LoginInput{}
 	if err := service.ChangePassword(context.Background(), actor, "current-password", "new-password", input); err != nil {
 		t.Fatal(err)
