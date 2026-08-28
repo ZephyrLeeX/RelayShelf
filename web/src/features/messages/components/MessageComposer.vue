@@ -68,6 +68,7 @@ watch(fingerprint, (value) => {
 })
 
 function submit() {
+  if (send.isPending.value) return
   error.value = ''
   if (empty.value) { error.value = '正文不能为空。'; return }
   if (tooLarge.value) { error.value = '正文 UTF-8 大小不能超过 1 MiB。'; return }

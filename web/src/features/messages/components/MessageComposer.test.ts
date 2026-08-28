@@ -85,6 +85,28 @@ describe('MessageComposer', () => {
     await flushPromises()
     expect(create).toHaveBeenNthCalledWith(2, 'key-b', expect.objectContaining({ body:'F2' }))
   })
+  it('blocks repeated Ctrl+Enter while an unchanged draft is pending', async () => {
+    const pending = new Promise<ReturnType<typeof messageFixture>>(() => {})
+    const create = vi.spyOn(DefaultService, 'createMessage').mockReturnValue(pending as never)
+    const wrapper = mountComposer()
+    const textarea = wrapper.get('textarea')
+    await textarea.setValue('F1')
+    await textarea.trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await textarea.trigger('keydown', { key: 'Enter', ctrlKey: true })
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(create).toHaveBeenCalledWith('key-a', expect.objectContaining({ body: 'F1' }))
+  })
+  it('blocks Meta+Enter while a request is pending', async () => {
+    const pending = new Promise<ReturnType<typeof messageFixture>>(() => {})
+    const create = vi.spyOn(DefaultService, 'createMessage').mockReturnValue(pending as never)
+    const wrapper = mountComposer()
+    const textarea = wrapper.get('textarea')
+    await textarea.setValue('F1')
+    await textarea.trigger('keydown', { key: 'Enter', metaKey: true })
+    await textarea.trigger('keydown', { key: 'Enter', metaKey: true })
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(create).toHaveBeenCalledWith('key-a', expect.objectContaining({ body: 'F1' }))
+  })
   it('clears an unchanged draft after its request succeeds', async () => {
     const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
     const wrapper = mountComposer()
@@ -120,6 +142,9 @@ describe('MessageComposer', () => {
     await wrapper.get('select').setValue(Lifecycle.PERMANENT)
     await wrapper.get('.toggle input').setValue(true)
     await wrapper.get('.tag-options input').setValue(true)
+    await wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(create).not.toHaveBeenCalledWith('key-a', expect.objectContaining({ body: 'F2' }))
     resolveFirst(messageFixture())
     await flushPromises()
 
@@ -131,7 +156,7 @@ describe('MessageComposer', () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.messages.root() })
     expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.search.root() })
 
-    await wrapper.get('button.primary').trigger('click')
+    await wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
     await flushPromises()
     expect(create).toHaveBeenNthCalledWith(2, 'key-b', expect.objectContaining({
       body: 'F2', bodyFormat: BodyFormat.MARKDOWN, lifecycle: Lifecycle.PERMANENT,
