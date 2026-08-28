@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useMutation, useQueryClient } from '@tanstack/vue-query'
-import { BodyFormat, DefaultService, Lifecycle } from '@/api/generated'
+import { BodyFormat, DefaultService, Lifecycle, type CreateMessageRequest } from '@/api/generated'
 import { displayError } from '@/shared/api/errors'
 import { queryKeys } from '@/shared/api/queryKeys'
 import { useCreateTag, useTagsQuery } from '@/features/tags/queries'
@@ -29,15 +29,15 @@ const bodyFormat = computed(() => mode.value === 'markdown' ? BodyFormat.MARKDOW
 const fingerprint = computed(() => JSON.stringify({ body: body.value, mode: mode.value, lifecycle: lifecycle.value, sensitive: sensitive.value, tags: [...selectedTags.value].sort() }))
 let attemptedFingerprint = ''
 
+interface SendSnapshot {
+  key: string
+  fingerprint: string
+  payload: CreateMessageRequest
+}
+
 const send = useMutation({
-  mutationFn: ({ key }: { key: string }) => DefaultService.createMessage(key, {
-    body: body.value,
-    bodyFormat: bodyFormat.value,
-    lifecycle: lifecycle.value,
-    sensitive: sensitive.value,
-    tagIds: selectedTags.value,
-    uploadIds: [],
-  }),
+  retry: false,
+  mutationFn: ({ key, payload }: SendSnapshot) => DefaultService.createMessage(key, payload),
   onSuccess: () => {
     body.value = ''
     selectedTags.value = []
@@ -50,7 +50,11 @@ const send = useMutation({
     void client.invalidateQueries({ queryKey: queryKeys.search.root() })
     emit('sent')
   },
-  onError: (cause) => { failed.value = true; error.value = displayError(cause) },
+  onError: (cause, snapshot) => {
+    failed.value = true
+    error.value = displayError(cause)
+    if (fingerprint.value !== snapshot.fingerprint) activeKey.value = ''
+  },
 })
 
 watch(fingerprint, (value) => {
@@ -67,7 +71,18 @@ function submit() {
   if (tooLarge.value) { error.value = '正文 UTF-8 大小不能超过 1 MiB。'; return }
   if (!activeKey.value) activeKey.value = crypto.randomUUID()
   attemptedFingerprint = fingerprint.value
-  send.mutate({ key: activeKey.value })
+  send.mutate({
+    key: activeKey.value,
+    fingerprint: attemptedFingerprint,
+    payload: {
+      body: body.value,
+      bodyFormat: bodyFormat.value,
+      lifecycle: lifecycle.value,
+      sensitive: sensitive.value,
+      tagIds: [...selectedTags.value],
+      uploadIds: [],
+    },
+  })
 }
 function onKeydown(event: KeyboardEvent) {
   if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); submit() }

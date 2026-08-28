@@ -14,14 +14,33 @@ const router = useRouter()
 const detail = useMessageDetail(() => props.id)
 const mutation = useMessageMutation()
 const tags = useTagsQuery()
-const sensitiveBody = ref<string | null>(null)
+interface RevealedBody {
+  messageId: string
+  version: number
+  body: string
+}
+const revealedBody = ref<RevealedBody | null>(null)
 const revealPending = ref(false)
+let revealRequest = 0
 const editing = ref(false)
 const editBody = ref('')
 const editFormat = ref(BodyFormat.TEXT)
 const selectedTags = ref<string[]>([])
 const error = ref('')
 const message = computed(() => detail.data.value)
+const currentSensitiveBody = computed(() => {
+  const current = message.value
+  const revealed = revealedBody.value
+  return current?.sensitive && revealed?.messageId === current.id && revealed.version === current.version
+    ? revealed.body
+    : null
+})
+
+function clearRevealedBody() {
+  revealRequest++
+  revealedBody.value = null
+  revealPending.value = false
+}
 
 watch(message, (value) => {
   if (!value) return
@@ -29,10 +48,13 @@ watch(message, (value) => {
   editFormat.value = value.bodyFormat
   selectedTags.value = value.tags.map((tag) => tag.id)
 }, { immediate: true })
-watch(() => props.id, () => { sensitiveBody.value = null; editing.value = false })
-onUnmounted(() => { sensitiveBody.value = null })
+watch(
+  () => [message.value?.id, message.value?.version, message.value?.sensitive] as const,
+  () => { clearRevealedBody(); editBody.value = ''; editing.value = false },
+)
+onUnmounted(clearRevealedBody)
 function close() {
-  sensitiveBody.value = null
+  clearRevealedBody()
   const from = typeof route.query.from === 'string' && route.query.from.startsWith('/') ? route.query.from : ''
   if (from) void router.push(from); else void router.replace('/temporary')
 }
@@ -40,35 +62,58 @@ function onKey(event: KeyboardEvent) { if (event.key === 'Escape') close() }
 onMounted(() => document.addEventListener('keydown', onKey))
 onUnmounted(() => document.removeEventListener('keydown', onKey))
 async function reveal() {
+  const current = message.value
+  if (!current?.sensitive) return
+  const requestedMessageId = current.id
+  const requestedVersion = current.version
+  const request = ++revealRequest
   revealPending.value = true; error.value = ''
-  try { sensitiveBody.value = (await DefaultService.revealSensitiveBody(props.id)).body }
-  catch (cause) { error.value = displayError(cause) }
-  finally { revealPending.value = false }
+  try {
+    const response = await DefaultService.revealSensitiveBody(requestedMessageId)
+    const latest = message.value
+    if (
+      request === revealRequest
+      && props.id === requestedMessageId
+      && latest?.id === requestedMessageId
+      && latest.version === requestedVersion
+      && response.version === latest.version
+      && latest.sensitive
+    ) {
+      revealedBody.value = { messageId:requestedMessageId, version:response.version, body:response.body }
+    }
+  }
+  catch (cause) { if (request === revealRequest) error.value = displayError(cause) }
+  finally { if (request === revealRequest) revealPending.value = false }
 }
 async function copy() {
   if (!message.value) return
-  if (message.value.sensitive && sensitiveBody.value === null) await reveal()
-  const value = message.value.sensitive ? sensitiveBody.value : message.value.body
+  if (message.value.sensitive && currentSensitiveBody.value === null) await reveal()
+  const value = message.value.sensitive ? currentSensitiveBody.value : message.value.body
   if (value !== null) await navigator.clipboard.writeText(value ?? '')
 }
 function run(command: Parameters<typeof mutation.mutate>[0], success?: () => void) {
   error.value = ''
   mutation.mutate(command, {
-    onSuccess: () => { sensitiveBody.value = null; success?.() },
+    onSuccess: () => { clearRevealedBody(); success?.() },
     onError: (cause) => { error.value = mutationErrorMessage(cause) },
   })
 }
 async function startEdit() {
   if (!message.value) return
   if (message.value.sensitive) {
-    if (sensitiveBody.value === null) await reveal()
-    if (sensitiveBody.value === null) return
-    editBody.value = sensitiveBody.value
+    if (currentSensitiveBody.value === null) await reveal()
+    if (currentSensitiveBody.value === null) return
+    editBody.value = currentSensitiveBody.value
   } else editBody.value = message.value.body ?? ''
   editing.value = true
 }
 function saveBody() {
   if (!message.value || !editBody.value.trim()) return
+  if (message.value.sensitive && currentSensitiveBody.value === null) {
+    editing.value = false
+    error.value = '内容版本已更新，请重新显示正文后再编辑。'
+    return
+  }
   const command = message.value.sensitive
     ? { type: 'editSensitive' as const, message: message.value, body: editBody.value }
     : { type: 'edit' as const, message: message.value, body: editBody.value, bodyFormat: editFormat.value }
@@ -130,7 +175,7 @@ function downloadUrl(id: string) { return `/api/v1/attachments/${encodeURICompon
             v-if="message.sensitive"
             class="sensitive panel"
           >
-            <template v-if="sensitiveBody === null">
+            <template v-if="currentSensitiveBody === null">
               <strong>🔒 Sensitive locked</strong><p class="muted">
                 明文仅在本详情页内存中短暂保留。
               </p><button
@@ -142,9 +187,9 @@ function downloadUrl(id: string) { return `/api/v1/attachments/${encodeURICompon
               </button>
             </template>
             <template v-else>
-              <pre>{{ sensitiveBody }}</pre><button
+              <pre>{{ currentSensitiveBody }}</pre><button
                 class="button"
-                @click="sensitiveBody = null"
+                @click="clearRevealedBody"
               >
                 隐藏
               </button>

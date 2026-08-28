@@ -69,6 +69,21 @@ describe('MessageComposer', () => {
     await flushPromises()
     expect(create.mock.calls[2][0]).toBe('key-b')
   })
+  it('binds a pending request to its payload snapshot and gives a changed draft a new key', async () => {
+    let rejectFirst!: (reason: unknown) => void
+    const pending = new Promise<never>((_resolve, reject) => { rejectFirst = reject })
+    const create = vi.spyOn(DefaultService, 'createMessage').mockReturnValueOnce(pending as never).mockResolvedValueOnce(messageFixture())
+    const wrapper = mountComposer()
+    await wrapper.get('textarea').setValue('F1')
+    await wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await wrapper.get('textarea').setValue('F2')
+    expect(create).toHaveBeenNthCalledWith(1, 'key-a', expect.objectContaining({ body:'F1' }))
+    rejectFirst(new TypeError('offline'))
+    await flushPromises()
+    await wrapper.get('button.primary').trigger('click')
+    await flushPromises()
+    expect(create).toHaveBeenNthCalledWith(2, 'key-b', expect.objectContaining({ body:'F2' }))
+  })
   it('includes the explicit sensitive selection', async () => {
     const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
     const wrapper = mountComposer()

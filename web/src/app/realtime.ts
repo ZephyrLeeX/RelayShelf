@@ -1,6 +1,4 @@
 import type { QueryClient } from '@tanstack/vue-query'
-import { DefaultService } from '@/api/generated'
-import { isAuthExpired } from '@/shared/api/errors'
 import { queryKeys } from '@/shared/api/queryKeys'
 
 interface RealtimeEvent {
@@ -28,7 +26,23 @@ function invalidateServerTruth(client: QueryClient) {
   void client.invalidateQueries({ queryKey: queryKeys.trash.list() })
 }
 
-export function startRealtime(client: QueryClient, deviceId: string, onExpired: () => void) {
+async function probeRealtimeAuth(onExpired: () => void) {
+  const controller = new AbortController()
+  try {
+    const response = await fetch('/api/v1/events', {
+      credentials: 'include',
+      signal: controller.signal,
+    })
+    if (response.status === 401) onExpired()
+  } catch {
+    // A network failure does not prove that the authenticated session expired.
+  } finally {
+    // The SSE endpoint flushes its status immediately. Do not leave the probe open.
+    controller.abort()
+  }
+}
+
+export function startRealtime(client: QueryClient, _deviceId: string, onExpired: () => void) {
   if (source) return
   const next = factory('/api/v1/events', { withCredentials: true })
   source = next
@@ -41,7 +55,6 @@ export function startRealtime(client: QueryClient, deviceId: string, onExpired: 
     next.addEventListener(eventType, (frame) => {
       try {
         const event = JSON.parse((frame as MessageEvent<string>).data) as RealtimeEvent
-        if (event.originDeviceId === deviceId) return
         if (event.type.startsWith('tag.')) {
           void client.invalidateQueries({ queryKey: queryKeys.tags.all() })
         }
@@ -58,8 +71,7 @@ export function startRealtime(client: QueryClient, deviceId: string, onExpired: 
     wasDisconnected = true
     if (authCheckPending) return
     authCheckPending = true
-    void DefaultService.getAuthSession()
-      .catch((error: unknown) => { if (isAuthExpired(error)) onExpired() })
+    void probeRealtimeAuth(onExpired)
       .finally(() => { authCheckPending = false })
   })
   visibilityHandler = () => {
