@@ -477,6 +477,9 @@ type ServerInterface interface {
 	// (GET /attachments/{attachmentId}/download)
 	DownloadAttachment(w http.ResponseWriter, r *http.Request, attachmentId AttachmentId)
 
+	// (GET /attachments/{attachmentId}/preview)
+	PreviewAttachment(w http.ResponseWriter, r *http.Request, attachmentId AttachmentId)
+
 	// (GET /attachments/{attachmentId}/thumbnail)
 	GetAttachmentThumbnail(w http.ResponseWriter, r *http.Request, attachmentId AttachmentId)
 
@@ -595,6 +598,11 @@ type Unimplemented struct{}
 
 // (GET /attachments/{attachmentId}/download)
 func (_ Unimplemented) DownloadAttachment(w http.ResponseWriter, r *http.Request, attachmentId AttachmentId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /attachments/{attachmentId}/preview)
+func (_ Unimplemented) PreviewAttachment(w http.ResponseWriter, r *http.Request, attachmentId AttachmentId) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -809,6 +817,32 @@ func (siw *ServerInterfaceWrapper) DownloadAttachment(w http.ResponseWriter, r *
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DownloadAttachment(w, r, attachmentId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PreviewAttachment operation middleware
+func (siw *ServerInterfaceWrapper) PreviewAttachment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "attachmentId" -------------
+	var attachmentId AttachmentId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "attachmentId", chi.URLParam(r, "attachmentId"), &attachmentId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "attachmentId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PreviewAttachment(w, r, attachmentId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2115,6 +2149,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/attachments/{attachmentId}/download", wrapper.DownloadAttachment)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/attachments/{attachmentId}/preview", wrapper.PreviewAttachment)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/attachments/{attachmentId}/thumbnail", wrapper.GetAttachmentThumbnail)

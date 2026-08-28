@@ -185,12 +185,14 @@ func TestDownloadHTTPRegressionMatrixAndIntegrityContract(t *testing.T) {
 	data := []byte("0123456789")
 	fileID := writeObject(t, ctx, adapter, data)
 	hash := sha256.Sum256(data)
-	if _, err = db.Exec(ctx, `INSERT INTO file_objects(id,sha256,size_bytes,detected_mime,storage_backend,storage_key,status,created_at,updated_at,ready_at) VALUES($1,$2,$3,'application/octet-stream','filesystem',$4,'READY',$5,$5,$5)`, fileID, hash[:], len(data), storage.ObjectKey(fileID).String(), now); err != nil {
+	if _, err = db.Exec(ctx, `INSERT INTO file_objects(id,sha256,size_bytes,detected_mime,storage_backend,storage_key,status,created_at,updated_at,ready_at) VALUES($1,$2,$3,'application/pdf','filesystem',$4,'READY',$5,$5,$5)`, fileID, hash[:], len(data), storage.ObjectKey(fileID).String(), now); err != nil {
 		t.Fatal(err)
 	}
 	attachments := make([]uuid.UUID, 2)
+	messages := make([]uuid.UUID, 2)
 	for i, owner := range []uuid.UUID{alice, bob} {
 		messageID := uuid.Must(uuid.NewV7())
+		messages[i] = messageID
 		attachments[i] = uuid.Must(uuid.NewV7())
 		if _, err = db.Exec(ctx, `INSERT INTO messages(id,owner_id,body_plaintext,body_format,sensitive,lifecycle,expires_at,created_at,updated_at) VALUES($1,$2,'x','TEXT',false,'TEMPORARY',$3,$4,$4)`, messageID, owner, now.Add(time.Hour), now); err != nil {
 			t.Fatal(err)
@@ -249,6 +251,38 @@ func TestDownloadHTTPRegressionMatrixAndIntegrityContract(t *testing.T) {
 	}
 	if w := request(bob, false, attachments[1], "bytes=0-0", "", ""); w.Code != http.StatusPartialContent || w.Body.String() != "0" {
 		t.Fatalf("owner-specific shared attachment status=%d body=%q", w.Code, w.Body.String())
+	}
+	preview := func(owner uuid.UUID, admin bool, attachment uuid.UUID, rangeHeader string) *httptest.ResponseRecorder {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodGet, "/api/v1/attachments/"+attachment.String()+"/preview", nil)
+		r.Header.Set("Range", rangeHeader)
+		r = r.WithContext(auth.ContextWithAuthentication(r.Context(), auth.Authentication{User: auth.User{ID: owner, IsAdmin: admin}}))
+		w := httptest.NewRecorder()
+		handler.PreviewAttachment(w, r, httpapi.AttachmentId(attachment))
+		return w
+	}
+	if w := preview(alice, false, attachments[0], "bytes=2-5"); w.Code != http.StatusPartialContent || w.Body.String() != "2345" || !strings.HasPrefix(w.Header().Get("Content-Disposition"), "inline;") || w.Header().Get("Content-Type") != "application/pdf" {
+		t.Fatalf("preview range status=%d body=%q headers=%v", w.Code, w.Body.String(), w.Header())
+	}
+	for _, admin := range []bool{false, true} {
+		if w := preview(bob, admin, attachments[0], ""); w.Code != http.StatusNotFound {
+			t.Fatalf("cross-owner preview admin=%v status=%d", admin, w.Code)
+		}
+	}
+	if _, err = db.Exec(ctx, `UPDATE messages SET trashed_at=$2::timestamptz,purge_at=($2::timestamptz)+interval '1 day' WHERE id=$1`, messages[0], now); err != nil {
+		t.Fatal(err)
+	}
+	if w := preview(alice, false, attachments[0], ""); w.Code != http.StatusOK {
+		t.Fatalf("trash owner preview status=%d", w.Code)
+	}
+	if _, err = db.Exec(ctx, `UPDATE file_objects SET detected_mime='text/html' WHERE id=$1`, fileID); err != nil {
+		t.Fatal(err)
+	}
+	if w := preview(alice, false, attachments[0], ""); w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), `"code":"ATTACHMENT_PREVIEW_NOT_FOUND"`) || strings.Contains(w.Body.String(), fileID.String()) {
+		t.Fatalf("unsafe preview status=%d body=%s", w.Code, w.Body.String())
+	}
+	if _, err = db.Exec(ctx, `UPDATE file_objects SET detected_mime='application/pdf' WHERE id=$1`, fileID); err != nil {
+		t.Fatal(err)
 	}
 	if err = adapter.Delete(ctx, storage.ObjectKey(fileID)); err != nil {
 		t.Fatal(err)

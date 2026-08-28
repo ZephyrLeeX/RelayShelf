@@ -2,10 +2,12 @@ import { VueQueryPlugin, QueryClient } from '@tanstack/vue-query'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { BodyFormat, DefaultService, Lifecycle } from '@/api/generated'
+import { BodyFormat, DefaultService, Lifecycle, UploadStatus } from '@/api/generated'
 import { queryKeys } from '@/shared/api/queryKeys'
 import { messageFixture } from '@/test/fixtures'
 import MessageComposer from './MessageComposer.vue'
+import { uploadManager } from '@/features/uploads/manager'
+import { uploadState } from '@/features/uploads/store'
 
 function mountComposer(lifecycle = Lifecycle.TEMPORARY) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
@@ -14,6 +16,7 @@ function mountComposer(lifecycle = Lifecycle.TEMPORARY) {
 
 describe('MessageComposer', () => {
   beforeEach(() => {
+    uploadState.items = []
     vi.spyOn(DefaultService, 'listTags').mockResolvedValue([])
     vi.stubGlobal('crypto', { randomUUID: vi.fn().mockReturnValueOnce('key-a').mockReturnValueOnce('key-b') })
   })
@@ -39,6 +42,26 @@ describe('MessageComposer', () => {
     await wrapper.get('textarea').setValue('界'.repeat(349_526))
     expect(wrapper.text()).toContain('正文 UTF-8 大小不能超过')
     expect(create).not.toHaveBeenCalled()
+  })
+  it('allows a file-only message only after its selected upload is completed', async () => {
+    const completed = {
+      clientId: 'client-upload', serverUploadId: 'upload-1', filename: 'photo.png', size: 4, lastModified: 1,
+      completedParts: [0], activeParts: [], transferredByPart: {}, sentBytes: 4, progress: 1, createdAt: '2026-01-01T00:00:00Z', selected: true,
+      status: 'COMPLETED' as const,
+      session: { id: 'upload-1', originalFilename: 'photo.png', expectedSize: 4, clientMime: 'image/png', chunkSize: 4, partCount: 1, status: UploadStatus.COMPLETED, expiresAt: '2026-01-02T00:00:00Z', completedParts: [0], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' },
+    }
+    uploadState.items.push(completed)
+    vi.spyOn(uploadManager, 'addFiles').mockResolvedValue(['client-upload'])
+    const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
+    const wrapper = mountComposer()
+    const input = wrapper.get<HTMLInputElement>('input[type="file"]')
+    Object.defineProperty(input.element, 'files', { configurable: true, value: [new File(['data'], 'photo.png')] })
+    await input.trigger('change')
+    await flushPromises()
+    expect(wrapper.get('button.primary').attributes('disabled')).toBeUndefined()
+    await wrapper.get('button.primary').trigger('click')
+    await flushPromises()
+    expect(create).toHaveBeenCalledWith('key-a', expect.objectContaining({ body: null, uploadIds: ['upload-1'] }))
   })
   it('maps Markdown and Code UI to contract formats and allows untagged permanent content', async () => {
     const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())

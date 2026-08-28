@@ -4,6 +4,7 @@ import { queryClient } from '@/app/queryClient'
 import { setCsrfToken } from '@/shared/api/configure'
 import { isAuthExpired, toApiError } from '@/shared/api/errors'
 import { stopRealtime } from '@/app/realtime'
+import { uploadManager } from '@/features/uploads/manager'
 
 export type AuthStatus = 'unknown' | 'authenticated' | 'guest' | 'error'
 
@@ -29,6 +30,7 @@ export const useAuthStore = defineStore('auth', {
       setCsrfToken(data.csrfToken)
     },
     clear(status: AuthStatus = 'guest') {
+      uploadManager.clearForLogout()
       this.user = null
       this.device = null
       this.session = null

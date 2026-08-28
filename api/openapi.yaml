@@ -1,7 +1,7 @@
 openapi: 3.1.1
 info:
   title: RelayShelf API
-  version: 0.7.0
+  version: 0.8.0
   description: HTTP contract authority for RelayShelf.
 servers:
   - url: /api/v1
@@ -287,6 +287,18 @@ paths:
       responses:
         '200': { description: Full attachment, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
         '206': { description: Attachment byte range, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
+        '304': { description: Not modified }
+        '404': { $ref: '#/components/responses/Error' }
+        '416': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /attachments/{attachmentId}/preview:
+    get:
+      operationId: previewAttachment
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/AttachmentId' }]
+      responses:
+        '200': { description: Full allowlisted inline attachment, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
+        '206': { description: Allowlisted inline attachment byte range, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
         '304': { description: Not modified }
         '404': { $ref: '#/components/responses/Error' }
         '416': { $ref: '#/components/responses/Error' }

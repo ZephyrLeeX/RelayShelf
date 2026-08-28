@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import type { MessageSummary } from '@/api/generated'
 import TagChip from '@/shared/ui/TagChip.vue'
 import { mutationErrorMessage, useMessageMutation } from '../mutations'
+import AttachmentList from './AttachmentList.vue'
 
 const props = defineProps<{ message: MessageSummary; trash?: boolean }>()
 const route = useRoute()
@@ -70,18 +71,12 @@ function relativeExpiry(value?: string | null) {
         :color="tag.color"
       />
     </div>
-    <ul
+    <AttachmentList
       v-if="message.attachments.length"
-      class="attachments"
-      aria-label="附件元数据"
-    >
-      <li
-        v-for="file in message.attachments.slice(0, 3)"
-        :key="file.id"
-      >
-        📎 {{ file.originalFilename }}
-      </li>
-    </ul>
+      :files="message.attachments"
+      :limit="3"
+      :total="message.attachmentCount"
+    />
     <footer>
       <div class="meta">
         <time :datetime="message.createdAt">{{ new Date(message.createdAt).toLocaleString() }}</time><span v-if="message.lifecycle === 'TEMPORARY'">{{ relativeExpiry(message.expiresAt) }}</span><span v-if="message.attachmentCount">{{ message.attachmentCount }} 个附件</span>
@@ -141,6 +136,6 @@ function relativeExpiry(value?: string | null) {
 </template>
 
 <style scoped>
-.message-card { padding:1rem 1.1rem; display:grid; gap:.8rem; }.body-button { display:grid; gap:.45rem; width:100%; border:0; padding:0; background:transparent; text-align:left; }.locked { font-weight:700; color:var(--muted); } pre { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; line-height:1.55; max-height:17rem; overflow:hidden; }.code { font-family:var(--font-mono); font-size:.9rem; background:var(--surface-soft); border-radius:var(--radius-sm); padding:.75rem; }.tags,.actions,.meta { display:flex; flex-wrap:wrap; gap:.4rem; align-items:center; }.attachments { list-style:none; margin:0; padding:.6rem .75rem; border-radius:var(--radius-sm); background:var(--surface-soft); color:var(--muted); font-size:.85rem; }.attachments li { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } footer { display:flex; justify-content:space-between; align-items:flex-end; gap:.75rem; border-top:1px solid var(--border); padding-top:.75rem; }.meta { color:var(--muted); font-size:.76rem; }.button { min-height:34px; padding:.35rem .6rem; font-size:.82rem; }
+.message-card { padding:1rem 1.1rem; display:grid; gap:.8rem; }.body-button { display:grid; gap:.45rem; width:100%; border:0; padding:0; background:transparent; text-align:left; }.locked { font-weight:700; color:var(--muted); } pre { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; line-height:1.55; max-height:17rem; overflow:hidden; }.code { font-family:var(--font-mono); font-size:.9rem; background:var(--surface-soft); border-radius:var(--radius-sm); padding:.75rem; }.tags,.actions,.meta { display:flex; flex-wrap:wrap; gap:.4rem; align-items:center; } footer { display:flex; justify-content:space-between; align-items:flex-end; gap:.75rem; border-top:1px solid var(--border); padding-top:.75rem; }.meta { color:var(--muted); font-size:.76rem; }.button { min-height:34px; padding:.35rem .6rem; font-size:.82rem; }
 @media(max-width:600px){footer{display:grid}.actions{justify-content:flex-end}.button{min-height:42px}}
 </style>

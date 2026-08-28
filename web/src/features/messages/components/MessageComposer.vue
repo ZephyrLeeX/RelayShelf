@@ -5,6 +5,10 @@ import { BodyFormat, DefaultService, Lifecycle, type CreateMessageRequest } from
 import { displayError } from '@/shared/api/errors'
 import { queryKeys } from '@/shared/api/queryKeys'
 import { useCreateTag, useTagsQuery } from '@/features/tags/queries'
+import { uploadManager } from '@/features/uploads/manager'
+import { visibleUploads } from '@/features/uploads/store'
+import { formatBytes } from '@/shared/utils/bytes'
+import type { UploadItem } from '@/features/uploads/types'
 
 type ComposerMode = 'text' | 'markdown' | 'code'
 const props = defineProps<{ defaultLifecycle: Lifecycle }>()
@@ -14,6 +18,9 @@ const mode = ref<ComposerMode>('text')
 const lifecycle = ref(props.defaultLifecycle)
 const sensitive = ref(false)
 const selectedTags = ref<string[]>([])
+const selectedUploadClients = ref<string[]>([])
+const fileInput = ref<HTMLInputElement>()
+const dragging = ref(false)
 const activeKey = ref('')
 const failed = ref(false)
 const error = ref('')
@@ -24,9 +31,12 @@ const createTag = useCreateTag()
 const client = useQueryClient()
 const byteLength = computed(() => new TextEncoder().encode(body.value).byteLength)
 const tooLarge = computed(() => byteLength.value > 1024 * 1024)
-const empty = computed(() => !body.value.trim())
+const selectedUploads = computed(() => selectedUploadClients.value.map((id) => visibleUploads.value.find((item) => item.clientId === id)).filter(Boolean) as unknown as UploadItem[])
+const selectedUploadIds = computed(() => selectedUploads.value.flatMap((item) => item?.status === 'COMPLETED' && item.serverUploadId ? [item.serverUploadId] : []))
+const attachmentsBlocking = computed(() => selectedUploads.value.some((item) => item?.status !== 'COMPLETED'))
+const hasContent = computed(() => Boolean(body.value.trim()) || selectedUploadIds.value.length > 0)
 const bodyFormat = computed(() => mode.value === 'markdown' ? BodyFormat.MARKDOWN : BodyFormat.TEXT)
-const fingerprint = computed(() => JSON.stringify({ body: body.value, mode: mode.value, lifecycle: lifecycle.value, sensitive: sensitive.value, tags: [...selectedTags.value].sort() }))
+const fingerprint = computed(() => JSON.stringify({ body: body.value, mode: mode.value, lifecycle: lifecycle.value, sensitive: sensitive.value, tags: [...selectedTags.value].sort(), uploadIds: selectedUploadIds.value }))
 let attemptedFingerprint = ''
 
 interface SendSnapshot {
@@ -39,9 +49,16 @@ const send = useMutation({
   retry: false,
   mutationFn: ({ key, payload }: SendSnapshot) => DefaultService.createMessage(key, payload),
   onSuccess: (_result, snapshot) => {
+    const consumed = new Set(snapshot.payload.uploadIds ?? [])
+    selectedUploadClients.value = selectedUploadClients.value.filter((clientId) => {
+      const item = uploadManager.getItem(clientId)
+      return !item?.serverUploadId || !consumed.has(item.serverUploadId)
+    })
+    uploadManager.retireUploadIds([...consumed])
     if (fingerprint.value === snapshot.fingerprint) {
       body.value = ''
       selectedTags.value = []
+      selectedUploadClients.value = []
       sensitive.value = false
     }
     activeKey.value = ''
@@ -70,7 +87,8 @@ watch(fingerprint, (value) => {
 function submit() {
   if (send.isPending.value) return
   error.value = ''
-  if (empty.value) { error.value = '正文不能为空。'; return }
+  if (!hasContent.value) { error.value = '请输入正文或添加至少一个附件。'; return }
+  if (attachmentsBlocking.value) { error.value = '等待附件上传完成，或移除失败的附件。'; return }
   if (tooLarge.value) { error.value = '正文 UTF-8 大小不能超过 1 MiB。'; return }
   if (!activeKey.value) activeKey.value = crypto.randomUUID()
   attemptedFingerprint = fingerprint.value
@@ -78,14 +96,46 @@ function submit() {
     key: activeKey.value,
     fingerprint: attemptedFingerprint,
     payload: {
-      body: body.value,
+      body: body.value.trim() ? body.value : null,
       bodyFormat: bodyFormat.value,
       lifecycle: lifecycle.value,
       sensitive: sensitive.value,
       tagIds: [...selectedTags.value],
-      uploadIds: [],
+      uploadIds: [...selectedUploadIds.value],
     },
   })
+}
+async function selectFiles(files: FileList | File[]) {
+  const ids = await uploadManager.addFiles(Array.from(files))
+  selectedUploadClients.value.push(...ids)
+}
+function filesChanged(event: Event) {
+  const input = event.target as HTMLInputElement
+  if (input.files) void selectFiles(input.files)
+  input.value = ''
+}
+function dropFiles(event: DragEvent) {
+  dragging.value = false
+  if (event.dataTransfer?.files.length) void selectFiles(event.dataTransfer.files)
+}
+function pasteFiles(event: ClipboardEvent) {
+  const images = Array.from(event.clipboardData?.items ?? []).filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+  if (!images.length) return
+  event.preventDefault()
+  const files = images.flatMap((item) => {
+    const blob = item.getAsFile()
+    if (!blob) return []
+    if (blob.name) return [blob]
+    const extension = item.type.split('/')[1]?.replace('jpeg', 'jpg') || 'png'
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15)
+    return [new File([blob], `pasted-${stamp}.${extension}`, { type: item.type, lastModified: Date.now() })]
+  })
+  void selectFiles(files)
+}
+function removeSelected(clientId: string) {
+  const item = uploadManager.getItem(clientId)
+  selectedUploadClients.value = selectedUploadClients.value.filter((id) => id !== clientId)
+  if (item && item.status !== 'COMPLETED') uploadManager.remove(clientId)
 }
 function onKeydown(event: KeyboardEvent) {
   if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); submit() }
@@ -136,7 +186,57 @@ async function addTag() {
       :class="{ code: mode === 'code' }"
       placeholder="写下要在其他设备取回的内容…"
       @keydown="onKeydown"
+      @paste="pasteFiles"
     />
+    <section
+      class="drop-zone"
+      :class="{ dragging }"
+      @dragenter.prevent="dragging = true"
+      @dragover.prevent="dragging = true"
+      @dragleave.prevent="dragging = false"
+      @drop.prevent="dropFiles"
+    >
+      <input
+        ref="fileInput"
+        class="sr-only"
+        type="file"
+        multiple
+        @change="filesChanged"
+      >
+      <button
+        class="button attach"
+        type="button"
+        @click="fileInput?.click()"
+      >
+        添加文件或照片
+      </button>
+      <span>也可拖放文件，或直接粘贴图片</span>
+    </section>
+    <ul
+      v-if="selectedUploads.length"
+      class="selected-files"
+      aria-label="本条内容的附件"
+    >
+      <li
+        v-for="item in selectedUploads"
+        :key="item.clientId"
+      >
+        <div><strong>{{ item.filename }}</strong><small>{{ formatBytes(item.size) }} · {{ item.status }}<template v-if="item.status === 'UPLOADING'"> · {{ Math.round(item.progress * 100) }}%</template></small></div>
+        <button
+          class="button"
+          type="button"
+          @click="removeSelected(item.clientId)"
+        >
+          移除
+        </button>
+      </li>
+    </ul>
+    <p
+      v-if="attachmentsBlocking"
+      class="warning"
+    >
+      等待附件上传完成。失败的附件需要重试或移除后才能发送。
+    </p>
     <div class="options">
       <label class="field compact">保存位置<select v-model="lifecycle"><option :value="Lifecycle.TEMPORARY">Temporary</option><option :value="Lifecycle.PERMANENT">Permanent</option></select></label>
       <label class="toggle"><input
@@ -201,7 +301,7 @@ async function addTag() {
       <span class="muted">Ctrl/⌘ + Enter 发送</span><button
         class="button primary"
         type="button"
-        :disabled="send.isPending.value || empty || tooLarge"
+        :disabled="send.isPending.value || !hasContent || attachmentsBlocking || tooLarge"
         @click="submit"
       >
         {{ send.isPending.value ? '发送中…' : failed ? '重试发送' : '发送' }}
@@ -212,5 +312,6 @@ async function addTag() {
 
 <style scoped>
 .composer { padding:1rem; display:grid; gap:.8rem; } header,footer,.options { display:flex; align-items:center; justify-content:space-between; gap:.75rem; } h2 { margin:0; font-size:1rem; } textarea { resize:vertical; width:100%; min-height:120px; border:1px solid var(--border); border-radius:var(--radius-sm); padding:.8rem; background:var(--surface-raised); line-height:1.5; }.code{font-family:var(--font-mono)}.modes{display:flex;background:var(--surface-soft);border-radius:999px;padding:.2rem}.modes button{border:0;background:transparent;border-radius:999px;padding:.35rem .65rem}.modes .active{background:var(--surface-raised);box-shadow:0 1px 4px rgb(0 0 0 / .12)}.compact{display:flex;align-items:center;grid-template-columns:auto auto}.compact select{width:auto}.toggle{display:flex;gap:.4rem;align-items:center}.bytes{margin-left:auto;color:var(--muted);font-size:.75rem}fieldset{border:1px solid var(--border);border-radius:var(--radius-sm);padding:.65rem}.tag-options{display:flex;flex-wrap:wrap;gap:.5rem}.tag-options label{display:flex;align-items:center;gap:.25rem}.tag-options i{width:.55rem;height:.55rem;border-radius:50%}.new-tag{display:grid;grid-template-columns:1fr auto auto;gap:.4rem;margin-top:.65rem}.new-tag input[type=color]{width:44px;height:42px;border:1px solid var(--border);border-radius:var(--radius-sm);background:transparent}.warning{margin:0;color:#9a6414}.error{margin:0}.muted{font-size:.8rem}
+.drop-zone{display:flex;align-items:center;gap:.65rem;padding:.65rem .75rem;border:1px dashed var(--border);border-radius:var(--radius-sm);color:var(--muted);font-size:.8rem;transition:border-color .12s,background .12s}.drop-zone.dragging{border-color:var(--accent);background:var(--accent-soft)}.attach{color:var(--accent-strong)}.selected-files{list-style:none;margin:0;padding:0;display:grid;gap:.4rem}.selected-files li{display:flex;align-items:center;justify-content:space-between;gap:.7rem;padding:.55rem .7rem;background:var(--surface-soft);border-radius:var(--radius-sm)}.selected-files div{min-width:0;display:grid}.selected-files strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.selected-files small{color:var(--muted)}
 @media(max-width:600px){.options{align-items:flex-start;flex-wrap:wrap}.bytes{width:100%;margin:0}.new-tag{grid-template-columns:1fr auto}.new-tag .button{grid-column:1/-1}footer .muted{display:none}}
 </style>

@@ -553,6 +553,28 @@ export class DefaultService {
     }
     /**
      * @param attachmentId
+     * @returns binary Full allowlisted inline attachment
+     * @throws ApiError
+     */
+    public static previewAttachment(
+        attachmentId: string,
+    ): CancelablePromise<Blob> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/attachments/{attachmentId}/preview',
+            path: {
+                'attachmentId': attachmentId,
+            },
+            errors: {
+                304: `Not modified`,
+                404: `API error`,
+                416: `API error`,
+                503: `API error`,
+            },
+        });
+    }
+    /**
+     * @param attachmentId
      * @returns binary Server-generated safe raster thumbnail
      * @throws ApiError
      */
