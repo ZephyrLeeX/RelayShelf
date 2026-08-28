@@ -1,0 +1,11 @@
+.button { min-height: 42px; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: .55rem .85rem; background: var(--surface-raised); }
+.button:hover { border-color: var(--accent); }
+.button.primary { color: var(--on-accent); background: var(--accent-strong); border-color: var(--accent-strong); }
+.button.danger { color: var(--danger); }
+.button:disabled { cursor: not-allowed; opacity: .55; }
+.field { display:grid; gap:.4rem; }
+.field input, .field textarea, .field select, .input { width:100%; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface-raised); padding:.7rem .8rem; }
+.muted { color: var(--muted); }
+.error { color: var(--danger); }
+.panel { background:var(--surface-raised); border:1px solid var(--border); border-radius:var(--radius); box-shadow:0 1px 1px rgb(0 0 0 / .02); }
+@media (max-width: 720px) { .button { min-height:44px; } }

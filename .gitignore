@@ -12,7 +12,6 @@ coverage.*
 # Frontend
 web/node_modules/
 web/dist/
-internal/webui/dist/
 
 # Editors / OS
 .idea/

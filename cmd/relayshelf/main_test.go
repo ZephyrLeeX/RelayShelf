@@ -56,3 +56,25 @@ func TestSearchRouteRequiresAuthenticationAndIsNoStore(t *testing.T) {
 		t.Fatalf("status=%d cache=%q body=%s", response.Code, response.Header().Get("Cache-Control"), response.Body.String())
 	}
 }
+
+func TestSPAFallbackDoesNotCaptureAPIOrMissingAssets(t *testing.T) {
+	router := newHTTPRouter(func(handler http.Handler) http.Handler { return handler }, http.NotFoundHandler(), health(http.StatusOK), health(http.StatusOK))
+
+	for _, path := range []string{"/temporary", "/messages/0198a000-0000-7000-8000-000000000001", "/search?q=postgres"} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "text/html; charset=utf-8" {
+			t.Fatalf("path=%s status=%d type=%q", path, response.Code, response.Header().Get("Content-Type"))
+		}
+	}
+
+	for _, path := range []string{"/api/v1/not-found", "/assets/not-found.js"} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("path=%s status=%d", path, response.Code)
+		}
+	}
+}

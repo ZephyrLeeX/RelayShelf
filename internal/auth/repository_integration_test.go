@@ -6,13 +6,17 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"testing"
 	"time"
 
 	"github.com/ZephyrLeeX/RelayShelf/internal/auth"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/clock"
 	postgresutil "github.com/ZephyrLeeX/RelayShelf/internal/platform/database/testutil"
+	"github.com/ZephyrLeeX/RelayShelf/internal/platform/httpx"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/id"
 	"github.com/google/uuid"
 )
@@ -80,6 +84,34 @@ func TestPostgreSQLLoginSessionOwnershipAndRevocation(t *testing.T) {
 	}
 	if !validatedLastSeen.Equal(lastSeen) || !validatedExpiresAt.Equal(expiresAt) {
 		t.Fatalf("read-only validation touched session: last_seen %s -> %s expires %s -> %s", lastSeen, validatedLastSeen, expiresAt, validatedExpiresAt)
+	}
+	oldLastSeen, probeExpiry := time.Now().Add(-2*auth.TouchInterval), time.Now().Add(time.Hour)
+	if _, err = db.Exec(ctx, `UPDATE sessions SET last_seen_at=$2,expires_at=$3 WHERE id=$1`, first.Session.ID, oldLastSeen, probeExpiry); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.QueryRow(ctx, `SELECT last_seen_at,expires_at FROM sessions WHERE id=$1`, first.Session.ID).Scan(&oldLastSeen, &probeExpiry); err != nil {
+		t.Fatal(err)
+	}
+	origin, _ := url.Parse("http://example.test")
+	cookies := auth.NewCookiePolicy(origin)
+	csrf := auth.NewCSRF([]byte("01234567890123456789012345678901"))
+	router := auth.Router(auth.NewHandler(service, csrf, cookies), auth.NewMiddleware(service, cookies, csrf, origin, httpx.NewResolver(nil)))
+	for range 2 {
+		request := httptest.NewRequest(http.MethodGet, origin.String()+"/api/v1/events", nil)
+		request.RemoteAddr = "192.0.2.10:1234"
+		request.AddCookie(&http.Cookie{Name: cookies.Name, Value: first.RawToken})
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusNotImplemented {
+			t.Fatalf("events auth probe status=%d", response.Code)
+		}
+	}
+	var probedLastSeen, probedExpiresAt time.Time
+	if err = db.QueryRow(ctx, `SELECT last_seen_at,expires_at FROM sessions WHERE id=$1`, first.Session.ID).Scan(&probedLastSeen, &probedExpiresAt); err != nil {
+		t.Fatal(err)
+	}
+	if !probedLastSeen.Equal(oldLastSeen) || !probedExpiresAt.Equal(probeExpiry) {
+		t.Fatalf("events auth probe touched session: last_seen %s -> %s expires %s -> %s", oldLastSeen, probedLastSeen, probeExpiry, probedExpiresAt)
 	}
 	cross := login("bob", &first.Device.ID)
 	if cross.Device.ID == first.Device.ID || cross.Device.UserID != two {
