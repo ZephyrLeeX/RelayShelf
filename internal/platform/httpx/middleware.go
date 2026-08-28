@@ -93,6 +93,17 @@ type statusWriter struct {
 }
 
 func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// Flush keeps the http.Flusher contract alive through this wrapper. The SSE
+// handler asserts Flusher directly, so an embedding-only wrapper would turn
+// every browser event stream into a 500 — the recorder used in unit tests
+// implements Flusher, which is why only real-browser E2E caught this.
+func (w *statusWriter) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
 func (w *statusWriter) WriteHeader(status int) {
 	w.status = status
 	w.ResponseWriter.WriteHeader(status)

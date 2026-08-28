@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useMutation, useQueryClient } from '@tanstack/vue-query'
-import { BodyFormat, DefaultService, Lifecycle, type CreateMessageRequest } from '@/api/generated'
+import { BodyFormat, DefaultService, Lifecycle, type CreateMessageRequest, type DirectSendRequest } from '@/api/generated'
 import { displayError } from '@/shared/api/errors'
 import { queryKeys } from '@/shared/api/queryKeys'
 import { useCreateTag, useTagsQuery } from '@/features/tags/queries'
@@ -26,6 +26,9 @@ const failed = ref(false)
 const error = ref('')
 const newTagName = ref('')
 const newTagColor = ref('#3B8C6E')
+const directRecipient = ref('')
+const directMode = computed(() => isUUID(directRecipient.value.trim()))
+function isUUID(value: string) { return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) }
 const tags = useTagsQuery()
 const createTag = useCreateTag()
 const client = useQueryClient()
@@ -43,7 +46,7 @@ const restorableUploads = computed(() => visibleUploads.value.filter((item) => i
 // uploadIds included). Draft identity additionally covers the selection of
 // still-pending uploads via stable client IDs, so a newer draft is never
 // mistaken for the submitted one — and it never changes with mere progress.
-const draftFields = () => [body.value, mode.value, lifecycle.value, sensitive.value, [...selectedTags.value].sort().join(',')]
+const draftFields = () => [body.value, mode.value, directMode.value ? 'DIRECT' : lifecycle.value, sensitive.value, directMode.value ? 'direct' : [...selectedTags.value].sort().join(',')]
 const requestFingerprint = computed(() => JSON.stringify({ draft: draftFields(), uploadIds: selectedUploadIds.value }))
 const draftIdentity = computed(() => JSON.stringify({ draft: draftFields(), selection: [...selectedUploadClients.value] }))
 let attemptedIdentity = ''
@@ -92,6 +95,36 @@ const send = useMutation({
   },
 })
 
+const direct = useMutation({
+  retry: false,
+  mutationFn: (snapshot: { key: string; identity: string; payload: DirectSendRequest }) => DefaultService.directSendMessage(snapshot.key, snapshot.payload),
+  onSuccess: (_result, snapshot) => {
+    const unchanged = draftIdentity.value === snapshot.identity
+    const consumed = new Set(snapshot.payload.uploadIds ?? [])
+    selectedUploadClients.value = selectedUploadClients.value.filter((clientId) => {
+      const item = uploadManager.getItem(clientId)
+      return !item?.serverUploadId || !consumed.has(item.serverUploadId)
+    })
+    uploadManager.retireUploadIds([...consumed])
+    if (unchanged) {
+      body.value = ''
+      selectedTags.value = []
+      selectedUploadClients.value = []
+      sensitive.value = false
+      directRecipient.value = ''
+    }
+    activeKey.value = ''
+    failed.value = false
+    error.value = ''
+    void client.invalidateQueries({ queryKey: queryKeys.messages.root() })
+    emit('sent')
+  },
+  onError: (cause) => {
+    failed.value = true
+    error.value = displayError(cause)
+  },
+})
+
 watch([requestFingerprint, draftIdentity], ([fingerprint, identity]) => {
   if (failed.value && (fingerprint !== attemptedFingerprint || identity !== attemptedIdentity)) {
     activeKey.value = ''
@@ -122,6 +155,20 @@ function submit() {
       uploadIds: [...selectedUploadIds.value],
     },
   })
+}
+function submitDirect() {
+  if (send.isPending.value) return
+  error.value = ''
+  if (!body.value.trim() && !selectedUploadIds.value.length) { error.value = '请输入正文或添加至少一个附件。'; return }
+  if (attachmentsBlocking.value) { error.value = '等待附件上传完成，或移除失败的附件。'; return }
+  if (tooLarge.value) { error.value = '正文 UTF-8 大小不能超过 1 MiB。'; return }
+  direct.mutate({ key: activeKey.value || crypto.randomUUID(), identity: draftIdentity.value, payload: {
+    recipientUserId: directRecipient.value.trim(),
+    body: body.value.trim() ? body.value : null,
+    bodyFormat: bodyFormat.value,
+    sensitive: sensitive.value,
+    uploadIds: [...selectedUploadIds.value],
+  } })
 }
 async function selectFiles(files: FileList | File[]) {
   const ids = await uploadManager.addFiles(Array.from(files))
@@ -281,7 +328,10 @@ async function addTag() {
       </ul>
     </section>
     <div class="options">
-      <label class="field compact">保存位置<select v-model="lifecycle"><option :value="Lifecycle.TEMPORARY">Temporary</option><option :value="Lifecycle.PERMANENT">Permanent</option></select></label>
+      <label class="field compact">保存位置<select
+        v-model="lifecycle"
+        :disabled="directMode"
+      ><option :value="Lifecycle.TEMPORARY">Temporary</option><option :value="Lifecycle.PERMANENT">Permanent</option></select></label>
       <label class="toggle"><input
         v-model="sensitive"
         type="checkbox"
@@ -320,8 +370,22 @@ async function addTag() {
         </button>
       </div>
     </fieldset>
+    <section class="direct-send">
+      <label class="field compact">直接发送给其他用户<input
+        v-model="directRecipient"
+        class="input"
+        placeholder="接收者用户 ID（UUID），留空则保存到自己的内容流"
+        maxlength="64"
+      ></label>
+      <p
+        v-if="directMode"
+        class="muted"
+      >
+        直发内容会作为独立临时副本发送给接收者，不保留你的副本，也不带标签。
+      </p>
+    </section>
     <p
-      v-if="lifecycle === Lifecycle.PERMANENT && !selectedTags.length"
+      v-if="lifecycle === Lifecycle.PERMANENT && !selectedTags.length && !directMode"
       class="warning"
     >
       长期内容尚未添加标签（仍可发送）。
@@ -344,10 +408,10 @@ async function addTag() {
       <span class="muted">Ctrl/⌘ + Enter 发送</span><button
         class="button primary"
         type="button"
-        :disabled="send.isPending.value || !hasContent || attachmentsBlocking || tooLarge"
-        @click="submit"
+        :disabled="(directMode ? direct.isPending.value : send.isPending.value) || !hasContent || attachmentsBlocking || tooLarge"
+        @click="directMode ? submitDirect() : submit()"
       >
-        {{ send.isPending.value ? '发送中…' : failed ? '重试发送' : '发送' }}
+        {{ directMode ? (direct.isPending.value ? '直发中…' : '直接发送') : send.isPending.value ? '发送中…' : failed ? '重试发送' : '发送' }}
       </button>
     </footer>
   </section>
@@ -355,6 +419,7 @@ async function addTag() {
 
 <style scoped>
 .composer { padding:1rem; display:grid; gap:.8rem; } header,footer,.options { display:flex; align-items:center; justify-content:space-between; gap:.75rem; } h2 { margin:0; font-size:1rem; } textarea { resize:vertical; width:100%; min-height:120px; border:1px solid var(--border); border-radius:var(--radius-sm); padding:.8rem; background:var(--surface-raised); line-height:1.5; }.code{font-family:var(--font-mono)}.modes{display:flex;background:var(--surface-soft);border-radius:999px;padding:.2rem}.modes button{border:0;background:transparent;border-radius:999px;padding:.35rem .65rem}.modes .active{background:var(--surface-raised);box-shadow:0 1px 4px rgb(0 0 0 / .12)}.compact{display:flex;align-items:center;grid-template-columns:auto auto}.compact select{width:auto}.toggle{display:flex;gap:.4rem;align-items:center}.bytes{margin-left:auto;color:var(--muted);font-size:.75rem}fieldset{border:1px solid var(--border);border-radius:var(--radius-sm);padding:.65rem}.tag-options{display:flex;flex-wrap:wrap;gap:.5rem}.tag-options label{display:flex;align-items:center;gap:.25rem}.tag-options i{width:.55rem;height:.55rem;border-radius:50%}.new-tag{display:grid;grid-template-columns:1fr auto auto;gap:.4rem;margin-top:.65rem}.new-tag input[type=color]{width:44px;height:42px;border:1px solid var(--border);border-radius:var(--radius-sm);background:transparent}.warning{margin:0;color:#9a6414}.error{margin:0}.muted{font-size:.8rem}
+.direct-send{display:grid;gap:.4rem}.direct-send .compact{grid-template-columns:1fr}
 .drop-zone{display:flex;align-items:center;gap:.65rem;padding:.65rem .75rem;border:1px dashed var(--border);border-radius:var(--radius-sm);color:var(--muted);font-size:.8rem;transition:border-color .12s,background .12s}.drop-zone.dragging{border-color:var(--accent);background:var(--accent-soft)}.attach{color:var(--accent-strong)}.selected-files{list-style:none;margin:0;padding:0;display:grid;gap:.4rem}.selected-files li{display:flex;align-items:center;justify-content:space-between;gap:.7rem;padding:.55rem .7rem;background:var(--surface-soft);border-radius:var(--radius-sm)}.selected-files div{min-width:0;display:grid}.selected-files strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.selected-files small{color:var(--muted)}
 .restored{border:1px solid var(--border);border-radius:var(--radius-sm);padding:.55rem .65rem}.restored h3{margin:.1rem 0 .4rem;font-size:.78rem;color:var(--muted)}.restored ul{list-style:none;margin:0;padding:0;display:grid;gap:.35rem}.restored li{display:flex;align-items:center;justify-content:space-between;gap:.7rem;font-size:.82rem}.restored span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.restored .button{min-height:32px;padding:.25rem .55rem;font-size:.76rem;white-space:nowrap}
 @media(max-width:600px){.options{align-items:flex-start;flex-wrap:wrap}.bytes{width:100%;margin:0}.new-tag{grid-template-columns:1fr auto}.new-tag .button{grid-column:1/-1}footer .muted{display:none}}

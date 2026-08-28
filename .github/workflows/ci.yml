@@ -54,6 +54,33 @@ jobs:
       - run: pnpm --dir web install --frozen-lockfile
       - run: cd web && pnpm typecheck && pnpm lint && pnpm test --run && pnpm build
 
+  e2e:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: relayshelf_e2e
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U test -d relayshelf_e2e"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      - run: mise install
+      - run: pnpm --dir web install --frozen-lockfile
+      - run: go mod download
+      - run: pnpm --dir web exec playwright install --with-deps chromium
+      - name: Build web and server from source
+        run: make build
+      - name: Run browser journeys
+        run: make e2e
+        env:
+          E2E_DATABASE_URL: postgres://test:test@localhost:5432/relayshelf_e2e?sslmode=disable
+
   container:
     runs-on: ubuntu-24.04
     steps:

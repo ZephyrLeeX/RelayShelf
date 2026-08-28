@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -105,5 +106,27 @@ func TestRecoveryLogsPanicWithoutRequestData(t *testing.T) {
 		if strings.Contains(output, secret) {
 			t.Fatalf("panic log leaked %q: %q", secret, output)
 		}
+	}
+}
+
+// TestRequestLogPreservesFlusher pins the SSE regression: the request-log
+// wrapper must keep implementing http.Flusher, or the events endpoint 500s
+// behind it in a real server.
+func TestRequestLogPreservesFlusher(t *testing.T) {
+	handler := RequestLog(log.New(io.Discard, "", 0))(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("response writer lost the Flusher interface")
+		}
+		flusher.Flush()
+		w.WriteHeader(http.StatusOK)
+	}))
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/events", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d", recorder.Code)
+	}
+	if !recorder.Flushed {
+		t.Fatal("flush did not reach the underlying recorder")
 	}
 }

@@ -80,7 +80,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
             <h2 id="sessions-title">
               设备与会话
             </h2><p class="muted">
-              {{ auth.user?.displayName || auth.user?.username }}
+              {{ auth.user?.displayName || auth.user?.username }} · 用户 ID <code class="user-id">{{ auth.user?.id }}</code>（直发/转发时分享此 ID）
             </p>
           </div><button
             class="button"
@@ -216,7 +216,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
 <style scoped>
 .backdrop { position:fixed; inset:0; z-index:50; background:rgb(0 0 0 / .45); display:flex; justify-content:flex-end; }
 .drawer { width:min(100%, 520px); height:100%; overflow:auto; border-radius:0; padding:1.25rem; }
-header,li { display:flex; justify-content:space-between; gap:1rem; align-items:center; } h2,h3,p { margin:.25rem 0; }
+header,li { display:flex; justify-content:space-between; gap:1rem; align-items:center; } h2,h3,p { margin:.25rem 0; } .user-id { font-family:var(--font-mono); font-size:.72rem; user-select:all; }
 .section { display:grid; gap:.75rem; padding:1.25rem 0; border-top:1px solid var(--border); } .secret { font-family:var(--font-mono); word-break:break-all; padding:.5rem; background:var(--surface-soft); border-radius:var(--radius-sm); } ul { list-style:none; padding:0; display:grid; gap:.65rem; } small { display:block; color:var(--muted); margin-top:.2rem; }
 @media (prefers-reduced-motion:no-preference) { .drawer { animation:enter .16s ease-out; } @keyframes enter { from { transform:translateX(20px); opacity:.7; } } }
 </style>

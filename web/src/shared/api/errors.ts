@@ -13,6 +13,7 @@ export const apiCodes = {
   totpChallengeExpired: 'TOTP_CHALLENGE_EXPIRED',
   totpAlreadyEnabled: 'TOTP_ALREADY_ENABLED',
   totpNotEnrolled: 'TOTP_NOT_ENROLLED',
+  recipientUnavailable: 'RECIPIENT_UNAVAILABLE',
 } as const
 
 export interface AppApiError {
