@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -36,20 +37,25 @@ const (
 )
 
 // outageAdapter wraps a real adapter with a toggleable fault. Every faulted
-// call is counted so tests can prove degraded paths never touch storage.
+// call is counted so tests can prove degraded paths never touch storage. The
+// monitor probes this adapter from its own goroutine, so state and the
+// counter are atomic.
 type outageAdapter struct {
 	storage.Adapter
-	state outageMode
-	calls int64
+	state atomic.Int32
+	calls atomic.Int64
 }
 
+func (a *outageAdapter) mode() outageMode        { return outageMode(a.state.Load()) }
+func (a *outageAdapter) setMode(mode outageMode) { a.state.Store(int32(mode)) }
+
 func (a *outageAdapter) Space(ctx context.Context) (storage.Space, error) {
-	switch a.state {
+	switch a.mode() {
 	case outageUnavailable:
-		a.calls++
+		a.calls.Add(1)
 		return storage.Space{}, storage.ErrUnavailable
 	case outageTimeout:
-		a.calls++
+		a.calls.Add(1)
 		select {
 		case <-ctx.Done():
 			return storage.Space{}, ctx.Err()
@@ -62,22 +68,22 @@ func (a *outageAdapter) Space(ctx context.Context) (storage.Space, error) {
 }
 
 func (a *outageAdapter) Open(ctx context.Context, key storage.Key) (storage.File, error) {
-	if a.state != outageHealthy {
-		a.calls++
+	if a.mode() != outageHealthy {
+		a.calls.Add(1)
 		return nil, storage.ErrUnavailable
 	}
 	return a.Adapter.Open(ctx, key)
 }
 
 func (a *outageAdapter) CreateCommitTemp(ctx context.Context, key storage.Key) (storage.File, error) {
-	if a.state != outageHealthy {
-		a.calls++
+	if a.mode() != outageHealthy {
+		a.calls.Add(1)
 		return nil, storage.ErrUnavailable
 	}
 	return a.Adapter.CreateCommitTemp(ctx, key)
 }
 
-func (a *outageAdapter) faultedCalls() int64 { return a.calls }
+func (a *outageAdapter) faultedCalls() int64 { return a.calls.Load() }
 
 // TestNFSOutageBoundary proves the Phase 11 T124 architecture boundary under
 // each fault shape: DB-backed text paths keep working, staging uploads keep
@@ -144,7 +150,7 @@ func TestNFSOutageBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	faulted.state = outageUnavailable
+	faulted.setMode(outageUnavailable)
 	waitForCondition(t, "degraded", func() bool { return !monitor.Healthy() })
 
 	// While storage is down: text create and read keep working.
@@ -190,7 +196,7 @@ func TestNFSOutageBoundary(t *testing.T) {
 
 	// Recovery: the same Complete retry succeeds with the parts already on
 	// the server; nothing is re-uploaded.
-	faulted.state = outageHealthy
+	faulted.setMode(outageHealthy)
 	waitForCondition(t, "recovered", monitor.Healthy)
 	completed, err := uploadService.Complete(ctx, owner, session.ID)
 	if err != nil {
@@ -230,7 +236,7 @@ func TestNFSOutageTimeoutShape(t *testing.T) {
 		t.Fatal(err)
 	}
 	faulted := &outageAdapter{Adapter: realAdapter}
-	faulted.state = outageTimeout
+	faulted.setMode(outageTimeout)
 
 	monitor := storage.NewMonitorTunable(faulted, 10*time.Millisecond, 2)
 	monitorCtx, stop := context.WithCancel(ctx)

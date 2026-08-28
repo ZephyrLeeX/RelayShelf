@@ -211,20 +211,6 @@ func (r *PostgreSQLRepository) Audit(ctx context.Context, event AuditEvent) erro
 	return insertAudit(ctx, r.q, event)
 }
 
-func nullableTotpTime(value *time.Time) pgtype.Timestamptz {
-	if value == nil {
-		return pgtype.Timestamptz{}
-	}
-	return pgtype.Timestamptz{Time: *value, Valid: true}
-}
-
-func nullableTotpStep(value *int64) pgtype.Int8 {
-	if value == nil {
-		return pgtype.Int8{}
-	}
-	return pgtype.Int8{Int64: *value, Valid: true}
-}
-
 func fromUserTOTP(row generated.UserTotp) UserTOTP {
 	var enabledAt, lockedUntil *time.Time
 	if row.EnabledAt.Valid {

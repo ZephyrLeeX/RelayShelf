@@ -71,7 +71,7 @@ func TestPhase5UploadHandoffIndexMigrations(t *testing.T) {
 		if err := database.Migrate(ctx, db); err != nil {
 			t.Fatalf("migrate fresh database: %v", err)
 		}
-		assertVersion(t, ctx, db, 5)
+		assertVersion(t, ctx, db, 6)
 		assertPhase5Indexes(t, ctx, db)
 
 		var businessTables int
@@ -107,8 +107,8 @@ CREATE INDEX upload_sessions_handoff_file_idx
 func TestPhase6SearchIndexMigrations(t *testing.T) {
 	ctx := context.Background()
 	latest, err := database.LatestVersion()
-	if err != nil || latest != 5 {
-		t.Fatalf("latest migration version=%d want=5 err=%v", latest, err)
+	if err != nil || latest != 6 {
+		t.Fatalf("latest migration version=%d want=6 err=%v", latest, err)
 	}
 
 	t.Run("existing clean v3 database", func(t *testing.T) {
@@ -120,12 +120,12 @@ func TestPhase6SearchIndexMigrations(t *testing.T) {
 		if err := database.Migrate(ctx, db); err != nil {
 			t.Fatalf("migrate v3 to v4: %v", err)
 		}
-		assertVersion(t, ctx, db, 5)
+		assertVersion(t, ctx, db, 6)
 		assertPhase6Indexes(t, ctx, db)
 		if err := database.Migrate(ctx, db); err != nil {
 			t.Fatalf("repeat migration: %v", err)
 		}
-		assertVersion(t, ctx, db, 5)
+		assertVersion(t, ctx, db, 6)
 		assertPhase6Indexes(t, ctx, db)
 	})
 
@@ -134,7 +134,7 @@ func TestPhase6SearchIndexMigrations(t *testing.T) {
 		if err := database.Migrate(ctx, db); err != nil {
 			t.Fatalf("migrate fresh database: %v", err)
 		}
-		assertVersion(t, ctx, db, 5)
+		assertVersion(t, ctx, db, 6)
 		assertPhase5Indexes(t, ctx, db)
 		assertPhase6Indexes(t, ctx, db)
 	})
@@ -169,7 +169,7 @@ func TestPhase7JobMigration(t *testing.T) {
 	if err := database.Migrate(ctx, db); err != nil {
 		t.Fatalf("migrate v4 to v5: %v", err)
 	}
-	assertVersion(t, ctx, db, 5)
+	assertVersion(t, ctx, db, 6)
 	if err := database.Migrate(ctx, db); err != nil {
 		t.Fatalf("repeat migrate: %v", err)
 	}
