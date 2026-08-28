@@ -72,6 +72,9 @@ func (r *contentLockRegistry) lock(key string) func() {
 
 type FinalizeFailureHooks struct {
 	AfterPending, AfterWrite, BeforeSync, BeforeRename, AfterRename, BeforeReady, BeforeStagingDelete func() error
+	// DuringHash fires after the first buffered read of the staging hash
+	// pass, the crash window for the SHA-256 phase.
+	DuringHash func() error
 }
 
 type fileObject struct {
@@ -110,7 +113,7 @@ func (f *FileFinalizer) Finalize(ctx context.Context, upload Session, stage stag
 		_ = f.markFailed(ctx, upload.ID)
 		return Session{}, ErrStagingCorrupt
 	}
-	hash, mimeType, err := hashStaging(upload.ID, upload.ExpectedSize, stage)
+	hash, mimeType, err := hashStaging(upload.ID, upload.ExpectedSize, stage, f.hooks.DuringHash)
 	if err != nil {
 		_ = f.markFailed(ctx, upload.ID)
 		return Session{}, ErrStagingCorrupt
@@ -279,7 +282,7 @@ func (f *FileFinalizer) deleteStaging(stage staging.Provider, uploadID uuid.UUID
 	_ = stage.Delete(uploadID)
 }
 
-func hashStaging(uploadID uuid.UUID, expected int64, stage staging.Provider) ([32]byte, string, error) {
+func hashStaging(uploadID uuid.UUID, expected int64, stage staging.Provider, duringHash func() error) ([32]byte, string, error) {
 	var result [32]byte
 	file, err := stage.Open(uploadID)
 	if err != nil {
@@ -294,6 +297,7 @@ func hashStaging(uploadID uuid.UUID, expected int64, stage staging.Provider) ([3
 	first := make([]byte, 0, 512)
 	buf := make([]byte, 256<<10)
 	var total int64
+	hashed := false
 	for {
 		n, readErr := r.Read(buf)
 		if n > 0 {
@@ -303,6 +307,12 @@ func hashStaging(uploadID uuid.UUID, expected int64, stage staging.Provider) ([3
 			}
 			_, _ = h.Write(buf[:n])
 			total += int64(n)
+			if !hashed && duringHash != nil {
+				hashed = true
+				if err := duringHash(); err != nil {
+					return result, "", err
+				}
+			}
 		}
 		if errors.Is(readErr, io.EOF) {
 			break
@@ -506,4 +516,11 @@ func (f *FileFinalizer) readyAndComplete(ctx context.Context, upload Session, ob
 func (f *FileFinalizer) markFailed(ctx context.Context, uploadID uuid.UUID) error {
 	_, err := f.pool.Exec(ctx, `UPDATE upload_sessions SET status='FAILED',updated_at=$2 WHERE id=$1 AND status='COMPLETING'`, uploadID, f.now.Now())
 	return err
+}
+
+// NewFileFinalizerWithHashFailureHooks extends the failure-hook constructor
+// with the during-hash crash window used by process-level crash tests.
+func NewFileFinalizerWithHashFailureHooks(pool *pgxpool.Pool, store storage.Adapter, ids id.Generator, now clock.Clock, concurrency int, hooks FinalizeFailureHooks, duringHash func() error) *FileFinalizer {
+	hooks.DuringHash = duringHash
+	return NewFileFinalizerWithFailureHooks(pool, store, ids, now, concurrency, hooks)
 }

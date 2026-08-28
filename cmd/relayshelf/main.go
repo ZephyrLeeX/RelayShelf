@@ -205,7 +205,16 @@ func main() {
 		}
 		uploadRepo := uploads.NewPostgreSQLRepository(db)
 		uploadService := uploads.NewService(uploadRepo, stagingManager, staging.NewStatFSProbe(cfg.StagingRoot), id.UUIDv7{}, now, uploads.NewLockRegistry(), cfg.MaxActiveChunkWrites, cfg.UploadStagingMaxBytes, cfg.StagingMinFreeBytes, cfg.StagingMinFreePercent)
-		uploadService.SetFinalizer(uploads.NewFileFinalizer(db, storageAdapter, id.UUIDv7{}, now, cfg.FileFinalizeConcurrency))
+		finalizerDuringHash, finalizerHooks, failpointsEnabled, failpointErr := testFailoutHooks()
+		if failpointErr != nil {
+			log.Printf("invalid test failpoint configuration: %v", failpointErr)
+			os.Exit(1)
+		}
+		if !failpointsEnabled {
+			uploadService.SetFinalizer(uploads.NewFileFinalizer(db, storageAdapter, id.UUIDv7{}, now, cfg.FileFinalizeConcurrency))
+		} else {
+			uploadService.SetFinalizer(uploads.NewFileFinalizerWithHashFailureHooks(db, storageAdapter, id.UUIDv7{}, now, cfg.FileFinalizeConcurrency, finalizerHooks, finalizerDuringHash))
+		}
 		if cleanupErr := uploadService.ExpireDueUploads(ctx, 100); cleanupErr != nil {
 			log.Printf("bounded upload expiration cleanup incomplete")
 		}
@@ -219,7 +228,7 @@ func main() {
 		fileService := files.NewService(db, storageAdapter)
 		fileService.SetMonitor(storageMonitor)
 		if reconcileErr := fileService.Reconcile(ctx, 100); reconcileErr != nil {
-			log.Printf("file object reconciliation failed")
+			log.Printf("file object reconciliation failed: %v", reconcileErr)
 			os.Exit(1)
 		}
 		if integrityErr := fileService.VerifyReady(ctx, 100); integrityErr != nil {
