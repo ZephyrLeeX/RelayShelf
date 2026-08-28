@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useQueryClient } from '@tanstack/vue-query'
 import { useRoute, useRouter } from 'vue-router'
 import { BodyFormat, DefaultService } from '@/api/generated'
 import { displayError } from '@/shared/api/errors'
@@ -7,6 +8,14 @@ import TagChip from '@/shared/ui/TagChip.vue'
 import { useTagsQuery } from '@/features/tags/queries'
 import { mutationErrorMessage, useMessageMutation } from '../mutations'
 import { useMessageDetail } from '../queries'
+import AttachmentList from '../components/AttachmentList.vue'
+import SafeMarkdown from '../components/SafeMarkdown.vue'
+import { uploadManager } from '@/features/uploads/manager'
+import { visibleUploads } from '@/features/uploads/store'
+import { formatBytes } from '@/shared/utils/bytes'
+import { invalidateMessageTruth } from '../mutations'
+
+const AttachmentViewer = defineAsyncComponent(() => import('@/features/files/AttachmentViewer.vue'))
 
 const props = defineProps<{ id: string }>()
 const route = useRoute()
@@ -14,6 +23,9 @@ const router = useRouter()
 const detail = useMessageDetail(() => props.id)
 const mutation = useMessageMutation()
 const tags = useTagsQuery()
+// Captured in setup: async continuations after `await` have no injection
+// context, so invalidateMessageTruth must receive the client explicitly.
+const queryClient = useQueryClient()
 interface RevealedBody {
   messageId: string
   version: number
@@ -27,7 +39,18 @@ const editBody = ref('')
 const editFormat = ref(BodyFormat.TEXT)
 const selectedTags = ref<string[]>([])
 const error = ref('')
+const attachmentInput = ref<HTMLInputElement>()
+const detailUploadClients = ref<string[]>([])
+const attachmentMutationPending = ref(false)
 const message = computed(() => detail.data.value)
+const detailUploads = computed(() => detailUploadClients.value.map((id) => visibleUploads.value.find((item) => item.clientId === id)).filter((item) => Boolean(item)))
+const completedDetailUploads = computed(() => detailUploads.value.flatMap((item) => item?.status === 'COMPLETED' && item.serverUploadId ? [item.serverUploadId] : []))
+const detailUploadsReady = computed(() => detailUploads.value.length > 0 && detailUploads.value.every((item) => item?.status === 'COMPLETED'))
+// Completed uploads that exist globally (e.g. finished after leaving this
+// view) but are not part of this detail's selection; the view, not
+// UploadManager, owns which ones are attached to this message.
+const restorableUploads = computed(() => visibleUploads.value.filter((item) => item.status === 'COMPLETED' && !detailUploadClients.value.includes(item.clientId)))
+const viewerId = computed(() => typeof route.query.attachment === 'string' && message.value?.attachments.some((file) => file.id === route.query.attachment) ? route.query.attachment : '')
 const currentSensitiveBody = computed(() => {
   const current = message.value
   const revealed = revealedBody.value
@@ -58,7 +81,7 @@ function close() {
   const from = typeof route.query.from === 'string' && route.query.from.startsWith('/') ? route.query.from : ''
   if (from) void router.push(from); else void router.replace('/temporary')
 }
-function onKey(event: KeyboardEvent) { if (event.key === 'Escape') close() }
+function onKey(event: KeyboardEvent) { if (event.key === 'Escape' && !viewerId.value) close() }
 onMounted(() => document.addEventListener('keydown', onKey))
 onUnmounted(() => document.removeEventListener('keydown', onKey))
 async function reveal() {
@@ -120,7 +143,47 @@ function saveBody() {
   run(command, () => { editing.value = false })
 }
 function removeForever() { if (message.value && window.confirm('永久删除后无法恢复。确定继续吗？')) run({ type:'delete', message:message.value }, close) }
-function downloadUrl(id: string) { return `/api/v1/attachments/${encodeURIComponent(id)}/download` }
+function openViewer(id: string) { void router.push({ query: { ...route.query, attachment: id } }) }
+function closeViewer() { router.back() }
+function selectViewer(id: string) { void router.replace({ query: { ...route.query, attachment: id } }) }
+async function chooseDetailFiles(event: Event) {
+  const input = event.target as HTMLInputElement
+  if (input.files) detailUploadClients.value.push(...await uploadManager.addFiles(Array.from(input.files)))
+  input.value = ''
+}
+async function addAttachments() {
+  if (!message.value || !detailUploadsReady.value) return
+  attachmentMutationPending.value = true; error.value = ''
+  // Snapshot the request so a selection made while it is pending survives:
+  // on success only the clients/uploadIds consumed by THIS request are
+  // retired, never the whole selection.
+  const messageId = message.value.id
+  const expectedVersion = message.value.version
+  const uploadIds = [...completedDetailUploads.value]
+  const consumed = new Set(uploadIds)
+  const consumedClients = detailUploadClients.value.filter((clientId) => {
+    const item = uploadManager.getItem(clientId)
+    return Boolean(item?.serverUploadId && consumed.has(item.serverUploadId))
+  })
+  try {
+    await DefaultService.addMessageAttachments(messageId, { expectedVersion, uploadIds })
+    detailUploadClients.value = detailUploadClients.value.filter((clientId) => !consumedClients.includes(clientId))
+    uploadManager.retireUploadIds(uploadIds)
+    invalidateMessageTruth(messageId, queryClient)
+  } catch (cause) { error.value = mutationErrorMessage(cause); invalidateMessageTruth(messageId, queryClient) }
+  finally { attachmentMutationPending.value = false }
+}
+function addRestored(clientId: string) {
+  if (!detailUploadClients.value.includes(clientId)) detailUploadClients.value.push(clientId)
+}
+async function removeAttachment(id: string) {
+  if (!message.value) return
+  error.value = ''
+  try {
+    await DefaultService.removeMessageAttachment(message.value.id, id, { expectedVersion: message.value.version })
+    invalidateMessageTruth(message.value.id, queryClient)
+  } catch (cause) { error.value = mutationErrorMessage(cause); invalidateMessageTruth(message.value.id, queryClient) }
+}
 </script>
 
 <template>
@@ -195,6 +258,10 @@ function downloadUrl(id: string) { return `/api/v1/attachments/${encodeURICompon
               </button>
             </template>
           </section>
+          <SafeMarkdown
+            v-else-if="!editing && message.bodyFormat === BodyFormat.MARKDOWN"
+            :source="message.body ?? ''"
+          />
           <pre
             v-else-if="!editing"
             :class="{ code: message.detectedType === 'CODE' || Boolean(message.detectedLanguage) }"
@@ -252,11 +319,61 @@ function downloadUrl(id: string) { return `/api/v1/attachments/${encodeURICompon
             v-if="message.attachments.length"
             class="files"
           >
-            <h2>附件元数据</h2><a
-              v-for="file in message.attachments"
-              :key="file.id"
-              :href="downloadUrl(file.id)"
-            ><strong>{{ file.originalFilename }}</strong><small>{{ file.detectedMime }} · {{ file.sizeBytes.toLocaleString() }} bytes · 下载</small></a>
+            <h2>附件</h2><AttachmentList
+              :files="message.attachments"
+              interactive
+              :removable="!message.trashedAt"
+              @view="openViewer"
+              @remove="removeAttachment"
+            />
+          </section>
+          <section
+            v-if="!message.trashedAt"
+            class="add-files panel"
+          >
+            <input
+              ref="attachmentInput"
+              class="sr-only"
+              type="file"
+              multiple
+              @change="chooseDetailFiles"
+            ><div><strong>添加附件</strong><span v-if="detailUploads.length">{{ detailUploads.length }} 个文件 · {{ detailUploadsReady ? '已就绪' : '上传中' }}</span></div><button
+              class="button"
+              type="button"
+              @click="attachmentInput?.click()"
+            >
+              选择文件
+            </button><button
+              v-if="detailUploads.length"
+              class="button primary"
+              type="button"
+              :disabled="!detailUploadsReady || attachmentMutationPending"
+              @click="addAttachments"
+            >
+              {{ attachmentMutationPending ? '添加中…' : '添加到内容' }}
+            </button>
+          </section>
+          <section
+            v-if="!message.trashedAt && restorableUploads.length"
+            class="restored"
+            aria-label="已完成的上传"
+          >
+            <h2>已完成的上传</h2>
+            <ul>
+              <li
+                v-for="item in restorableUploads"
+                :key="item.clientId"
+              >
+                <span>{{ item.filename }} · {{ formatBytes(item.size) }}</span>
+                <button
+                  class="button"
+                  type="button"
+                  @click="addRestored(item.clientId)"
+                >
+                  添加到当前内容
+                </button>
+              </li>
+            </ul>
           </section>
           <div class="actions">
             <template v-if="message.trashedAt">
@@ -318,11 +435,19 @@ function downloadUrl(id: string) { return `/api/v1/attachments/${encodeURICompon
         </template>
       </article>
     </div>
+    <AttachmentViewer
+      v-if="message && viewerId"
+      :files="message.attachments"
+      :current-id="viewerId"
+      @close="closeViewer"
+      @select="selectViewer"
+    />
   </Teleport>
 </template>
 
 <style scoped>
-.detail-backdrop{position:fixed;inset:0;z-index:45;background:rgb(0 0 0 / .42);display:flex;justify-content:flex-end}.detail{height:100%;width:min(760px,82vw);overflow:auto;border-radius:var(--radius-lg) 0 0 var(--radius-lg);padding:1.3rem;display:grid;align-content:start;gap:1rem;box-shadow:var(--shadow)}header{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start}h1,h2,p{margin:.2rem 0}h1{font-size:1.35rem}.close{font-size:1.3rem}pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}.code{font-family:var(--font-mono);background:var(--surface-soft);padding:1rem;border-radius:var(--radius)}.sensitive{padding:1.25rem;box-shadow:none}.edit{display:grid;gap:.75rem}.edit textarea{resize:vertical}.tags,.actions,.tag-picker{display:flex;flex-wrap:wrap;gap:.5rem}.files{display:grid;gap:.5rem}.files a{display:flex;justify-content:space-between;gap:1rem;padding:.75rem;border:1px solid var(--border);border-radius:var(--radius-sm);text-decoration:none}.files small{color:var(--muted)}details{display:grid;gap:.6rem}summary{cursor:pointer}.state{padding:3rem;text-align:center}
+.detail-backdrop{position:fixed;inset:0;z-index:45;background:rgb(0 0 0 / .42);display:flex;justify-content:flex-end}.detail{height:100%;width:min(760px,82vw);overflow:auto;border-radius:var(--radius-lg) 0 0 var(--radius-lg);padding:1.3rem;display:grid;align-content:start;gap:1rem;box-shadow:var(--shadow)}header{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start}h1,h2,p{margin:.2rem 0}h1{font-size:1.35rem}.close{font-size:1.3rem}pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}.code{font-family:var(--font-mono);background:var(--surface-soft);padding:1rem;border-radius:var(--radius)}.sensitive{padding:1.25rem;box-shadow:none}.edit{display:grid;gap:.75rem}.edit textarea{resize:vertical}.tags,.actions,.tag-picker{display:flex;flex-wrap:wrap;gap:.5rem}.files{display:grid;gap:.5rem}.add-files{display:flex;align-items:center;gap:.5rem;padding:.7rem;box-shadow:none}.add-files>div{display:grid;flex:1}.add-files span{color:var(--muted);font-size:.75rem}details{display:grid;gap:.6rem}summary{cursor:pointer}.state{padding:3rem;text-align:center}
+.restored{border:1px solid var(--border);border-radius:var(--radius-sm);padding:.55rem .65rem;display:grid;gap:.4rem}.restored h2{font-size:.78rem;color:var(--muted)}.restored ul{list-style:none;margin:0;padding:0;display:grid;gap:.35rem}.restored li{display:flex;align-items:center;justify-content:space-between;gap:.7rem;font-size:.82rem}.restored span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.restored .button{min-height:32px;padding:.25rem .55rem;font-size:.76rem;white-space:nowrap}
 @media(prefers-reduced-motion:no-preference){.detail{animation:slide .16s ease-out}@keyframes slide{from{transform:translateX(25px);opacity:.8}}}
-@media(max-width:720px){.detail-backdrop{display:block;background:var(--surface)}.detail{width:100%;height:100%;border:0;border-radius:0;padding:1rem}.files a{display:grid}}
+@media(max-width:720px){.detail-backdrop{display:block;background:var(--surface)}.detail{width:100%;height:100%;border:0;border-radius:0;padding:1rem}.add-files{flex-wrap:wrap}.add-files>div{width:100%;flex-basis:100%}}
 </style>

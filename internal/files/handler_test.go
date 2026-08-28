@@ -21,7 +21,7 @@ func TestParseRange(t *testing.T) {
 	}
 }
 func TestContentDisposition(t *testing.T) {
-	got := contentDisposition("a\"\r\n中.txt")
+	got := contentDisposition("attachment", "a\"\r\n中.txt")
 	if got == "" {
 		t.Fatal("empty")
 	}
@@ -30,6 +30,19 @@ func TestContentDisposition(t *testing.T) {
 			if containsRune(got, r) {
 				t.Fatalf("unsafe %q", got)
 			}
+		}
+	}
+}
+
+func TestPreviewMIMEAllowlist(t *testing.T) {
+	for _, mime := range []string{"image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf", "audio/mpeg", "audio/mp4", "audio/ogg", "audio/wav", "audio/webm", "video/mp4", "video/webm", "video/ogg", "video/quicktime"} {
+		if !isPreviewMIME(mime) {
+			t.Errorf("expected %s to be previewable", mime)
+		}
+	}
+	for _, mime := range []string{"text/html", "application/xhtml+xml", "image/svg+xml", "application/xml", "text/xml", "application/octet-stream"} {
+		if isPreviewMIME(mime) {
+			t.Errorf("unsafe MIME %s was allowlisted", mime)
 		}
 	}
 }

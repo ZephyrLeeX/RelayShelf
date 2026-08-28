@@ -49,10 +49,24 @@ func (h *Handler) DownloadAttachment(w http.ResponseWriter, r *http.Request, att
 		h.writeError(w, r, err)
 		return
 	}
+	h.serveAttachment(w, r, d, contentDisposition("attachment", d.Filename))
+}
+
+func (h *Handler) PreviewAttachment(w http.ResponseWriter, r *http.Request, attachmentID httpapi.AttachmentId) {
+	a, _ := auth.FromContext(r.Context())
+	d, err := h.service.AuthorizedPreview(r.Context(), a.User.ID, uuid.UUID(attachmentID))
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	h.serveAttachment(w, r, d, contentDisposition("inline", d.Filename))
+}
+
+func (h *Handler) serveAttachment(w http.ResponseWriter, r *http.Request, d Download, disposition string) {
 	etag := ETag(d)
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Content-Type", d.MIME)
-	w.Header().Set("Content-Disposition", contentDisposition(d.Filename))
+	w.Header().Set("Content-Disposition", disposition)
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Last-Modified", d.Modified.UTC().Format(http.TimeFormat))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -110,6 +124,10 @@ func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) 
 	}
 	if errors.Is(err, ErrThumbnailNotFound) {
 		auth.WriteError(w, r, http.StatusNotFound, "THUMBNAIL_NOT_FOUND", "thumbnail not found")
+		return
+	}
+	if errors.Is(err, ErrPreviewNotFound) {
+		auth.WriteError(w, r, http.StatusNotFound, "ATTACHMENT_PREVIEW_NOT_FOUND", "attachment preview not found")
 		return
 	}
 	if errors.Is(err, ErrStorageIntegrity) {
@@ -174,7 +192,7 @@ func parseRange(value string, size int64) (int64, int64, int, error) {
 	}
 	return start, end - start + 1, http.StatusPartialContent, nil
 }
-func contentDisposition(name string) string {
+func contentDisposition(kind, name string) string {
 	var b strings.Builder
 	for _, r := range name {
 		if r >= 0x20 && r <= 0x7e && r != '"' && r != '\\' && r != ';' {
@@ -187,7 +205,7 @@ func contentDisposition(name string) string {
 	if fallback == "" {
 		fallback = "download"
 	}
-	return `attachment; filename="` + fallback + `"; filename*=UTF-8''` + strings.ReplaceAll(url.PathEscape(name), "+", "%20")
+	return kind + `; filename="` + fallback + `"; filename*=UTF-8''` + strings.ReplaceAll(url.PathEscape(name), "+", "%20")
 }
 func copyDownload(ctx context.Context, dst io.Writer, src io.Reader, buf []byte) (int64, error) {
 	var total int64

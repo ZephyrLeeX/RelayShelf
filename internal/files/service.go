@@ -58,6 +58,31 @@ func (s *Service) AuthorizedDownload(ctx context.Context, ownerID, attachmentID 
 	return d, nil
 }
 
+var previewMIMEs = map[string]struct{}{
+	"image/jpeg": {}, "image/png": {}, "image/gif": {}, "image/webp": {},
+	"application/pdf": {},
+	"audio/mpeg":      {}, "audio/mp4": {}, "audio/ogg": {}, "audio/wav": {}, "audio/webm": {},
+	"video/mp4": {}, "video/webm": {}, "video/ogg": {}, "video/quicktime": {},
+}
+
+// AuthorizedPreview preserves Attachment -> Message owner authorization and
+// only permits server-detected passive media types to render on the app origin.
+func (s *Service) AuthorizedPreview(ctx context.Context, ownerID, attachmentID uuid.UUID) (Download, error) {
+	d, err := s.AuthorizedDownload(ctx, ownerID, attachmentID)
+	if err != nil {
+		return Download{}, err
+	}
+	if !isPreviewMIME(d.MIME) {
+		return Download{}, ErrPreviewNotFound
+	}
+	return d, nil
+}
+
+func isPreviewMIME(value string) bool {
+	_, allowed := previewMIMEs[strings.ToLower(strings.TrimSpace(value))]
+	return allowed
+}
+
 func (s *Service) AuthorizedThumbnail(ctx context.Context, ownerID, attachmentID uuid.UUID) (ThumbnailDownload, error) {
 	var d ThumbnailDownload
 	var key string
