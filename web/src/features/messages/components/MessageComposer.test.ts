@@ -2,12 +2,28 @@ import { VueQueryPlugin, QueryClient } from '@tanstack/vue-query'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { BodyFormat, DefaultService, Lifecycle, UploadStatus } from '@/api/generated'
+import { BodyFormat, DefaultService, Lifecycle, UploadStatus, type UploadSession } from '@/api/generated'
 import { queryKeys } from '@/shared/api/queryKeys'
 import { messageFixture } from '@/test/fixtures'
 import MessageComposer from './MessageComposer.vue'
 import { uploadManager } from '@/features/uploads/manager'
+import { ResumeLedger } from '@/features/uploads/resumeLedger'
 import { uploadState } from '@/features/uploads/store'
+import type { UploadItem } from '@/features/uploads/types'
+
+function uploadSession(overrides: Partial<UploadSession> = {}): UploadSession {
+  return { id: 'upload-a', originalFilename: 'photo.png', expectedSize: 4, clientMime: 'image/png', chunkSize: 4, partCount: 1, status: UploadStatus.COMPLETED, expiresAt: '2026-09-01T00:00:00Z', completedParts: [0], createdAt: '2026-08-28T00:00:00Z', updatedAt: '2026-08-28T00:00:00Z', ...overrides }
+}
+function uploadItem(clientId: string, status: UploadItem['status'], session = uploadSession()): UploadItem {
+  const completed = status === 'COMPLETED'
+  return {
+    clientId, serverUploadId: session.id, session, filename: session.originalFilename, size: session.expectedSize,
+    lastModified: 1, completedParts: [...session.completedParts], activeParts: [], transferredByPart: {},
+    sentBytes: completed ? session.expectedSize : 0, progress: completed ? 1 : 0,
+    createdAt: '2026-08-28T00:00:00Z', selected: true, status,
+    ...(status === 'FAILED' ? { error: '上传失败。', errorCode: 'NETWORK_ERROR', retryable: true } : {}),
+  } as UploadItem
+}
 
 function mountComposer(lifecycle = Lifecycle.TEMPORARY) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
@@ -195,5 +211,149 @@ describe('MessageComposer', () => {
     await wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
     await flushPromises()
     expect(create).toHaveBeenCalledWith('key-a', expect.objectContaining({ sensitive: true }))
+  })
+
+  it('blocks Send while a selected attachment is uploading or failed', async () => {
+    uploadState.items.push(uploadItem('client-uploading', 'UPLOADING', uploadSession({ status: UploadStatus.UPLOADING, id: 'upload-up' })))
+    vi.spyOn(uploadManager, 'addFiles').mockResolvedValue(['client-uploading'])
+    const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
+    const wrapper = mountComposer()
+    const input = wrapper.get<HTMLInputElement>('input[type="file"]')
+    Object.defineProperty(input.element, 'files', { configurable: true, value: [new File(['data'], 'photo.png')] })
+    await input.trigger('change')
+    await flushPromises()
+    expect(wrapper.get('button.primary').attributes('disabled')).toBeDefined()
+    const uploading = uploadState.items[0]
+    uploadState.items[0] = { ...uploading, status: 'FAILED', error: 'network', errorCode: 'NETWORK_ERROR', retryable: true } as UploadItem
+    await flushPromises()
+    expect(wrapper.get('button.primary').attributes('disabled')).toBeDefined()
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it('sends uploadIds in selection order', async () => {
+    uploadState.items.push(uploadItem('client-a', 'COMPLETED', uploadSession({ id: 'upload-a' })), uploadItem('client-b', 'COMPLETED', uploadSession({ id: 'upload-b', originalFilename: 'second.png' })))
+    vi.spyOn(uploadManager, 'addFiles').mockResolvedValue(['client-b', 'client-a'])
+    const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
+    const wrapper = mountComposer()
+    const input = wrapper.get<HTMLInputElement>('input[type="file"]')
+    Object.defineProperty(input.element, 'files', { configurable: true, value: [new File(['data'], 'second.png'), new File(['data'], 'photo.png')] })
+    await input.trigger('change')
+    await flushPromises()
+    await wrapper.get('button.primary').trigger('click')
+    await flushPromises()
+    expect(create).toHaveBeenCalledWith('key-a', expect.objectContaining({ uploadIds: ['upload-b', 'upload-a'] }))
+  })
+
+  it('restores a COMPLETED upload after reload, lets the draft consume it, and retires it only on success', async () => {
+    // reconcile consumes one randomUUID for the restored clientId, so the key
+    // sequence is restubbed instead of relying on the beforeEach chain.
+    vi.stubGlobal('crypto', { randomUUID: () => 'fixed-key' })
+    new ResumeLedger().upsert('user-1', { uploadId: 'upload-done', lastModified: 1, createdAt: '2026-08-28T00:00:00Z' })
+    vi.spyOn(DefaultService, 'getUpload').mockResolvedValue(uploadSession({ id: 'upload-done', status: UploadStatus.COMPLETED }))
+    await uploadManager.reconcile('user-1')
+    expect(uploadState.items[0].status).toBe('COMPLETED')
+    const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
+    const wrapper = mountComposer()
+    await flushPromises()
+    expect(wrapper.text()).toContain('已完成的上传')
+    await wrapper.get('.restored li button').trigger('click')
+    await wrapper.get('button.primary').trigger('click')
+    await flushPromises()
+    expect(create).toHaveBeenCalledWith('fixed-key', expect.objectContaining({ body: null, uploadIds: ['upload-done'] }))
+    expect(uploadState.items).toHaveLength(0)
+    expect(new ResumeLedger().read('user-1')).toEqual([])
+  })
+
+  it('keeps a restored COMPLETED upload available when CreateMessage fails', async () => {
+    vi.stubGlobal('crypto', { randomUUID: () => 'fixed-key' })
+    new ResumeLedger().upsert('user-1', { uploadId: 'upload-done', lastModified: 1, createdAt: '2026-08-28T00:00:00Z' })
+    vi.spyOn(DefaultService, 'getUpload').mockResolvedValue(uploadSession({ id: 'upload-done', status: UploadStatus.COMPLETED }))
+    await uploadManager.reconcile('user-1')
+    vi.spyOn(DefaultService, 'createMessage').mockRejectedValue(new TypeError('offline'))
+    const wrapper = mountComposer()
+    await flushPromises()
+    await wrapper.get('.restored li button').trigger('click')
+    await wrapper.get('button.primary').trigger('click')
+    await flushPromises()
+    expect(uploadState.items).toHaveLength(1)
+    expect(new ResumeLedger().read('user-1')).toHaveLength(1)
+    expect(wrapper.find('.restored li').exists()).toBe(false)
+    expect(wrapper.text()).toContain('photo.png')
+  })
+
+  it('clears an unchanged draft with a completed attachment normally (F1 + A)', async () => {
+    uploadState.items.push(uploadItem('client-a', 'COMPLETED', uploadSession({ id: 'upload-a' })))
+    vi.spyOn(uploadManager, 'addFiles').mockResolvedValue(['client-a'])
+    const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
+    const wrapper = mountComposer()
+    const input = wrapper.get<HTMLInputElement>('input[type="file"]')
+    Object.defineProperty(input.element, 'files', { configurable: true, value: [new File(['data'], 'photo.png')] })
+    await input.trigger('change')
+    await wrapper.get('textarea').setValue('F1')
+    await wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await flushPromises()
+    expect(create).toHaveBeenCalledWith('key-a', expect.objectContaining({ body: 'F1', uploadIds: ['upload-a'] }))
+    expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('')
+    expect(wrapper.find('.selected-files li').exists()).toBe(false)
+    expect(uploadState.items).toHaveLength(0)
+  })
+
+  it('preserves a newer pending attachment when the submitted request succeeds (F1 + A pending, B uploading)', async () => {
+    uploadState.items.push(uploadItem('client-a', 'COMPLETED', uploadSession({ id: 'upload-a' })))
+    uploadState.items.push(uploadItem('client-b', 'UPLOADING', uploadSession({ id: 'upload-b', originalFilename: 'second.png', status: UploadStatus.UPLOADING, completedParts: [] })))
+    vi.spyOn(uploadManager, 'addFiles')
+      .mockResolvedValueOnce(['client-a'])
+      .mockResolvedValueOnce(['client-b'])
+    let resolveFirst!: (value: ReturnType<typeof messageFixture>) => void
+    const pending = new Promise<ReturnType<typeof messageFixture>>((resolve) => { resolveFirst = resolve })
+    const create = vi.spyOn(DefaultService, 'createMessage').mockReturnValueOnce(pending as never).mockResolvedValueOnce(messageFixture())
+    const wrapper = mountComposer()
+    const input = wrapper.get<HTMLInputElement>('input[type="file"]')
+    Object.defineProperty(input.element, 'files', { configurable: true, value: [new File(['data'], 'photo.png')] })
+    await input.trigger('change')
+    await wrapper.get('textarea').setValue('F1')
+    await wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
+    expect(create).toHaveBeenNthCalledWith(1, 'key-a', expect.objectContaining({ body: 'F1', uploadIds: ['upload-a'] }))
+
+    const second = wrapper.get<HTMLInputElement>('input[type="file"]')
+    Object.defineProperty(second.element, 'files', { configurable: true, value: [new File(['data'], 'second.png')] })
+    await second.trigger('change')
+    await wrapper.get('textarea').setValue('F2')
+    resolveFirst(messageFixture())
+    await flushPromises()
+
+    expect(uploadState.items.map((item) => item.serverUploadId)).toEqual(['upload-b'])
+    expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('F2')
+    expect(wrapper.text()).toContain('second.png')
+
+    uploadState.items[0] = uploadItem('client-b', 'COMPLETED', uploadSession({ id: 'upload-b', originalFilename: 'second.png' }))
+    await flushPromises()
+    await wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await flushPromises()
+    expect(create).toHaveBeenNthCalledWith(2, 'key-b', expect.objectContaining({ body: 'F2', uploadIds: ['upload-b'] }))
+  })
+
+  it('resets the idempotency key when a pending attachment selection changes after a failure', async () => {
+    uploadState.items.push(uploadItem('client-b', 'UPLOADING', uploadSession({ id: 'upload-b', originalFilename: 'second.png', status: UploadStatus.UPLOADING, completedParts: [] })))
+    vi.spyOn(uploadManager, 'addFiles').mockResolvedValue(['client-b'])
+    const create = vi.spyOn(DefaultService, 'createMessage').mockRejectedValueOnce(new TypeError('offline')).mockResolvedValueOnce(messageFixture())
+    const wrapper = mountComposer()
+    await wrapper.get('textarea').setValue('F1')
+    await wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await flushPromises()
+    expect(create.mock.calls[0][0]).toBe('key-a')
+    const input = wrapper.get<HTMLInputElement>('input[type="file"]')
+    Object.defineProperty(input.element, 'files', { configurable: true, value: [new File(['data'], 'second.png')] })
+    await input.trigger('change')
+    await flushPromises()
+    // Deselecting the still-uploading file unblocks the retry; the selection
+    // round-trip already proved the draft identity changed.
+    await wrapper.get('.selected-files li .button').trigger('click')
+    await flushPromises()
+    expect(uploadState.items).toHaveLength(0)
+    await wrapper.get('button.primary').trigger('click')
+    await flushPromises()
+    expect(create.mock.calls[1][0]).toBe('key-b')
+    expect(create).toHaveBeenNthCalledWith(2, 'key-b', expect.objectContaining({ body: 'F1', uploadIds: [] }))
   })
 })

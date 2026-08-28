@@ -29,6 +29,10 @@ if (auth.device) startRealtime(queryClient, auth.device.id, () => {
   void router.replace({ name: 'login', query: { redirect } })
 })
 if (auth.user) void uploadManager.reconcile(auth.user.id)
+// UploadManager must not import the Pinia store (the store imports it for
+// logout cleanup), so the bounded CSRF refresh is injected as a callback that
+// re-runs the existing auth bootstrap and token refresh path.
+uploadManager.setCsrfRefresh(() => auth.bootstrap(true))
 
 function protectUnload(event: BeforeUnloadEvent) {
   if (!hasActiveTransfers.value) return

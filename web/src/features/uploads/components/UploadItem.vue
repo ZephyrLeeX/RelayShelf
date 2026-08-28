@@ -6,7 +6,9 @@ import type { UploadItem } from '../types'
 
 const props = defineProps<{ item: UploadItem }>()
 const picker = ref<HTMLInputElement>()
-const active = ['QUEUED', 'CREATING', 'UPLOADING', 'COMPLETING']
+// Finalization cannot be aborted mid-Complete, so COMPLETING deliberately
+// offers no Pause; the button must not promise an action it cannot perform.
+const pausable = ['QUEUED', 'CREATING', 'UPLOADING']
 
 function continueUpload() {
   if (props.item.file) void uploadManager.resume(props.item.clientId)
@@ -46,7 +48,7 @@ function selected(event: Event) {
     </p>
     <div class="actions">
       <button
-        v-if="active.includes(item.status)"
+        v-if="pausable.includes(item.status)"
         class="button"
         type="button"
         @click="uploadManager.pause(item.clientId)"
@@ -68,6 +70,14 @@ function selected(event: Event) {
         @click="uploadManager.retry(item.clientId)"
       >
         重试
+      </button>
+      <button
+        v-if="item.status === 'FAILED' && item.file"
+        class="button"
+        type="button"
+        @click="uploadManager.reupload(item.clientId)"
+      >
+        重新上传
       </button>
       <button
         class="button quiet"

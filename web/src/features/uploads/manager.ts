@@ -22,6 +22,8 @@ const defaultAPI: UploadAPI = {
   complete: (id) => DefaultService.completeUpload(id),
 }
 
+export const SERVER_FAILED_MESSAGE = '服务器端上传已失败（暂存数据损坏）。请移除后重新上传原文件。'
+
 export function partRange(partNumber: number, chunkSize: number, fileSize: number): PartRange {
   const start = partNumber * chunkSize
   const end = Math.min(start + chunkSize, fileSize)
@@ -40,6 +42,9 @@ export class UploadManager {
   readonly scheduler: UploadScheduler
   private readonly controllers = new Map<string, Map<number, AbortController>>()
   private readonly lastProgressUpdate = new Map<string, number>()
+  private readonly autoRecoveredCsrf = new Set<string>()
+  private csrfRefresh: () => Promise<unknown> = async () => undefined
+  private csrfRefreshInFlight: Promise<string | undefined> | undefined
   private userId = ''
 
   constructor(
@@ -51,6 +56,10 @@ export class UploadManager {
 
   get items() { return uploadState.items }
   getItem(clientId: string) { return uploadState.items.find((item) => item.clientId === clientId) }
+
+  // Injected at app bootstrap to avoid a Pinia circular import; the default
+  // refresh keeps tests hermetic while production wires the auth bootstrap.
+  setCsrfRefresh(refresh: () => Promise<unknown>) { this.csrfRefresh = refresh }
 
   async addFiles(files: Iterable<File>) {
     const added: string[] = []
@@ -82,6 +91,14 @@ export class UploadManager {
       const session = await this.api.create(file)
       const item = this.getItem(clientId)
       if (!item || item.status === 'CANCELED') return
+      // A Pause issued while CREATING cannot abort the Create request, so it
+      // is remembered instead: persist the session, keep PAUSED, schedule
+      // nothing, and let an explicit resume reconcile against server truth.
+      if (item.status === 'PAUSED') {
+        this.replace(clientId, { ...item, serverUploadId: session.id, session, completedParts: [...session.completedParts] })
+        this.persist(this.getItem(clientId)!)
+        return
+      }
       this.replace(clientId, { ...item, serverUploadId: session.id, session, completedParts: [...session.completedParts], status: 'UPLOADING' })
       this.persist(this.getItem(clientId)!)
       if (session.partCount === 0) void this.complete(clientId); else this.scheduleMissing(clientId)
@@ -101,16 +118,27 @@ export class UploadManager {
     if (!item || !item.serverUploadId) return
     if (file) {
       const mismatch = await this.validateReselection(item, file)
-      if (mismatch) { this.fail(clientId, { status: 422, code: 'UPLOAD_FILE_MISMATCH' }, mismatch); return }
+      if (mismatch) {
+        const latest = this.getItem(clientId)
+        if (latest) this.replace(clientId, { ...latest, activeParts: [], transferredByPart: {}, status: 'FAILED', error: mismatch, errorCode: 'UPLOAD_FILE_MISMATCH', retryable: true })
+        return
+      }
     }
     try {
       const session = await this.api.get(item.serverUploadId)
       if (session.status === 'EXPIRED') { this.expire(clientId); return }
       if (session.status === 'COMPLETED') { this.markCompleted(clientId, session); return }
+      if (session.status === 'FAILED') { this.markServerFailed(clientId, session); return }
       const next = this.getItem(clientId)
       if (!next) return
+      if (!file && !next.file) {
+        // Without bytes there is nothing to schedule; keep waiting for the
+        // user to reselect the original file instead of a stuck UPLOADING.
+        this.replace(clientId, { ...next, session, completedParts: [...session.completedParts], status: 'PAUSED' })
+        return
+      }
       this.replace(clientId, { ...next, file: file ?? next.file, filename: session.originalFilename, size: session.expectedSize, session, completedParts: [...session.completedParts], activeParts: [], transferredByPart: {}, status: session.status === 'COMPLETING' ? 'COMPLETING' : 'UPLOADING' })
-      if (session.status === 'COMPLETING') void this.complete(clientId); else if (this.getItem(clientId)?.file) this.scheduleMissing(clientId)
+      if (session.status === 'COMPLETING' || session.partCount === 0) void this.complete(clientId); else this.scheduleMissing(clientId)
     } catch (cause) { this.fail(clientId, cause) }
   }
 
@@ -121,6 +149,16 @@ export class UploadManager {
       this.replace(clientId, { ...item, status: 'QUEUED' })
       void this.create(clientId, item.file)
     }
+  }
+
+  // Safe terminal action for server-FAILED or corrupt staging sessions: the
+  // dead server session is abandoned and the same File starts a fresh upload.
+  reupload(clientId: string) {
+    const item = this.getItem(clientId)
+    if (!item?.file || item.status !== 'FAILED') return
+    const file = item.file
+    this.remove(clientId)
+    void this.addFiles([file])
   }
 
   remove(clientId: string) {
@@ -141,6 +179,7 @@ export class UploadManager {
     if (this.userId === userId && uploadState.items.some((item) => item.serverUploadId)) return
     this.userId = userId
     for (const entry of this.ledger.read(userId)) await this.reconcileEntry(entry)
+    if (!this.ledger.available) uploadState.ledgerWarning = true
   }
 
   clearForLogout() {
@@ -153,6 +192,17 @@ export class UploadManager {
     try {
       const session = await this.api.get(entry.uploadId)
       if (session.status === 'EXPIRED') { this.ledger.remove(this.userId, entry.uploadId); return }
+      if (session.status === 'FAILED') {
+        uploadState.items.push({
+          clientId: crypto.randomUUID(), serverUploadId: session.id, session, filename: session.originalFilename,
+          size: session.expectedSize, lastModified: entry.lastModified, fingerprint: entry.fingerprint,
+          completedParts: [...session.completedParts], activeParts: [], transferredByPart: {}, sentBytes: this.durableBytes(session),
+          progress: session.expectedSize ? this.durableBytes(session) / session.expectedSize : 0,
+          createdAt: entry.createdAt, selected: true, status: 'FAILED',
+          error: SERVER_FAILED_MESSAGE, errorCode: 'UPLOAD_SERVER_FAILED', retryable: false,
+        })
+        return
+      }
       const status = session.status === 'COMPLETED' ? 'COMPLETED' : session.status === 'COMPLETING' ? 'COMPLETING' : 'PAUSED'
       const item = {
         clientId: crypto.randomUUID(), serverUploadId: session.id, session, filename: session.originalFilename,
@@ -197,6 +247,7 @@ export class UploadManager {
           })
           item = this.getItem(clientId)
           if (!item || item.status !== 'UPLOADING') return
+          this.autoRecoveredCsrf.delete(clientId)
           const completedParts = [...new Set([...item.completedParts, partNumber])].sort((a, b) => a - b)
           this.replace(clientId, { ...item, completedParts, transferredByPart: { ...item.transferredByPart, [partNumber]: 0 } })
           this.recalculate(clientId)
@@ -206,6 +257,9 @@ export class UploadManager {
           if (controller.signal.aborted) return
           const error = uploadError(cause)
           if (error.status === 401) { notifyAuthExpired(); this.fail(clientId, cause); return }
+          // CSRF staleness must not enter the backoff loop replaying the same
+          // token; fail immediately so the bounded recovery path can refresh.
+          if (error.code === 'CSRF_INVALID') { this.fail(clientId, cause); return }
           if (!error.retryable || attempt === MAX_CHUNK_ATTEMPTS) { this.fail(clientId, cause); return }
           await waitForRetry(retryDelay(attempt), controller.signal)
         }
@@ -231,6 +285,7 @@ export class UploadManager {
         if (!item?.serverUploadId) return
         const session = await this.api.get(item.serverUploadId)
         if (session.status === 'COMPLETED') { this.markCompleted(clientId, session); return }
+        if (session.status === 'FAILED') { this.markServerFailed(clientId, session); return }
         if (session.status === 'COMPLETING') {
           this.replace(clientId, { ...item, session, status: 'FAILED', error: '文件暂时无法完成入库，可以重试。', errorCode: 'UPLOAD_FINALIZE_RETRYABLE', retryable: true })
           return
@@ -247,6 +302,14 @@ export class UploadManager {
     this.persist(this.getItem(clientId)!)
   }
 
+  private markServerFailed(clientId: string, session: UploadSession) {
+    const item = this.getItem(clientId)
+    if (!item) return
+    this.scheduler.remove(clientId)
+    this.abort(clientId)
+    this.replace(clientId, { ...item, session, completedParts: [...session.completedParts], activeParts: [], transferredByPart: {}, status: 'FAILED', error: SERVER_FAILED_MESSAGE, errorCode: 'UPLOAD_SERVER_FAILED', retryable: false })
+  }
+
   private async validateReselection(item: UploadItem, file: File) {
     if (!item.session || file.name !== item.session.originalFilename || file.size !== item.session.expectedSize || file.lastModified !== item.lastModified) return '选择的文件与原上传文件不一致。'
     if (item.fingerprint && await fingerprintFile(file) !== item.fingerprint) return '选择的文件与原上传文件不一致。'
@@ -261,6 +324,7 @@ export class UploadManager {
     const error = uploadError(cause)
     if (error.code === 'UPLOAD_EXPIRED' || error.status === 410) { this.expire(clientId); return }
     this.replace(clientId, { ...item, activeParts: [], transferredByPart: {}, status: 'FAILED', error: override ?? error.message, errorCode: error.code, retryable: error.retryable })
+    if (error.code === 'CSRF_INVALID') void this.recoverCsrf(clientId, getCsrfToken())
   }
 
   private expire(clientId: string) {
@@ -268,6 +332,22 @@ export class UploadManager {
     if (!item) return
     if (item.serverUploadId && this.userId) this.ledger.remove(this.userId, item.serverUploadId)
     this.replace(clientId, { ...item, activeParts: [], transferredByPart: {}, status: 'EXPIRED', error: '上传任务已过期，请重新上传。', errorCode: 'UPLOAD_EXPIRED', retryable: false })
+  }
+
+  // Bounded CSRF recovery: refresh the session token once, then continue at
+  // most one automatic resume per failure episode. A repeat failure lands in
+  // FAILED with an explicit user retry so the chunk can never loop forever.
+  private async recoverCsrf(clientId: string, staleToken: string | undefined) {
+    if (this.autoRecoveredCsrf.has(clientId)) return
+    const fresh = await this.refreshCsrfToken()
+    if (!fresh || fresh === staleToken) return
+    this.autoRecoveredCsrf.add(clientId)
+    await this.resume(clientId)
+  }
+
+  private async refreshCsrfToken(): Promise<string | undefined> {
+    this.csrfRefreshInFlight ??= Promise.resolve(this.csrfRefresh()).then(() => getCsrfToken(), () => undefined)
+    try { return await this.csrfRefreshInFlight } finally { this.csrfRefreshInFlight = undefined }
   }
 
   private onProgress(clientId: string, partNumber: number, loaded: number, final: boolean) {
@@ -300,7 +380,10 @@ export class UploadManager {
 
   private persist(item: UploadItem) {
     if (!this.userId || !item.serverUploadId) return
-    this.ledger.upsert(this.userId, { uploadId: item.serverUploadId, lastModified: item.lastModified, fingerprint: item.fingerprint, createdAt: item.createdAt })
+    try {
+      this.ledger.upsert(this.userId, { uploadId: item.serverUploadId, lastModified: item.lastModified, fingerprint: item.fingerprint, createdAt: item.createdAt })
+      if (!this.ledger.available) uploadState.ledgerWarning = true
+    } catch { /* resume persistence is best-effort and never affects the upload */ }
   }
 
   private replace(clientId: string, item: UploadItem) {

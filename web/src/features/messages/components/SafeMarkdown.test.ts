@@ -29,4 +29,14 @@ describe('SafeMarkdown', () => {
     expect(wrapper.find('code').text()).toContain('<script>')
     expect(wrapper.find('code script').exists()).toBe(false)
   })
+
+  it('blocks data: and other dangerous link schemes', async () => {
+    const wrapper = mount(SafeMarkdown, { props: { source: '[a](data:text/html;base64,PHNjcmlwdD4)\n[b](vbscript:alert)\n[c](file:///etc/passwd)' } })
+    await flushPromises()
+    const html = wrapper.html()
+    expect(html).not.toContain('href="data:')
+    expect(html).not.toContain('href="vbscript:')
+    expect(html).not.toContain('href="file:')
+    wrapper.unmount()
+  })
 })

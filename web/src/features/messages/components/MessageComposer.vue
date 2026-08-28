@@ -36,12 +36,22 @@ const selectedUploadIds = computed(() => selectedUploads.value.flatMap((item) =>
 const attachmentsBlocking = computed(() => selectedUploads.value.some((item) => item?.status !== 'COMPLETED'))
 const hasContent = computed(() => Boolean(body.value.trim()) || selectedUploadIds.value.length > 0)
 const bodyFormat = computed(() => mode.value === 'markdown' ? BodyFormat.MARKDOWN : BodyFormat.TEXT)
-const fingerprint = computed(() => JSON.stringify({ body: body.value, mode: mode.value, lifecycle: lifecycle.value, sensitive: sensitive.value, tags: [...selectedTags.value].sort(), uploadIds: selectedUploadIds.value }))
-let attemptedFingerprint = ''
+// Completed uploads that exist globally (e.g. restored after reload) but are
+// not part of this draft yet; the Composer, not UploadManager, owns selection.
+const restorableUploads = computed(() => visibleUploads.value.filter((item) => item.status === 'COMPLETED' && !selectedUploadClients.value.includes(item.clientId)))
+// Request identity describes the actual CreateMessage payload (completed
+// uploadIds included). Draft identity additionally covers the selection of
+// still-pending uploads via stable client IDs, so a newer draft is never
+// mistaken for the submitted one — and it never changes with mere progress.
+const draftFields = () => [body.value, mode.value, lifecycle.value, sensitive.value, [...selectedTags.value].sort().join(',')]
+const requestFingerprint = computed(() => JSON.stringify({ draft: draftFields(), uploadIds: selectedUploadIds.value }))
+const draftIdentity = computed(() => JSON.stringify({ draft: draftFields(), selection: [...selectedUploadClients.value] }))
+let attemptedIdentity = ''
 
 interface SendSnapshot {
   key: string
   fingerprint: string
+  identity: string
   payload: CreateMessageRequest
 }
 
@@ -49,20 +59,24 @@ const send = useMutation({
   retry: false,
   mutationFn: ({ key, payload }: SendSnapshot) => DefaultService.createMessage(key, payload),
   onSuccess: (_result, snapshot) => {
+    // Decide whether the live draft is still the submitted draft BEFORE
+    // retiring consumed uploads; retirement changes requestFingerprint and
+    // must not make an unchanged draft look edited.
+    const unchanged = draftIdentity.value === snapshot.identity
     const consumed = new Set(snapshot.payload.uploadIds ?? [])
     selectedUploadClients.value = selectedUploadClients.value.filter((clientId) => {
       const item = uploadManager.getItem(clientId)
       return !item?.serverUploadId || !consumed.has(item.serverUploadId)
     })
     uploadManager.retireUploadIds([...consumed])
-    if (fingerprint.value === snapshot.fingerprint) {
+    if (unchanged) {
       body.value = ''
       selectedTags.value = []
       selectedUploadClients.value = []
       sensitive.value = false
     }
     activeKey.value = ''
-    attemptedFingerprint = ''
+    attemptedIdentity = ''
     failed.value = false
     error.value = ''
     void client.invalidateQueries({ queryKey: queryKeys.messages.root() })
@@ -72,12 +86,12 @@ const send = useMutation({
   onError: (cause, snapshot) => {
     failed.value = true
     error.value = displayError(cause)
-    if (fingerprint.value !== snapshot.fingerprint) activeKey.value = ''
+    if (draftIdentity.value !== snapshot.identity) activeKey.value = ''
   },
 })
 
-watch(fingerprint, (value) => {
-  if (failed.value && value !== attemptedFingerprint) {
+watch(draftIdentity, (value) => {
+  if (failed.value && value !== attemptedIdentity) {
     activeKey.value = ''
     failed.value = false
     error.value = ''
@@ -91,10 +105,11 @@ function submit() {
   if (attachmentsBlocking.value) { error.value = '等待附件上传完成，或移除失败的附件。'; return }
   if (tooLarge.value) { error.value = '正文 UTF-8 大小不能超过 1 MiB。'; return }
   if (!activeKey.value) activeKey.value = crypto.randomUUID()
-  attemptedFingerprint = fingerprint.value
+  attemptedIdentity = draftIdentity.value
   send.mutate({
     key: activeKey.value,
-    fingerprint: attemptedFingerprint,
+    fingerprint: requestFingerprint.value,
+    identity: attemptedIdentity,
     payload: {
       body: body.value.trim() ? body.value : null,
       bodyFormat: bodyFormat.value,
@@ -136,6 +151,9 @@ function removeSelected(clientId: string) {
   const item = uploadManager.getItem(clientId)
   selectedUploadClients.value = selectedUploadClients.value.filter((id) => id !== clientId)
   if (item && item.status !== 'COMPLETED') uploadManager.remove(clientId)
+}
+function addRestored(clientId: string) {
+  if (!selectedUploadClients.value.includes(clientId)) selectedUploadClients.value.push(clientId)
 }
 function onKeydown(event: KeyboardEvent) {
   if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); submit() }
@@ -237,6 +255,28 @@ async function addTag() {
     >
       等待附件上传完成。失败的附件需要重试或移除后才能发送。
     </p>
+    <section
+      v-if="restorableUploads.length"
+      class="restored"
+      aria-label="已完成的上传"
+    >
+      <h3>已完成的上传</h3>
+      <ul>
+        <li
+          v-for="item in restorableUploads"
+          :key="item.clientId"
+        >
+          <span>{{ item.filename }} · {{ formatBytes(item.size) }}</span>
+          <button
+            class="button"
+            type="button"
+            @click="addRestored(item.clientId)"
+          >
+            添加到本条
+          </button>
+        </li>
+      </ul>
+    </section>
     <div class="options">
       <label class="field compact">保存位置<select v-model="lifecycle"><option :value="Lifecycle.TEMPORARY">Temporary</option><option :value="Lifecycle.PERMANENT">Permanent</option></select></label>
       <label class="toggle"><input
@@ -313,5 +353,6 @@ async function addTag() {
 <style scoped>
 .composer { padding:1rem; display:grid; gap:.8rem; } header,footer,.options { display:flex; align-items:center; justify-content:space-between; gap:.75rem; } h2 { margin:0; font-size:1rem; } textarea { resize:vertical; width:100%; min-height:120px; border:1px solid var(--border); border-radius:var(--radius-sm); padding:.8rem; background:var(--surface-raised); line-height:1.5; }.code{font-family:var(--font-mono)}.modes{display:flex;background:var(--surface-soft);border-radius:999px;padding:.2rem}.modes button{border:0;background:transparent;border-radius:999px;padding:.35rem .65rem}.modes .active{background:var(--surface-raised);box-shadow:0 1px 4px rgb(0 0 0 / .12)}.compact{display:flex;align-items:center;grid-template-columns:auto auto}.compact select{width:auto}.toggle{display:flex;gap:.4rem;align-items:center}.bytes{margin-left:auto;color:var(--muted);font-size:.75rem}fieldset{border:1px solid var(--border);border-radius:var(--radius-sm);padding:.65rem}.tag-options{display:flex;flex-wrap:wrap;gap:.5rem}.tag-options label{display:flex;align-items:center;gap:.25rem}.tag-options i{width:.55rem;height:.55rem;border-radius:50%}.new-tag{display:grid;grid-template-columns:1fr auto auto;gap:.4rem;margin-top:.65rem}.new-tag input[type=color]{width:44px;height:42px;border:1px solid var(--border);border-radius:var(--radius-sm);background:transparent}.warning{margin:0;color:#9a6414}.error{margin:0}.muted{font-size:.8rem}
 .drop-zone{display:flex;align-items:center;gap:.65rem;padding:.65rem .75rem;border:1px dashed var(--border);border-radius:var(--radius-sm);color:var(--muted);font-size:.8rem;transition:border-color .12s,background .12s}.drop-zone.dragging{border-color:var(--accent);background:var(--accent-soft)}.attach{color:var(--accent-strong)}.selected-files{list-style:none;margin:0;padding:0;display:grid;gap:.4rem}.selected-files li{display:flex;align-items:center;justify-content:space-between;gap:.7rem;padding:.55rem .7rem;background:var(--surface-soft);border-radius:var(--radius-sm)}.selected-files div{min-width:0;display:grid}.selected-files strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.selected-files small{color:var(--muted)}
+.restored{border:1px solid var(--border);border-radius:var(--radius-sm);padding:.55rem .65rem}.restored h3{margin:.1rem 0 .4rem;font-size:.78rem;color:var(--muted)}.restored ul{list-style:none;margin:0;padding:0;display:grid;gap:.35rem}.restored li{display:flex;align-items:center;justify-content:space-between;gap:.7rem;font-size:.82rem}.restored span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.restored .button{min-height:32px;padding:.25rem .55rem;font-size:.76rem;white-space:nowrap}
 @media(max-width:600px){.options{align-items:flex-start;flex-wrap:wrap}.bytes{width:100%;margin:0}.new-tag{grid-template-columns:1fr auto}.new-tag .button{grid-column:1/-1}footer .muted{display:none}}
 </style>
