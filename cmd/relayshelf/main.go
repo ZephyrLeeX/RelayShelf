@@ -90,7 +90,9 @@ func ready(db *pgxpool.Pool) http.HandlerFunc {
 
 func newHTTPRouter(apiHost func(http.Handler) http.Handler, api, live, readiness http.Handler) http.Handler {
 	router := chi.NewRouter()
-	router.Use(httpx.Trace, httpx.SecurityHeaders, httpx.RequestLog(log.Default()))
+	// RequestLog sits outside Recovery so panicked requests still produce a
+	// request log line; Recovery never sees headers or bodies, only the path.
+	router.Use(httpx.Trace, httpx.SecurityHeaders, httpx.RequestLog(log.Default()), httpx.Recovery(log.Default()))
 	router.Handle("/health/live", live)
 	router.Handle("/health/ready", readiness)
 	router.Group(func(router chi.Router) {
