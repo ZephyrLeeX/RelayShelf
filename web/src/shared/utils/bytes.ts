@@ -1,6 +1,6 @@
 export function formatBytes(value: number) {
   if (!Number.isFinite(value) || value < 0) return '0 Bytes'
-  const units = ['Bytes', 'KiB', 'MiB', 'GiB']
+  const units = ['Bytes', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB']
   let size = value
   let unit = 0
   while (size >= 1024 && unit < units.length - 1) { size /= 1024; unit++ }

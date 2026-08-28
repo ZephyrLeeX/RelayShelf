@@ -3,7 +3,11 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AddAttachmentsRequest } from '../models/AddAttachmentsRequest';
+import type { AdminStatus } from '../models/AdminStatus';
+import type { AdminUser } from '../models/AdminUser';
+import type { AdminUserList } from '../models/AdminUserList';
 import type { AuthBootstrap } from '../models/AuthBootstrap';
+import type { CreateAdminUserRequest } from '../models/CreateAdminUserRequest';
 import type { CreateMessageRequest } from '../models/CreateMessageRequest';
 import type { CreateUploadRequest } from '../models/CreateUploadRequest';
 import type { Device } from '../models/Device';
@@ -20,11 +24,15 @@ import type { MessageList } from '../models/MessageList';
 import type { PasswordChangeRequest } from '../models/PasswordChangeRequest';
 import type { RenameDeviceRequest } from '../models/RenameDeviceRequest';
 import type { ReplaceMessageTagsRequest } from '../models/ReplaceMessageTagsRequest';
+import type { ResetAdminUserPasswordRequest } from '../models/ResetAdminUserPasswordRequest';
+import type { RuntimeSettings } from '../models/RuntimeSettings';
 import type { SensitiveBody } from '../models/SensitiveBody';
 import type { SensitiveRequest } from '../models/SensitiveRequest';
 import type { Session } from '../models/Session';
+import type { StorageStatus } from '../models/StorageStatus';
 import type { Tag } from '../models/Tag';
 import type { TagRequest } from '../models/TagRequest';
+import type { UpdateRuntimeSettingsRequest } from '../models/UpdateRuntimeSettingsRequest';
 import type { UpdateTagRequest } from '../models/UpdateTagRequest';
 import type { UploadSession } from '../models/UploadSession';
 import type { VersionRequest } from '../models/VersionRequest';
@@ -899,6 +907,181 @@ export class DefaultService {
                 'tagId': tagId,
             },
             errors: {
+                404: `API error`,
+            },
+        });
+    }
+    /**
+     * @returns RuntimeSettings Typed singleton runtime settings
+     * @throws ApiError
+     */
+    public static getRuntimeSettings(): CancelablePromise<RuntimeSettings> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/admin/settings',
+            errors: {
+                401: `API error`,
+                403: `API error`,
+            },
+        });
+    }
+    /**
+     * @param requestBody
+     * @returns RuntimeSettings Atomically updated runtime settings
+     * @throws ApiError
+     */
+    public static updateRuntimeSettings(
+        requestBody: UpdateRuntimeSettingsRequest,
+    ): CancelablePromise<RuntimeSettings> {
+        return __request(OpenAPI, {
+            method: 'PUT',
+            url: '/admin/settings',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                401: `API error`,
+                403: `API error`,
+                422: `API error`,
+            },
+        });
+    }
+    /**
+     * @returns StorageStatus Bounded storage health projection without internal paths
+     * @throws ApiError
+     */
+    public static getStorageStatus(): CancelablePromise<StorageStatus> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/admin/storage',
+            errors: {
+                401: `API error`,
+                403: `API error`,
+            },
+        });
+    }
+    /**
+     * @returns AdminStatus Operational status without private content or raw job payloads
+     * @throws ApiError
+     */
+    public static getAdminStatus(): CancelablePromise<AdminStatus> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/admin/status',
+            errors: {
+                401: `API error`,
+                403: `API error`,
+            },
+        });
+    }
+    /**
+     * @param cursor
+     * @param limit
+     * @returns AdminUserList Bounded operational user metadata page; every stored user is reachable via cursor pagination
+     * @throws ApiError
+     */
+    public static listAdminUsers(
+        cursor?: string,
+        limit: number = 30,
+    ): CancelablePromise<AdminUserList> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/admin/users',
+            query: {
+                'cursor': cursor,
+                'limit': limit,
+            },
+            errors: {
+                401: `API error`,
+                403: `API error`,
+                422: `API error`,
+            },
+        });
+    }
+    /**
+     * @param requestBody
+     * @returns AdminUser User created
+     * @throws ApiError
+     */
+    public static createAdminUser(
+        requestBody: CreateAdminUserRequest,
+    ): CancelablePromise<AdminUser> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/admin/users',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                401: `API error`,
+                403: `API error`,
+                409: `API error`,
+                422: `API error`,
+            },
+        });
+    }
+    /**
+     * @param userId
+     * @returns void
+     * @throws ApiError
+     */
+    public static disableAdminUser(
+        userId: string,
+    ): CancelablePromise<void> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/admin/users/{userId}/disable',
+            path: {
+                'userId': userId,
+            },
+            errors: {
+                401: `API error`,
+                403: `API error`,
+                404: `API error`,
+            },
+        });
+    }
+    /**
+     * @param userId
+     * @param requestBody
+     * @returns void
+     * @throws ApiError
+     */
+    public static resetAdminUserPassword(
+        userId: string,
+        requestBody: ResetAdminUserPasswordRequest,
+    ): CancelablePromise<void> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/admin/users/{userId}/password/reset',
+            path: {
+                'userId': userId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                401: `API error`,
+                403: `API error`,
+                404: `API error`,
+                422: `API error`,
+            },
+        });
+    }
+    /**
+     * @param userId
+     * @returns void
+     * @throws ApiError
+     */
+    public static deleteAdminUser(
+        userId: string,
+    ): CancelablePromise<void> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/admin/users/{userId}',
+            path: {
+                'userId': userId,
+            },
+            errors: {
+                401: `API error`,
+                403: `API error`,
                 404: `API error`,
             },
         });

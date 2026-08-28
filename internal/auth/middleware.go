@@ -131,6 +131,24 @@ func (m *Middleware) Touch(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
+
+// RequireAdmin is the single server-side authorization boundary for every
+// operational admin endpoint. Authentication has already re-read ACTIVE user
+// state, so disabled administrators are denied before this policy runs.
+func (m *Middleware) RequireAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authn, ok := FromContext(r.Context())
+		if !ok {
+			WriteError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required")
+			return
+		}
+		if !authn.User.IsAdmin {
+			WriteError(w, r, http.StatusForbidden, "ADMIN_REQUIRED", "administrator access required")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 func (m *Middleware) validOrigin(r *http.Request) bool {
 	raw := r.Header.Get("Origin")
 	if raw == "" {

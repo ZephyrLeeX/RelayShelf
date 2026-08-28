@@ -14,6 +14,24 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for AdminUserStatus.
+const (
+	ACTIVE   AdminUserStatus = "ACTIVE"
+	DISABLED AdminUserStatus = "DISABLED"
+)
+
+// Valid indicates whether the value is a known member of the AdminUserStatus enum.
+func (e AdminUserStatus) Valid() bool {
+	switch e {
+	case ACTIVE:
+		return true
+	case DISABLED:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for BodyFormat.
 const (
 	MARKDOWN BodyFormat = "MARKDOWN"
@@ -32,6 +50,27 @@ func (e BodyFormat) Valid() bool {
 	}
 }
 
+// Defines values for HealthState.
+const (
+	DEGRADED    HealthState = "DEGRADED"
+	HEALTHY     HealthState = "HEALTHY"
+	UNAVAILABLE HealthState = "UNAVAILABLE"
+)
+
+// Valid indicates whether the value is a known member of the HealthState enum.
+func (e HealthState) Valid() bool {
+	switch e {
+	case DEGRADED:
+		return true
+	case HEALTHY:
+		return true
+	case UNAVAILABLE:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Lifecycle.
 const (
 	PERMANENT Lifecycle = "PERMANENT"
@@ -44,6 +83,63 @@ func (e Lifecycle) Valid() bool {
 	case PERMANENT:
 		return true
 	case TEMPORARY:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StorageStatusDegradedReasons.
+const (
+	DATABASEUNAVAILABLE      StorageStatusDegradedReasons = "DATABASE_UNAVAILABLE"
+	LOGICALTHRESHOLDEXCEEDED StorageStatusDegradedReasons = "LOGICAL_THRESHOLD_EXCEEDED"
+	LOGICALTHRESHOLDWARNING  StorageStatusDegradedReasons = "LOGICAL_THRESHOLD_WARNING"
+	NASTIMEOUT               StorageStatusDegradedReasons = "NAS_TIMEOUT"
+	NASUNAVAILABLE           StorageStatusDegradedReasons = "NAS_UNAVAILABLE"
+	STAGINGUNAVAILABLE       StorageStatusDegradedReasons = "STAGING_UNAVAILABLE"
+)
+
+// Valid indicates whether the value is a known member of the StorageStatusDegradedReasons enum.
+func (e StorageStatusDegradedReasons) Valid() bool {
+	switch e {
+	case DATABASEUNAVAILABLE:
+		return true
+	case LOGICALTHRESHOLDEXCEEDED:
+		return true
+	case LOGICALTHRESHOLDWARNING:
+		return true
+	case NASTIMEOUT:
+		return true
+	case NASUNAVAILABLE:
+		return true
+	case STAGINGUNAVAILABLE:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StorageThresholdState.
+const (
+	LIMITREACHED  StorageThresholdState = "LIMIT_REACHED"
+	NORMAL        StorageThresholdState = "NORMAL"
+	STRONGWARNING StorageThresholdState = "STRONG_WARNING"
+	UNCONFIGURED  StorageThresholdState = "UNCONFIGURED"
+	WARNING       StorageThresholdState = "WARNING"
+)
+
+// Valid indicates whether the value is a known member of the StorageThresholdState enum.
+func (e StorageThresholdState) Valid() bool {
+	switch e {
+	case LIMITREACHED:
+		return true
+	case NORMAL:
+		return true
+	case STRONGWARNING:
+		return true
+	case UNCONFIGURED:
+		return true
+	case WARNING:
 		return true
 	default:
 		return false
@@ -86,6 +182,36 @@ type AddAttachmentsRequest struct {
 	UploadIds       []openapi_types.UUID `json:"uploadIds"`
 }
 
+// AdminStatus defines model for AdminStatus.
+type AdminStatus struct {
+	Build         BuildInfo       `json:"build"`
+	DatabaseState HealthState     `json:"databaseState"`
+	FailedJobs    []FailedJob     `json:"failedJobs"`
+	Migration     MigrationStatus `json:"migration"`
+	State         HealthState     `json:"state"`
+	Storage       StorageStatus   `json:"storage"`
+}
+
+// AdminUser defines model for AdminUser.
+type AdminUser struct {
+	CreatedAt   time.Time          `json:"createdAt"`
+	DisplayName string             `json:"displayName"`
+	Id          openapi_types.UUID `json:"id"`
+	IsAdmin     bool               `json:"isAdmin"`
+	Status      AdminUserStatus    `json:"status"`
+	UpdatedAt   time.Time          `json:"updatedAt"`
+	Username    string             `json:"username"`
+}
+
+// AdminUserStatus defines model for AdminUser.Status.
+type AdminUserStatus string
+
+// AdminUserList defines model for AdminUserList.
+type AdminUserList struct {
+	Items      []AdminUser `json:"items"`
+	NextCursor *string     `json:"nextCursor"`
+}
+
 // AttachmentSummary defines model for AttachmentSummary.
 type AttachmentSummary struct {
 	ClientMime       *string            `json:"clientMime"`
@@ -106,6 +232,21 @@ type AuthBootstrap struct {
 
 // BodyFormat defines model for BodyFormat.
 type BodyFormat string
+
+// BuildInfo defines model for BuildInfo.
+type BuildInfo struct {
+	BuildTime string `json:"buildTime"`
+	GitCommit string `json:"gitCommit"`
+	Version   string `json:"version"`
+}
+
+// CreateAdminUserRequest defines model for CreateAdminUserRequest.
+type CreateAdminUserRequest struct {
+	DisplayName string `json:"displayName"`
+	IsAdmin     bool   `json:"isAdmin"`
+	Password    string `json:"password"`
+	Username    string `json:"username"`
+}
 
 // CreateMessageRequest defines model for CreateMessageRequest.
 type CreateMessageRequest struct {
@@ -165,6 +306,16 @@ type Error struct {
 	TraceId string      `json:"traceId"`
 }
 
+// FailedJob defines model for FailedJob.
+type FailedJob struct {
+	Attempts    int                `json:"attempts"`
+	ErrorCode   string             `json:"errorCode"`
+	Id          openapi_types.UUID `json:"id"`
+	SubjectType string             `json:"subjectType"`
+	Type        string             `json:"type"`
+	UpdatedAt   time.Time          `json:"updatedAt"`
+}
+
 // FavoriteRequest defines model for FavoriteRequest.
 type FavoriteRequest struct {
 	ExpectedVersion int64 `json:"expectedVersion"`
@@ -176,6 +327,9 @@ type ForwardRequest struct {
 	ExpectedVersion int64              `json:"expectedVersion"`
 	RecipientUserId openapi_types.UUID `json:"recipientUserId"`
 }
+
+// HealthState defines model for HealthState.
+type HealthState string
 
 // Lifecycle defines model for Lifecycle.
 type Lifecycle string
@@ -248,6 +402,13 @@ type MessageSummary struct {
 	Version          int64               `json:"version"`
 }
 
+// MigrationStatus defines model for MigrationStatus.
+type MigrationStatus struct {
+	Compatible     bool  `json:"compatible"`
+	CurrentVersion int64 `json:"currentVersion"`
+	LatestVersion  int64 `json:"latestVersion"`
+}
+
 // PasswordChangeRequest defines model for PasswordChangeRequest.
 type PasswordChangeRequest struct {
 	CurrentPassword string `json:"currentPassword"`
@@ -263,6 +424,23 @@ type RenameDeviceRequest struct {
 type ReplaceMessageTagsRequest struct {
 	ExpectedVersion int64                `json:"expectedVersion"`
 	TagIds          []openapi_types.UUID `json:"tagIds"`
+}
+
+// ResetAdminUserPasswordRequest defines model for ResetAdminUserPasswordRequest.
+type ResetAdminUserPasswordRequest struct {
+	NewPassword string `json:"newPassword"`
+}
+
+// RuntimeSettings defines model for RuntimeSettings.
+type RuntimeSettings struct {
+	AuditRetentionDays   int                 `json:"auditRetentionDays"`
+	MaxFileSizeBytes     int64               `json:"maxFileSizeBytes"`
+	MaxStorageBytes      *int64              `json:"maxStorageBytes"`
+	TemporaryTtlHours    int                 `json:"temporaryTtlHours"`
+	TrashTtlHours        int                 `json:"trashTtlHours"`
+	UpdatedAt            time.Time           `json:"updatedAt"`
+	UpdatedByUserId      *openapi_types.UUID `json:"updatedByUserId,omitempty"`
+	UploadRetentionHours int                 `json:"uploadRetentionHours"`
 }
 
 // SensitiveBody defines model for SensitiveBody.
@@ -289,6 +467,26 @@ type Session struct {
 	LastSeenAt        time.Time          `json:"lastSeenAt"`
 }
 
+// StorageStatus defines model for StorageStatus.
+type StorageStatus struct {
+	DegradedReasons       []StorageStatusDegradedReasons `json:"degradedReasons"`
+	LogicalUsageBytes     int64                          `json:"logicalUsageBytes"`
+	MaxStorageBytes       *int64                         `json:"maxStorageBytes"`
+	NasAvailableBytes     *int64                         `json:"nasAvailableBytes"`
+	NasTotalBytes         *int64                         `json:"nasTotalBytes"`
+	StagingAvailableBytes *int64                         `json:"stagingAvailableBytes"`
+	StagingTotalBytes     *int64                         `json:"stagingTotalBytes"`
+	StagingUsageBytes     int64                          `json:"stagingUsageBytes"`
+	State                 HealthState                    `json:"state"`
+	ThresholdState        StorageThresholdState          `json:"thresholdState"`
+}
+
+// StorageStatusDegradedReasons defines model for StorageStatus.DegradedReasons.
+type StorageStatusDegradedReasons string
+
+// StorageThresholdState defines model for StorageThresholdState.
+type StorageThresholdState string
+
 // Tag defines model for Tag.
 type Tag struct {
 	Color     string             `json:"color"`
@@ -302,6 +500,16 @@ type Tag struct {
 type TagRequest struct {
 	Color string `json:"color"`
 	Name  string `json:"name"`
+}
+
+// UpdateRuntimeSettingsRequest defines model for UpdateRuntimeSettingsRequest.
+type UpdateRuntimeSettingsRequest struct {
+	AuditRetentionDays   int    `json:"auditRetentionDays"`
+	MaxFileSizeBytes     int64  `json:"maxFileSizeBytes"`
+	MaxStorageBytes      *int64 `json:"maxStorageBytes"`
+	TemporaryTtlHours    int    `json:"temporaryTtlHours"`
+	TrashTtlHours        int    `json:"trashTtlHours"`
+	UploadRetentionHours int    `json:"uploadRetentionHours"`
 }
 
 // UpdateTagRequest defines model for UpdateTagRequest.
@@ -371,6 +579,15 @@ type TagId = openapi_types.UUID
 // UploadId defines model for UploadId.
 type UploadId = openapi_types.UUID
 
+// UserId defines model for UserId.
+type UserId = openapi_types.UUID
+
+// ListAdminUsersParams defines parameters for ListAdminUsers.
+type ListAdminUsersParams struct {
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // ListMessagesParams defines parameters for ListMessages.
 type ListMessagesParams struct {
 	Lifecycle *Lifecycle            `form:"lifecycle,omitempty" json:"lifecycle,omitempty"`
@@ -413,6 +630,15 @@ type ListTrashParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
 }
+
+// UpdateRuntimeSettingsJSONRequestBody defines body for UpdateRuntimeSettings for application/json ContentType.
+type UpdateRuntimeSettingsJSONRequestBody = UpdateRuntimeSettingsRequest
+
+// CreateAdminUserJSONRequestBody defines body for CreateAdminUser for application/json ContentType.
+type CreateAdminUserJSONRequestBody = CreateAdminUserRequest
+
+// ResetAdminUserPasswordJSONRequestBody defines body for ResetAdminUserPassword for application/json ContentType.
+type ResetAdminUserPasswordJSONRequestBody = ResetAdminUserPasswordRequest
 
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody = LoginRequest
@@ -473,6 +699,33 @@ type CreateUploadJSONRequestBody = CreateUploadRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+
+	// (GET /admin/settings)
+	GetRuntimeSettings(w http.ResponseWriter, r *http.Request)
+
+	// (PUT /admin/settings)
+	UpdateRuntimeSettings(w http.ResponseWriter, r *http.Request)
+
+	// (GET /admin/status)
+	GetAdminStatus(w http.ResponseWriter, r *http.Request)
+
+	// (GET /admin/storage)
+	GetStorageStatus(w http.ResponseWriter, r *http.Request)
+
+	// (GET /admin/users)
+	ListAdminUsers(w http.ResponseWriter, r *http.Request, params ListAdminUsersParams)
+
+	// (POST /admin/users)
+	CreateAdminUser(w http.ResponseWriter, r *http.Request)
+
+	// (DELETE /admin/users/{userId})
+	DeleteAdminUser(w http.ResponseWriter, r *http.Request, userId UserId)
+
+	// (POST /admin/users/{userId}/disable)
+	DisableAdminUser(w http.ResponseWriter, r *http.Request, userId UserId)
+
+	// (POST /admin/users/{userId}/password/reset)
+	ResetAdminUserPassword(w http.ResponseWriter, r *http.Request, userId UserId)
 
 	// (GET /attachments/{attachmentId}/download)
 	DownloadAttachment(w http.ResponseWriter, r *http.Request, attachmentId AttachmentId)
@@ -595,6 +848,51 @@ type ServerInterface interface {
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
 
 type Unimplemented struct{}
+
+// (GET /admin/settings)
+func (_ Unimplemented) GetRuntimeSettings(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PUT /admin/settings)
+func (_ Unimplemented) UpdateRuntimeSettings(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /admin/status)
+func (_ Unimplemented) GetAdminStatus(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /admin/storage)
+func (_ Unimplemented) GetStorageStatus(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /admin/users)
+func (_ Unimplemented) ListAdminUsers(w http.ResponseWriter, r *http.Request, params ListAdminUsersParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /admin/users)
+func (_ Unimplemented) CreateAdminUser(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (DELETE /admin/users/{userId})
+func (_ Unimplemented) DeleteAdminUser(w http.ResponseWriter, r *http.Request, userId UserId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /admin/users/{userId}/disable)
+func (_ Unimplemented) DisableAdminUser(w http.ResponseWriter, r *http.Request, userId UserId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /admin/users/{userId}/password/reset)
+func (_ Unimplemented) ResetAdminUserPassword(w http.ResponseWriter, r *http.Request, userId UserId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
 
 // (GET /attachments/{attachmentId}/download)
 func (_ Unimplemented) DownloadAttachment(w http.ResponseWriter, r *http.Request, attachmentId AttachmentId) {
@@ -799,6 +1097,200 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// GetRuntimeSettings operation middleware
+func (siw *ServerInterfaceWrapper) GetRuntimeSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRuntimeSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateRuntimeSettings operation middleware
+func (siw *ServerInterfaceWrapper) UpdateRuntimeSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateRuntimeSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAdminStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetAdminStatus(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAdminStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetStorageStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetStorageStatus(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetStorageStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListAdminUsers operation middleware
+func (siw *ServerInterfaceWrapper) ListAdminUsers(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListAdminUsersParams
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAdminUsers(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateAdminUser operation middleware
+func (siw *ServerInterfaceWrapper) CreateAdminUser(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateAdminUser(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteAdminUser operation middleware
+func (siw *ServerInterfaceWrapper) DeleteAdminUser(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "userId" -------------
+	var userId UserId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "userId", chi.URLParam(r, "userId"), &userId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "userId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteAdminUser(w, r, userId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DisableAdminUser operation middleware
+func (siw *ServerInterfaceWrapper) DisableAdminUser(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "userId" -------------
+	var userId UserId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "userId", chi.URLParam(r, "userId"), &userId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "userId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DisableAdminUser(w, r, userId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ResetAdminUserPassword operation middleware
+func (siw *ServerInterfaceWrapper) ResetAdminUserPassword(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "userId" -------------
+	var userId UserId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "userId", chi.URLParam(r, "userId"), &userId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "userId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResetAdminUserPassword(w, r, userId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // DownloadAttachment operation middleware
 func (siw *ServerInterfaceWrapper) DownloadAttachment(w http.ResponseWriter, r *http.Request) {
@@ -2197,6 +2689,33 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Patch(options.BaseURL+"/tags/{tagId}", wrapper.UpdateTag)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/admin/settings", wrapper.GetRuntimeSettings)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/admin/settings", wrapper.UpdateRuntimeSettings)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/admin/storage", wrapper.GetStorageStatus)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/admin/status", wrapper.GetAdminStatus)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/admin/users", wrapper.ListAdminUsers)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/admin/users", wrapper.CreateAdminUser)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/admin/users/{userId}/disable", wrapper.DisableAdminUser)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/admin/users/{userId}/password/reset", wrapper.ResetAdminUserPassword)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/admin/users/{userId}", wrapper.DeleteAdminUser)
 	})
 
 	return r

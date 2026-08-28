@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/ZephyrLeeX/RelayShelf/internal/audit"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/id"
 	usersdomain "github.com/ZephyrLeeX/RelayShelf/internal/users"
 	"github.com/google/uuid"
@@ -297,9 +298,15 @@ func (s *Service) ResetPasswordByAdmin(ctx context.Context, actor Authentication
 	if err != nil {
 		return err
 	}
-	event, err := s.event("PASSWORD_RESET_BY_ADMIN", &actor.User.ID, &targetID, &actor.Device.ID, &actor.Session.ID, input)
-	if err != nil {
-		return err
-	}
+	// USER_PASSWORD_RESET is a Phase 10 admin event: it is built exclusively by
+	// the typed audit constructor, so no caller can attach arbitrary metadata.
+	event := audit.UserPasswordReset(audit.Actor{
+		UserID:    actor.User.ID,
+		DeviceID:  actor.Device.ID,
+		SessionID: actor.Session.ID,
+		IP:        input.ClientIP,
+		UserAgent: truncate(input.UserAgent, 512),
+		TraceID:   truncate(input.TraceID, 128),
+	}, targetID)
 	return s.repo.ResetPasswordAndRevokeAll(ctx, targetID, hash, s.clock.Now(), event)
 }
