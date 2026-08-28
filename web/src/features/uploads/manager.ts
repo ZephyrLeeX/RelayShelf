@@ -361,11 +361,21 @@ export class UploadManager {
     await this.resume(clientId)
   }
 
-  // User-triggered episode boundary for CSRF_INVALID: resets the marker so
-  // the retry is allowed exactly one fresh token refresh before resuming.
+  // User-triggered episode boundary for CSRF_INVALID: spend exactly one
+  // refresh, and only resume when the token actually rotated. A failed or
+  // no-op refresh must not replay the known-invalid token into another
+  // chunk; the item stays FAILED for a later explicit Retry.
   private async retryAfterCsrfRefresh(clientId: string) {
+    const item = this.getItem(clientId)
+    if (!item || item.status !== 'FAILED') return
+    const stale = getCsrfToken()
     this.autoRecoveredCsrf.delete(clientId)
-    await this.refreshCsrfToken()
+    const fresh = await this.refreshCsrfToken()
+    if (!fresh || fresh === stale) return
+    // The episode has spent its automatic refresh: a repeat CSRF_INVALID
+    // during this resume lands in FAILED instead of refreshing a third
+    // token without another explicit user Retry.
+    this.autoRecoveredCsrf.add(clientId)
     await this.resume(clientId)
   }
 

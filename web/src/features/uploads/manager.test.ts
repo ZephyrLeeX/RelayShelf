@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { UploadStatus, type UploadSession } from '@/api/generated'
 import { setAuthExpiredHandler } from '@/shared/api/authExpiry'
-import { setCsrfToken } from '@/shared/api/configure'
+import { getCsrfToken, setCsrfToken } from '@/shared/api/configure'
 import { UploadManager, partRange } from './manager'
 import { ResumeLedger } from './resumeLedger'
 import { uploadState } from './store'
@@ -298,6 +298,88 @@ describe('UploadManager', () => {
     expect(api.get).toHaveBeenCalledTimes(2)
     expect(transport.requests.filter((request) => request.partNumber === 0).map((request) => request.csrfToken)).toEqual(['stale', 'fresh1', 'fresh2'])
     expect(manager.items[0].status).toBe('COMPLETED')
+  })
+
+  describe('explicit CSRF retry stays bounded', () => {
+    // Drives an upload to the end of a spent auto-recovery episode: the
+    // stale token was rejected, the automatic refresh rotated to fresh1,
+    // fresh1 was rejected as well, and the item waits in FAILED for a user
+    // retry with the token still at fresh1. extraFailures script additional
+    // rejections for the retry-episode chunks.
+    async function failedAfterSpentEpisode(refresh: () => Promise<unknown>, extraFailures: Array<{ part: number; status: number; code: string }> = []) {
+      setCsrfToken('stale')
+      const single = { chunkSize: 9, partCount: 1, expectedSize: 9 }
+      const transport = new ScriptedTransport([
+        { part: 0, status: 403, code: 'CSRF_INVALID' }, // stale token
+        { part: 0, status: 403, code: 'CSRF_INVALID' }, // fresh1 is also invalid
+        ...extraFailures,
+      ], true)
+      const api = {
+        create: vi.fn().mockResolvedValue(session(single)),
+        get: vi.fn().mockResolvedValue(session(single)),
+        complete: vi.fn().mockResolvedValue(session({ ...single, status: UploadStatus.COMPLETED, completedParts: [0] })),
+      }
+      const manager = new UploadManager(api, transport)
+      manager.setCsrfRefresh(refresh)
+      await manager.addFiles([file9()])
+      await flush()
+      expect(manager.items[0].status).toBe('FAILED')
+      expect(getCsrfToken()).toBe('fresh1')
+      return { manager, api, transport }
+    }
+
+    it('keeps the item FAILED when the explicit retry refresh throws', async () => {
+      const refresh = vi.fn()
+        .mockImplementationOnce(() => { setCsrfToken('fresh1'); return Promise.resolve(undefined) })
+        .mockImplementationOnce(() => Promise.reject(new Error('bootstrap offline')))
+      const { manager, api, transport } = await failedAfterSpentEpisode(refresh)
+      manager.retry(manager.items[0].clientId)
+      await flush()
+      expect(refresh).toHaveBeenCalledTimes(2) // one auto episode + exactly one for this Retry
+      expect(transport.requests.map((request) => request.csrfToken)).toEqual(['stale', 'fresh1'])
+      expect(api.get).toHaveBeenCalledTimes(1)
+      expect(manager.items[0].status).toBe('FAILED')
+      expect(asFailed(manager.items[0]).errorCode).toBe('CSRF_INVALID')
+      expect(asFailed(manager.items[0]).retryable).toBe(true)
+    })
+
+    it('keeps the item FAILED when the explicit retry refresh cannot rotate the token', async () => {
+      const refresh = vi.fn()
+        .mockImplementationOnce(() => { setCsrfToken('fresh1'); return Promise.resolve(undefined) })
+        .mockImplementationOnce(() => Promise.resolve(undefined)) // resolves without rotating
+      const { manager, api, transport } = await failedAfterSpentEpisode(refresh)
+      manager.retry(manager.items[0].clientId)
+      await flush()
+      expect(refresh).toHaveBeenCalledTimes(2) // no second automatic refresh
+      expect(transport.requests.map((request) => request.csrfToken)).toEqual(['stale', 'fresh1'])
+      expect(api.get).toHaveBeenCalledTimes(1)
+      expect(manager.items[0].status).toBe('FAILED')
+      expect(asFailed(manager.items[0]).errorCode).toBe('CSRF_INVALID')
+    })
+
+    it('fails without a second refresh when the rotated token is rejected; a later Retry starts a new episode', async () => {
+      const refresh = vi.fn()
+        .mockImplementationOnce(() => { setCsrfToken('fresh1'); return Promise.resolve(undefined) })
+        .mockImplementationOnce(() => { setCsrfToken('fresh2'); return Promise.resolve(undefined) })
+        .mockImplementationOnce(() => { setCsrfToken('fresh3'); return Promise.resolve(undefined) })
+      const { manager, api, transport } = await failedAfterSpentEpisode(refresh, [
+        { part: 0, status: 403, code: 'CSRF_INVALID' }, // fresh2 is rejected too
+      ])
+      manager.retry(manager.items[0].clientId)
+      await flush()
+      expect(refresh).toHaveBeenCalledTimes(2) // exactly one for this Retry; no automatic fresh3
+      expect(transport.requests.map((request) => request.csrfToken)).toEqual(['stale', 'fresh1', 'fresh2'])
+      expect(manager.items[0].status).toBe('FAILED')
+      expect(asFailed(manager.items[0]).errorCode).toBe('CSRF_INVALID')
+
+      // A second explicit Retry is a new, independently bounded episode.
+      manager.retry(manager.items[0].clientId)
+      await flush()
+      expect(refresh).toHaveBeenCalledTimes(3)
+      expect(transport.requests.map((request) => request.csrfToken)).toEqual(['stale', 'fresh1', 'fresh2', 'fresh3'])
+      expect(api.get).toHaveBeenCalledTimes(3)
+      expect(manager.items[0].status).toBe('COMPLETED')
+    })
   })
 
   it('reconciles a lost Complete response through GET instead of re-uploading parts', async () => {

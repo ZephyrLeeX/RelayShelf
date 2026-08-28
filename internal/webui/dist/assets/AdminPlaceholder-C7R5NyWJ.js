@@ -1,0 +1,1 @@
+import{m as o,o as a,c as n,a as s}from"./index-XpuzVJXF.js";const t={},c={class:"panel"};function r(l,e){return a(),n("section",c,[...e[0]||(e[0]=[s("h1",null,"管理",-1),s("p",null,"管理功能将在 Phase 10 提供。",-1)])])}const d=o(t,[["render",r],["__scopeId","data-v-5588650b"]]);export{d as default};
