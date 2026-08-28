@@ -29,3 +29,17 @@ func TestPhase10MetadataIsExplicitlyAllowlisted(t *testing.T) {
 		}
 	}
 }
+
+// TestUserPasswordResetMetadataStaysEmpty pins the Phase 10 boundary: the
+// password reset event carries no caller-supplied fields at all, so the only
+// way to attach metadata to it would be editing this package.
+func TestUserPasswordResetMetadataStaysEmpty(t *testing.T) {
+	target := uuid.Must(uuid.NewV7())
+	event := UserPasswordReset(Actor{UserID: uuid.Must(uuid.NewV7())}, target)
+	if event.Type != EventUserPasswordReset || event.TargetType != "USER" || event.TargetID != target {
+		t.Fatalf("event shape changed: %+v", event)
+	}
+	if len(event.metadata) != 0 {
+		t.Fatalf("password reset metadata must remain empty, got %v", event.metadata)
+	}
+}

@@ -10,6 +10,7 @@ export type { OpenAPIConfig } from './core/OpenAPI';
 export type { AddAttachmentsRequest } from './models/AddAttachmentsRequest';
 export type { AdminStatus } from './models/AdminStatus';
 export { AdminUser } from './models/AdminUser';
+export type { AdminUserList } from './models/AdminUserList';
 export type { AttachmentId } from './models/AttachmentId';
 export type { AttachmentSummary } from './models/AttachmentSummary';
 export type { AuthBootstrap } from './models/AuthBootstrap';

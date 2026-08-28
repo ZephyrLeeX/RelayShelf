@@ -10,9 +10,11 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/ZephyrLeeX/RelayShelf/internal/audit"
 	"github.com/ZephyrLeeX/RelayShelf/internal/auth"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/clock"
 	postgresutil "github.com/ZephyrLeeX/RelayShelf/internal/platform/database/testutil"
@@ -40,7 +42,7 @@ func TestPostgreSQLLoginSessionOwnershipAndRevocation(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	repo := auth.NewPostgreSQLRepository(db)
+	repo := auth.NewPostgreSQLRepository(db, audit.NewRecorder(id.UUIDv7{}, clock.Real{}))
 	now := clock.Real{}
 	service := auth.NewService(repo, hasher, id.UUIDv7{}, now, auth.NewRateLimiter(now, 100))
 	ip := netip.MustParseAddr("192.0.2.10")
@@ -154,7 +156,7 @@ func TestAdminResetRevokesAllTargetSessions(t *testing.T) {
 		}
 	}
 	now := clock.Real{}
-	service := auth.NewService(auth.NewPostgreSQLRepository(db), hasher, id.UUIDv7{}, now, auth.NewRateLimiter(now, 100))
+	service := auth.NewService(auth.NewPostgreSQLRepository(db, audit.NewRecorder(id.UUIDv7{}, now)), hasher, id.UUIDv7{}, now, auth.NewRateLimiter(now, 100))
 	ip := netip.MustParseAddr("192.0.2.1")
 	login := func(name string) auth.LoginResult {
 		r, e := service.Login(ctx, auth.LoginInput{Username: name, Password: "initial-password", ClientIP: ip})
@@ -166,7 +168,7 @@ func TestAdminResetRevokesAllTargetSessions(t *testing.T) {
 	one := login("target")
 	two := login("target")
 	administrator := login("admin")
-	if err := service.ResetPasswordByAdmin(ctx, administrator.Authentication, target, "reset-password", auth.LoginInput{ClientIP: ip}); err != nil {
+	if err := service.ResetPasswordByAdmin(ctx, administrator.Authentication, target, "reset-password", auth.LoginInput{ClientIP: ip, UserAgent: "admin-reset-agent", TraceID: "trace-reset"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, token := range []string{one.RawToken, two.RawToken} {
@@ -185,5 +187,72 @@ func TestAdminResetRevokesAllTargetSessions(t *testing.T) {
 	var auditCount int
 	if err = db.QueryRow(ctx, "SELECT count(*) FROM audit_logs WHERE event_type='USER_PASSWORD_RESET'").Scan(&auditCount); err != nil || auditCount != 1 {
 		t.Fatalf("audit=%d err=%v", auditCount, err)
+	}
+	var actorID, auditedTarget uuid.UUID
+	var metadata string
+	if err = db.QueryRow(ctx, "SELECT actor_user_id,target_id,metadata::text FROM audit_logs WHERE event_type='USER_PASSWORD_RESET'").Scan(&actorID, &auditedTarget, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if actorID != adminID || auditedTarget != target {
+		t.Fatalf("audit actor=%v target=%v", actorID, auditedTarget)
+	}
+	if metadata != "{}" {
+		t.Fatalf("password reset audit metadata must stay the typed empty allowlist, got %s", metadata)
+	}
+	for _, secret := range []string{"reset-password", changed, one.RawToken, two.RawToken} {
+		if strings.Contains(metadata, secret) {
+			t.Fatalf("password reset audit metadata leaked secret: %s", metadata)
+		}
+	}
+}
+
+// TestAdminResetRollsBackWhenAuditInsertFails proves the password update, the
+// session revocation, and the typed audit event share one transaction: when the
+// audit insert fails, nothing else is durably applied.
+func TestAdminResetRollsBackWhenAuditInsertFails(t *testing.T) {
+	ctx := context.Background()
+	db := postgresutil.NewDatabase(t)
+	hasher := auth.NewPasswordHasher(auth.Argon2Params{Memory: 64, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32})
+	encoded, err := hasher.Hash("initial-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, adminID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	for _, row := range []struct {
+		id    uuid.UUID
+		name  string
+		admin bool
+	}{{target, "target", false}, {adminID, "admin", true}} {
+		if _, err = db.Exec(ctx, "INSERT INTO users(id,username,display_name,password_hash,is_admin,status) VALUES($1,$2,$2,$3,$4,'ACTIVE')", row.id, row.name, encoded, row.admin); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := clock.Real{}
+	service := auth.NewService(auth.NewPostgreSQLRepository(db, audit.NewRecorder(id.UUIDv7{}, now)), hasher, id.UUIDv7{}, now, auth.NewRateLimiter(now, 100))
+	ip := netip.MustParseAddr("192.0.2.1")
+	targetSession, err := service.Login(ctx, auth.LoginInput{Username: "target", Password: "initial-password", ClientIP: ip})
+	if err != nil {
+		t.Fatal(err)
+	}
+	administrator, err := service.Login(ctx, auth.LoginInput{Username: "admin", Password: "initial-password", ClientIP: ip})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Break only the audit insert path; each test owns this database.
+	if _, err = db.Exec(ctx, "ALTER TABLE audit_logs DROP COLUMN metadata"); err != nil {
+		t.Fatal(err)
+	}
+	if err = service.ResetPasswordByAdmin(ctx, administrator.Authentication, target, "reset-password", auth.LoginInput{ClientIP: ip}); err == nil {
+		t.Fatal("reset succeeded despite audit insert failure")
+	}
+	var stored string
+	if err = db.QueryRow(ctx, "SELECT password_hash FROM users WHERE id=$1", target).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _, verifyErr := hasher.Verify(stored, "initial-password"); verifyErr != nil || !ok {
+		t.Fatal("password change was not rolled back with the failed audit insert")
+	}
+	if _, err = service.Authenticate(ctx, targetSession.RawToken, false, ip); err != nil {
+		t.Fatalf("session revocation was not rolled back with the failed audit insert: %v", err)
 	}
 }

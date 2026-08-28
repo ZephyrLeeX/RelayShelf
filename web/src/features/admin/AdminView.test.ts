@@ -23,7 +23,7 @@ describe('admin operations', () => {
     vi.spyOn(DefaultService, 'getAdminStatus').mockResolvedValue(operationalStatus)
     vi.spyOn(DefaultService, 'getStorageStatus').mockResolvedValue(operationalStatus.storage)
     vi.spyOn(DefaultService, 'getRuntimeSettings').mockResolvedValue({ temporaryTtlHours:72,trashTtlHours:168,maxFileSizeBytes:100,maxStorageBytes:null,auditRetentionDays:90,uploadRetentionHours:24,updatedAt:'2026-08-28T00:00:00Z' })
-    vi.spyOn(DefaultService, 'listAdminUsers').mockResolvedValue([{ id:'user-a',username:'alice',displayName:'Alice',isAdmin:false,status:AdminUser.status.ACTIVE,createdAt:'2026-08-28T00:00:00Z',updatedAt:'2026-08-28T00:00:00Z' }])
+    vi.spyOn(DefaultService, 'listAdminUsers').mockResolvedValue({ items: [{ id:'user-a',username:'alice',displayName:'Alice',isAdmin:false,status:AdminUser.status.ACTIVE,createdAt:'2026-08-28T00:00:00Z',updatedAt:'2026-08-28T00:00:00Z' }], nextCursor: null })
   })
 
   it('presents operational status and explicitly states the privacy boundary', async () => {
@@ -48,6 +48,21 @@ describe('admin operations', () => {
     expect((enabledConfirm.element as HTMLButtonElement).disabled).toBe(false)
     await enabledConfirm.trigger('click'); await flushPromises()
     expect(remove).toHaveBeenCalledWith('user-a')
+    wrapper.unmount()
+  })
+
+  it('loads further admin users through the cursor instead of a hard cap', async () => {
+    const list = vi.spyOn(DefaultService, 'listAdminUsers')
+      .mockResolvedValueOnce({ items: [{ id:'user-a',username:'alice',displayName:'Alice',isAdmin:false,status:AdminUser.status.ACTIVE,createdAt:'2026-08-28T00:00:00Z',updatedAt:'2026-08-28T00:00:00Z' }], nextCursor: 'page-2' })
+      .mockResolvedValueOnce({ items: [{ id:'user-b',username:'bob',displayName:'Bob',isAdmin:false,status:AdminUser.status.ACTIVE,createdAt:'2026-08-28T00:01:00Z',updatedAt:'2026-08-28T00:01:00Z' }], nextCursor: null })
+    const wrapper = await render()
+    await wrapper.findAll('.admin-tabs button')[3].trigger('click'); await flushPromises()
+    expect(wrapper.text()).toContain('alice')
+    expect(wrapper.text()).not.toContain('bob')
+    await wrapper.get('.load-more button').trigger('click'); await flushPromises()
+    expect(list).toHaveBeenLastCalledWith('page-2', 30)
+    expect(wrapper.text()).toContain('bob')
+    expect(wrapper.find('.load-more').exists()).toBe(false)
     wrapper.unmount()
   })
 })

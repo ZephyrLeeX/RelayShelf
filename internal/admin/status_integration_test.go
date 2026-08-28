@@ -30,6 +30,52 @@ type fakeStagingSpace struct {
 
 func (f fakeStagingSpace) Probe() (staging.Space, error) { return f.space, f.err }
 
+func TestStorageStagingUsageMatchesUploadReservationSemantics(t *testing.T) {
+	ctx := context.Background()
+	db := postgresutil.NewDatabase(t)
+	now := time.Now().UTC()
+	userID := uuid.Must(uuid.NewV7())
+	if _, err := db.Exec(ctx, `INSERT INTO users(id,username,display_name,password_hash,is_admin,status)VALUES($1,'uploader','Uploader','hash',false,'ACTIVE')`, userID); err != nil {
+		t.Fatal(err)
+	}
+	// One session per lifecycle status with a distinct reservation size. The
+	// first four statuses still reserve staging capacity per the upload
+	// reservation authority; COMPLETED and EXPIRED do not.
+	sessions := []struct {
+		status string
+		size   int64
+	}{
+		{"CREATED", 100},
+		{"UPLOADING", 200},
+		{"COMPLETING", 300},
+		{"FAILED", 400},
+		{"COMPLETED", 5000},
+		{"EXPIRED", 6000},
+	}
+	var wantActive int64
+	for _, session := range sessions {
+		if session.status != "COMPLETED" && session.status != "EXPIRED" {
+			wantActive += session.size
+		}
+		id := uuid.Must(uuid.NewV7())
+		var completedAt any
+		if session.status == "COMPLETED" {
+			completedAt = now.Add(-time.Hour)
+		}
+		if _, err := db.Exec(ctx, `INSERT INTO upload_sessions(id,user_id,original_filename,expected_size,chunk_size,status,expires_at,created_at,updated_at,completed_at)VALUES($1,$2,'report.bin',$3,8388608,$4,$5,$6,$6,$7)`, id, userID, session.size, session.status, now.Add(24*time.Hour), now, completedAt); err != nil {
+			t.Fatalf("seed %s session: %v", session.status, err)
+		}
+	}
+	service := NewStatusService(db, fakeStorageSpace{space: storage.Space{AvailableBytes: 1 << 30, TotalBytes: 2 << 30}}, fakeStagingSpace{space: staging.Space{AvailableBytes: 1 << 30, TotalBytes: 2 << 30}})
+	value := service.Storage(ctx)
+	if value.State != Healthy {
+		t.Fatalf("state=%+v", value)
+	}
+	if value.StagingUsageBytes != wantActive {
+		t.Fatalf("staging usage=%d want=%d (FAILED must count, COMPLETED/EXPIRED must not)", value.StagingUsageBytes, wantActive)
+	}
+}
+
 func TestStorageHealthyDegradedAndAdminStatusRedaction(t *testing.T) {
 	ctx := context.Background()
 	db := postgresutil.NewDatabase(t)

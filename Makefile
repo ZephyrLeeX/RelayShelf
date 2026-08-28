@@ -2,6 +2,13 @@
 
 CONTAINER_RUNTIME ?= podman
 
+# Release metadata injected into the container build. CI and release tooling
+# pass these explicitly; local defaults fall back to git state, which may be
+# unavailable when building from an exported tree.
+RELEASE_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo development)
+GIT_COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
+BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+
 .PHONY: generate lint test build e2e integration container
 
 generate:
@@ -32,4 +39,8 @@ integration:
 	./scripts/test-integration.sh
 
 container:
-	$(CONTAINER_RUNTIME) build -t relayshelf:ci .
+	$(CONTAINER_RUNTIME) build \
+		--build-arg VERSION="$(RELEASE_VERSION)" \
+		--build-arg GIT_COMMIT="$(GIT_COMMIT)" \
+		--build-arg BUILD_TIME="$(BUILD_TIME)" \
+		-t relayshelf:ci .

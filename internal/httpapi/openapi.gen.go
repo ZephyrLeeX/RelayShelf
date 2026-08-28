@@ -206,6 +206,12 @@ type AdminUser struct {
 // AdminUserStatus defines model for AdminUser.Status.
 type AdminUserStatus string
 
+// AdminUserList defines model for AdminUserList.
+type AdminUserList struct {
+	Items      []AdminUser `json:"items"`
+	NextCursor *string     `json:"nextCursor"`
+}
+
 // AttachmentSummary defines model for AttachmentSummary.
 type AttachmentSummary struct {
 	ClientMime       *string            `json:"clientMime"`
@@ -576,6 +582,12 @@ type UploadId = openapi_types.UUID
 // UserId defines model for UserId.
 type UserId = openapi_types.UUID
 
+// ListAdminUsersParams defines parameters for ListAdminUsers.
+type ListAdminUsersParams struct {
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // ListMessagesParams defines parameters for ListMessages.
 type ListMessagesParams struct {
 	Lifecycle *Lifecycle            `form:"lifecycle,omitempty" json:"lifecycle,omitempty"`
@@ -701,7 +713,7 @@ type ServerInterface interface {
 	GetStorageStatus(w http.ResponseWriter, r *http.Request)
 
 	// (GET /admin/users)
-	ListAdminUsers(w http.ResponseWriter, r *http.Request)
+	ListAdminUsers(w http.ResponseWriter, r *http.Request, params ListAdminUsersParams)
 
 	// (POST /admin/users)
 	CreateAdminUser(w http.ResponseWriter, r *http.Request)
@@ -858,7 +870,7 @@ func (_ Unimplemented) GetStorageStatus(w http.ResponseWriter, r *http.Request) 
 }
 
 // (GET /admin/users)
-func (_ Unimplemented) ListAdminUsers(w http.ResponseWriter, r *http.Request) {
+func (_ Unimplemented) ListAdminUsers(w http.ResponseWriter, r *http.Request, params ListAdminUsersParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1145,8 +1157,40 @@ func (siw *ServerInterfaceWrapper) GetStorageStatus(w http.ResponseWriter, r *ht
 // ListAdminUsers operation middleware
 func (siw *ServerInterfaceWrapper) ListAdminUsers(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListAdminUsersParams
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListAdminUsers(w, r)
+		siw.Handler.ListAdminUsers(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {

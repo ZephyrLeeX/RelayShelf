@@ -441,10 +441,14 @@ paths:
     get:
       operationId: listAdminUsers
       security: [{ cookieAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Cursor' }
+        - { $ref: '#/components/parameters/Limit' }
       responses:
-        '200': { description: Bounded operational user metadata, content: { application/json: { schema: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/AdminUser' } } } } }
+        '200': { description: Bounded operational user metadata page; every stored user is reachable via cursor pagination, content: { application/json: { schema: { $ref: '#/components/schemas/AdminUserList' } } } }
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
     post:
       operationId: createAdminUser
       security: [{ cookieAuth: [] }]
@@ -889,6 +893,13 @@ components:
         status: { type: string, enum: [ACTIVE, DISABLED] }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    AdminUserList:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/AdminUser' } }
+        nextCursor: { type: [string, 'null'] }
     CreateAdminUserRequest:
       type: object
       additionalProperties: false

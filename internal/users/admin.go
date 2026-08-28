@@ -15,7 +15,24 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const MaxDisplayNameRunes = 100
+const (
+	MaxDisplayNameRunes = 100
+	// DefaultListLimit and MaxListLimit follow the repository-wide cursor
+	// pagination convention (default 30 / max 100). Every stored user stays
+	// reachable through the cursor; there is no system-wide user cap.
+	DefaultListLimit = 30
+	MaxListLimit     = 100
+)
+
+type Page struct {
+	Items      []User
+	NextCursor *string
+}
+
+type ListFilter struct {
+	Cursor *Cursor
+	Limit  int
+}
 
 type AdminService struct {
 	pool     *pgxpool.Pool
@@ -29,22 +46,41 @@ func NewAdminService(pool *pgxpool.Pool, hash PasswordHasher, ids id.Generator, 
 	return &AdminService{pool: pool, hash: hash, ids: ids, clock: clock, recorder: recorder}
 }
 
-func (s *AdminService) List(ctx context.Context) ([]User, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id,username,display_name,password_hash,is_admin,status,created_at,updated_at FROM users ORDER BY created_at,id LIMIT 100`)
+func (s *AdminService) List(ctx context.Context, filter ListFilter) (Page, error) {
+	if filter.Limit == 0 {
+		filter.Limit = DefaultListLimit
+	}
+	if filter.Limit < 1 || filter.Limit > MaxListLimit {
+		return Page{}, ErrInvalidList
+	}
+	var cursorAt, cursorID any
+	if filter.Cursor != nil {
+		cursorAt, cursorID = filter.Cursor.CreatedAt, filter.Cursor.ID
+	}
+	rows, err := s.pool.Query(ctx, `SELECT id,username,display_name,password_hash,is_admin,status,created_at,updated_at FROM users WHERE ($1::timestamptz IS NULL OR (created_at,id)>($1::timestamptz,$2::uuid)) ORDER BY created_at,id LIMIT $3`, cursorAt, cursorID, filter.Limit+1)
 	if err != nil {
-		return nil, err
+		return Page{}, err
 	}
 	defer rows.Close()
-	out := make([]User, 0)
+	out := make([]User, 0, filter.Limit+1)
 	for rows.Next() {
 		var user User
 		if err = rows.Scan(&user.ID, &user.Username, &user.DisplayName, &user.PasswordHash, &user.IsAdmin, &user.Status, &user.CreatedAt, &user.UpdatedAt); err != nil {
-			return nil, err
+			return Page{}, err
 		}
 		user.PasswordHash = ""
 		out = append(out, user)
 	}
-	return out, rows.Err()
+	if err = rows.Err(); err != nil {
+		return Page{}, err
+	}
+	page := Page{Items: out[:min(len(out), filter.Limit)]}
+	if len(out) > filter.Limit {
+		marker := out[filter.Limit-1]
+		encoded := EncodeCursor(Cursor{CreatedAt: marker.CreatedAt, ID: marker.ID})
+		page.NextCursor = &encoded
+	}
+	return page, nil
 }
 
 func (s *AdminService) Create(ctx context.Context, actor audit.Actor, username, displayName, password string, isAdmin bool) (User, error) {

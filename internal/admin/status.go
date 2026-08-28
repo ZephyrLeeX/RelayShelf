@@ -9,6 +9,7 @@ import (
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/database"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/staging"
 	"github.com/ZephyrLeeX/RelayShelf/internal/storage"
+	"github.com/ZephyrLeeX/RelayShelf/sql/generated"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -62,9 +63,17 @@ func (s *StatusService) Storage(ctx context.Context) StorageStatus {
 	result := StorageStatus{State: Healthy, ThresholdState: ThresholdUnconfigured, DegradedReasons: []string{}}
 	dbCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	if err := s.pool.QueryRow(dbCtx, `SELECT COALESCE((SELECT sum(size_bytes) FROM file_objects WHERE status='READY'),0),max_storage_bytes,COALESCE((SELECT sum(expected_size) FROM upload_sessions WHERE status IN ('CREATED','UPLOADING','COMPLETING')),0) FROM system_settings WHERE id=1`).Scan(&result.LogicalUsageBytes, &result.MaxStorageBytes, &result.StagingUsageBytes); err != nil {
+	if err := s.pool.QueryRow(dbCtx, `SELECT COALESCE((SELECT sum(size_bytes) FROM file_objects WHERE status='READY'),0),max_storage_bytes FROM system_settings WHERE id=1`).Scan(&result.LogicalUsageBytes, &result.MaxStorageBytes); err != nil {
 		result.State = Unavailable
 		result.DegradedReasons = append(result.DegradedReasons, "DATABASE_UNAVAILABLE")
+	} else if stagingBytes, stagingErr := generated.New(s.pool).ActiveUploadReservation(dbCtx); stagingErr != nil {
+		// Staging usage deliberately reuses the upload module's reservation
+		// query: whatever still reserves staging capacity there (including
+		// FAILED sessions awaiting cleanup) must be what admin status reports.
+		result.State = Unavailable
+		result.DegradedReasons = append(result.DegradedReasons, "DATABASE_UNAVAILABLE")
+	} else {
+		result.StagingUsageBytes = stagingBytes
 	}
 	result.ThresholdState = threshold(result.LogicalUsageBytes, result.MaxStorageBytes)
 	if result.ThresholdState == ThresholdWarning || result.ThresholdState == ThresholdStrongWarning {

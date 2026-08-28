@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/ZephyrLeeX/RelayShelf/internal/audit"
 	"github.com/ZephyrLeeX/RelayShelf/sql/generated"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -39,17 +40,18 @@ type Repository interface {
 	ListDevices(context.Context, uuid.UUID) ([]Device, error)
 	RenameDevice(context.Context, uuid.UUID, uuid.UUID, string, time.Time) (Device, error)
 	ChangePasswordAndRevokeOthers(context.Context, uuid.UUID, uuid.UUID, string, time.Time, AuditEvent) error
-	ResetPasswordAndRevokeAll(context.Context, uuid.UUID, string, time.Time, AuditEvent) error
+	ResetPasswordAndRevokeAll(context.Context, uuid.UUID, string, time.Time, audit.Event) error
 	Audit(context.Context, AuditEvent) error
 }
 
 type PostgreSQLRepository struct {
-	pool *pgxpool.Pool
-	q    *generated.Queries
+	pool     *pgxpool.Pool
+	q        *generated.Queries
+	recorder *audit.Recorder
 }
 
-func NewPostgreSQLRepository(pool *pgxpool.Pool) *PostgreSQLRepository {
-	return &PostgreSQLRepository{pool: pool, q: generated.New(pool)}
+func NewPostgreSQLRepository(pool *pgxpool.Pool, recorder *audit.Recorder) *PostgreSQLRepository {
+	return &PostgreSQLRepository{pool: pool, q: generated.New(pool), recorder: recorder}
 }
 func pgu(value uuid.UUID) pgtype.UUID        { return pgtype.UUID{Bytes: value, Valid: true} }
 func pgt(value time.Time) pgtype.Timestamptz { return pgtype.Timestamptz{Time: value, Valid: true} }
@@ -197,19 +199,19 @@ func insertAudit(ctx context.Context, q *generated.Queries, event AuditEvent) er
 func (r *PostgreSQLRepository) Audit(ctx context.Context, event AuditEvent) error {
 	return insertAudit(ctx, r.q, event)
 }
-func (r *PostgreSQLRepository) tx(ctx context.Context, fn func(*generated.Queries) error) error {
+func (r *PostgreSQLRepository) tx(ctx context.Context, fn func(pgx.Tx, *generated.Queries) error) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err = fn(r.q.WithTx(tx)); err != nil {
+	if err = fn(tx, r.q.WithTx(tx)); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
-func (r *PostgreSQLRepository) ChangePasswordAndRevokeOthers(ctx context.Context, userID, currentSessionID uuid.UUID, hash string, now time.Time, audit AuditEvent) error {
-	return r.tx(ctx, func(q *generated.Queries) error {
+func (r *PostgreSQLRepository) ChangePasswordAndRevokeOthers(ctx context.Context, userID, currentSessionID uuid.UUID, hash string, now time.Time, event AuditEvent) error {
+	return r.tx(ctx, func(_ pgx.Tx, q *generated.Queries) error {
 		if n, err := q.UpdateUserPasswordHash(ctx, generated.UpdateUserPasswordHashParams{ID: pgu(userID), PasswordHash: hash, UpdatedAt: pgt(now)}); err != nil {
 			return err
 		} else if n == 0 {
@@ -218,11 +220,11 @@ func (r *PostgreSQLRepository) ChangePasswordAndRevokeOthers(ctx context.Context
 		if err := q.RevokeOtherSessions(ctx, generated.RevokeOtherSessionsParams{UserID: pgu(userID), ID: pgu(currentSessionID), RevokedAt: pgt(now)}); err != nil {
 			return err
 		}
-		return insertAudit(ctx, q, audit)
+		return insertAudit(ctx, q, event)
 	})
 }
-func (r *PostgreSQLRepository) ResetPasswordAndRevokeAll(ctx context.Context, userID uuid.UUID, hash string, now time.Time, audit AuditEvent) error {
-	return r.tx(ctx, func(q *generated.Queries) error {
+func (r *PostgreSQLRepository) ResetPasswordAndRevokeAll(ctx context.Context, userID uuid.UUID, hash string, now time.Time, event audit.Event) error {
+	return r.tx(ctx, func(tx pgx.Tx, q *generated.Queries) error {
 		if n, err := q.UpdateUserPasswordHash(ctx, generated.UpdateUserPasswordHashParams{ID: pgu(userID), PasswordHash: hash, UpdatedAt: pgt(now)}); err != nil {
 			return err
 		} else if n == 0 {
@@ -231,6 +233,9 @@ func (r *PostgreSQLRepository) ResetPasswordAndRevokeAll(ctx context.Context, us
 		if err := q.RevokeAllUserSessions(ctx, generated.RevokeAllUserSessionsParams{UserID: pgu(userID), RevokedAt: pgt(now)}); err != nil {
 			return err
 		}
-		return insertAudit(ctx, q, audit)
+		// The typed event flows through the shared recorder so USER_PASSWORD_RESET
+		// metadata stays inside the constructor allowlist, and the write shares
+		// this transaction with the password update and session revocation.
+		return r.recorder.Record(ctx, tx, event)
 	})
 }

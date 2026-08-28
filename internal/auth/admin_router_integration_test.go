@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ZephyrLeeX/RelayShelf/internal/audit"
 	"github.com/ZephyrLeeX/RelayShelf/internal/auth"
 	"github.com/ZephyrLeeX/RelayShelf/internal/httpapi"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/clock"
@@ -59,7 +60,7 @@ func TestAdminRoutesAreEnforcedServerSide(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	repo := auth.NewPostgreSQLRepository(db)
+	repo := auth.NewPostgreSQLRepository(db, audit.NewRecorder(id.UUIDv7{}, clock.Real{}))
 	now := clock.Real{}
 	service := auth.NewService(repo, hasher, id.UUIDv7{}, now, auth.NewRateLimiter(now, 100))
 	ip := netip.MustParseAddr("192.0.2.10")

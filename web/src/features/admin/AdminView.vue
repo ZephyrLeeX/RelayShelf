@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { DefaultService, type AdminUser, type HealthState, type UpdateRuntimeSettingsRequest } from '@/api/generated'
 import { queryKeys } from '@/shared/api/queryKeys'
 import { displayError } from '@/shared/api/errors'
@@ -8,6 +8,7 @@ import { formatBytes } from '@/shared/utils/bytes'
 
 type Section = 'overview' | 'storage' | 'settings' | 'users'
 type UserAction = 'disable' | 'reset' | 'delete'
+const USER_PAGE_SIZE = 30
 const section = ref<Section>('overview')
 const client = useQueryClient()
 const error = ref('')
@@ -15,7 +16,14 @@ const notice = ref('')
 const status = useQuery({ queryKey: queryKeys.admin.status(), queryFn: () => DefaultService.getAdminStatus(), refetchInterval: 30_000 })
 const storage = useQuery({ queryKey: queryKeys.admin.storage(), queryFn: () => DefaultService.getStorageStatus(), enabled: computed(() => section.value === 'storage') })
 const settings = useQuery({ queryKey: queryKeys.admin.settings(), queryFn: () => DefaultService.getRuntimeSettings(), enabled: computed(() => section.value === 'settings') })
-const users = useQuery({ queryKey: queryKeys.admin.users(), queryFn: () => DefaultService.listAdminUsers(), enabled: computed(() => section.value === 'users') })
+const users = useInfiniteQuery({
+  queryKey: queryKeys.admin.users(),
+  enabled: computed(() => section.value === 'users'),
+  initialPageParam: undefined as string | undefined,
+  queryFn: ({ pageParam }) => DefaultService.listAdminUsers(pageParam, USER_PAGE_SIZE),
+  getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+})
+const userRows = computed(() => users.data.value?.pages.flatMap((page) => page.items) ?? [])
 
 const settingsForm = reactive({ temporaryTtlHours: 72, trashTtlHours: 168, maxFileSizeBytes: 2147483648, maxStorageBytes: '', auditRetentionDays: 90, uploadRetentionHours: 24 })
 watch(() => settings.data.value, (value) => {
@@ -326,45 +334,59 @@ function percent(used: number, total?: number | null) { return total ? Math.min(
             <p class="eyebrow">
               Operational metadata only
             </p><h2>用户</h2>
-          </div><span>{{ users.data.value?.length || 0 }}/100</span>
+          </div><span>已加载 {{ userRows.length }}</span>
         </header><p v-if="users.isPending.value">
           正在读取用户…
         </p><p
-          v-else-if="!users.data.value?.length"
+          v-else-if="!userRows.length"
           class="empty"
         >
           尚无用户。
-        </p><ul v-else>
-          <li
-            v-for="user in users.data.value"
-            :key="user.id"
+        </p><template v-else>
+          <ul>
+            <li
+              v-for="user in userRows"
+              :key="user.id"
+            >
+              <div class="identity">
+                <span class="avatar">{{ (user.displayName || user.username).slice(0,1).toUpperCase() }}</span><span><strong>{{ user.displayName }}</strong><small>@{{ user.username }} · {{ user.isAdmin ? '管理员' : '普通用户' }}</small></span>
+              </div><span
+                class="state"
+                :data-active="user.status === 'ACTIVE'"
+              >{{ user.status }}</span><div class="actions">
+                <button
+                  class="button"
+                  :disabled="user.status === 'DISABLED'"
+                  @click="openAction('disable',user)"
+                >
+                  禁用
+                </button><button
+                  class="button"
+                  @click="openAction('reset',user)"
+                >
+                  重置密码
+                </button><button
+                  class="button danger"
+                  @click="openAction('delete',user)"
+                >
+                  删除
+                </button>
+              </div>
+            </li>
+          </ul>
+          <footer
+            v-if="users.hasNextPage.value"
+            class="load-more"
           >
-            <div class="identity">
-              <span class="avatar">{{ (user.displayName || user.username).slice(0,1).toUpperCase() }}</span><span><strong>{{ user.displayName }}</strong><small>@{{ user.username }} · {{ user.isAdmin ? '管理员' : '普通用户' }}</small></span>
-            </div><span
-              class="state"
-              :data-active="user.status === 'ACTIVE'"
-            >{{ user.status }}</span><div class="actions">
-              <button
-                class="button"
-                :disabled="user.status === 'DISABLED'"
-                @click="openAction('disable',user)"
-              >
-                禁用
-              </button><button
-                class="button"
-                @click="openAction('reset',user)"
-              >
-                重置密码
-              </button><button
-                class="button danger"
-                @click="openAction('delete',user)"
-              >
-                删除
-              </button>
-            </div>
-          </li>
-        </ul>
+            <button
+              class="button"
+              :disabled="users.isFetchingNextPage.value"
+              @click="users.fetchNextPage()"
+            >
+              {{ users.isFetchingNextPage.value ? '正在加载…' : '加载更多用户' }}
+            </button>
+          </footer>
+        </template>
       </section>
     </div>
 
@@ -424,5 +446,5 @@ function percent(used: number, total?: number | null) { return total ? Math.min(
 </template>
 
 <style scoped>
-.admin-workspace{display:grid;gap:1.2rem}.admin-head{display:flex;justify-content:space-between;align-items:flex-end;gap:1rem;padding:.4rem 0}.admin-head h1{margin:.1rem 0;font-size:clamp(1.8rem,4vw,3rem);letter-spacing:-.045em}.eyebrow{margin:0;color:var(--accent-strong);font:700 .7rem/1 var(--font-mono);letter-spacing:.12em;text-transform:uppercase}.overall{display:flex;align-items:center;gap:.55rem;padding:.55rem .8rem;border:1px solid var(--border);border-radius:999px;background:var(--surface-raised);font-weight:700}.overall i,.status-rail article>span{width:.65rem;height:.65rem;border-radius:50%;background:var(--danger)}[data-state="HEALTHY"] i,.status-rail [data-state="HEALTHY"]{background:var(--accent)}[data-state="DEGRADED"] i,.status-rail [data-state="DEGRADED"]{background:#d69722}.admin-tabs{display:flex;gap:.25rem;padding:.3rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-soft);width:max-content}.admin-tabs button{border:0;border-radius:calc(var(--radius) - .25rem);padding:.55rem .9rem;background:transparent}.admin-tabs button.active{background:var(--surface-raised);box-shadow:0 1px 4px rgb(0 0 0/.08);font-weight:700}.view-stack{display:grid;gap:1rem}.loading,.settings-form,.create-user{padding:1.2rem}.status-rail{display:grid;grid-template-columns:repeat(3,1fr);padding:1rem}.status-rail article{display:flex;align-items:center;gap:.7rem;padding:.25rem 1rem;border-right:1px solid var(--border)}.status-rail article:last-child{border:0}.status-rail small,.status-rail strong{display:block}.status-rail small,.metric small{color:var(--muted)}.overview-grid,.storage-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:1rem}.overview-grid .build{grid-column:span 2}.metric,.build,.jobs,.capacity,.degraded{padding:1.2rem}.metric strong{display:block;margin:.35rem 0;font-size:1.8rem;letter-spacing:-.04em}.metric p{margin:0;color:var(--muted);font-size:.85rem}.build h2,.jobs h2,.capacity h2,.degraded h2,.settings-form h2,.create-user h2,.user-list h2{margin:.2rem 0}.build dl{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem}.build dl div{border-left:2px solid var(--accent-soft);padding-left:.75rem}.build dt{color:var(--muted);font-size:.75rem}.build dd{margin:.3rem 0 0}.mono,code{font-family:var(--font-mono)}.jobs header,.capacity header,.settings-form header,.user-list header{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start}.jobs ul,.user-list ul,.degraded ul{list-style:none;padding:0;margin:1rem 0 0}.jobs li{display:flex;justify-content:space-between;gap:1rem;padding:.8rem 0;border-top:1px solid var(--border)}.jobs small,.identity small{display:block;color:var(--muted);margin-top:.2rem}.empty{padding:1.2rem 0;color:var(--muted)}.capacity strong{font-size:2rem}.meter{height:.6rem;border-radius:999px;background:var(--surface-soft);overflow:hidden;margin:1rem 0}.meter i{display:block;height:100%;background:var(--accent);border-radius:inherit}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin:1.4rem 0}.settings-form footer,.confirm footer{display:flex;justify-content:space-between;align-items:center;gap:1rem;border-top:1px solid var(--border);padding-top:1rem}.users-layout{display:grid;grid-template-columns:minmax(220px,280px) minmax(0,1fr);gap:1rem;align-items:start}.create-user{display:grid;gap:.85rem;position:sticky;top:90px}.check{display:flex;gap:.55rem;align-items:center}.user-list{padding:1.2rem}.user-list li{display:grid;grid-template-columns:minmax(170px,1fr) auto;gap:.75rem;padding:1rem 0;border-top:1px solid var(--border)}.identity{display:flex;gap:.65rem;align-items:center}.avatar{display:grid;place-items:center;width:2.35rem;height:2.35rem;border-radius:.65rem;background:var(--accent-soft);color:var(--accent-strong);font-weight:800}.state{font:700 .68rem/1 var(--font-mono);color:var(--danger)}.state[data-active="true"]{color:var(--accent-strong)}.actions{grid-column:1/-1;display:flex;justify-content:flex-end;gap:.45rem}.callout{margin:0;padding:.75rem 1rem;border:1px solid currentColor;border-radius:var(--radius-sm);background:var(--surface-raised)}.success{color:var(--accent-strong)}.dialog-backdrop{position:fixed;inset:0;z-index:60;display:grid;place-items:center;padding:1rem;background:rgb(0 0 0/.48)}.confirm{width:min(100%,470px);padding:1.3rem}.confirm footer{justify-content:flex-end;margin-top:1.2rem}@media(max-width:720px){.admin-head{align-items:flex-start}.overall{font-size:.8rem}.admin-tabs{width:100%;overflow:auto}.admin-tabs button{flex:1}.status-rail{grid-template-columns:1fr}.status-rail article{border-right:0;border-bottom:1px solid var(--border);padding:.75rem}.overview-grid,.storage-grid,.form-grid,.users-layout{grid-template-columns:1fr}.overview-grid .build{grid-column:auto}.build dl{grid-template-columns:1fr}.create-user{position:static}.actions{justify-content:flex-start;flex-wrap:wrap}.settings-form footer{align-items:flex-start;flex-direction:column}}
+.admin-workspace{display:grid;gap:1.2rem}.admin-head{display:flex;justify-content:space-between;align-items:flex-end;gap:1rem;padding:.4rem 0}.admin-head h1{margin:.1rem 0;font-size:clamp(1.8rem,4vw,3rem);letter-spacing:-.045em}.eyebrow{margin:0;color:var(--accent-strong);font:700 .7rem/1 var(--font-mono);letter-spacing:.12em;text-transform:uppercase}.overall{display:flex;align-items:center;gap:.55rem;padding:.55rem .8rem;border:1px solid var(--border);border-radius:999px;background:var(--surface-raised);font-weight:700}.overall i,.status-rail article>span{width:.65rem;height:.65rem;border-radius:50%;background:var(--danger)}[data-state="HEALTHY"] i,.status-rail [data-state="HEALTHY"]{background:var(--accent)}[data-state="DEGRADED"] i,.status-rail [data-state="DEGRADED"]{background:#d69722}.admin-tabs{display:flex;gap:.25rem;padding:.3rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-soft);width:max-content}.admin-tabs button{border:0;border-radius:calc(var(--radius) - .25rem);padding:.55rem .9rem;background:transparent}.admin-tabs button.active{background:var(--surface-raised);box-shadow:0 1px 4px rgb(0 0 0/.08);font-weight:700}.view-stack{display:grid;gap:1rem}.loading,.settings-form,.create-user{padding:1.2rem}.status-rail{display:grid;grid-template-columns:repeat(3,1fr);padding:1rem}.status-rail article{display:flex;align-items:center;gap:.7rem;padding:.25rem 1rem;border-right:1px solid var(--border)}.status-rail article:last-child{border:0}.status-rail small,.status-rail strong{display:block}.status-rail small,.metric small{color:var(--muted)}.overview-grid,.storage-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:1rem}.overview-grid .build{grid-column:span 2}.metric,.build,.jobs,.capacity,.degraded{padding:1.2rem}.metric strong{display:block;margin:.35rem 0;font-size:1.8rem;letter-spacing:-.04em}.metric p{margin:0;color:var(--muted);font-size:.85rem}.build h2,.jobs h2,.capacity h2,.degraded h2,.settings-form h2,.create-user h2,.user-list h2{margin:.2rem 0}.build dl{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem}.build dl div{border-left:2px solid var(--accent-soft);padding-left:.75rem}.build dt{color:var(--muted);font-size:.75rem}.build dd{margin:.3rem 0 0}.mono,code{font-family:var(--font-mono)}.jobs header,.capacity header,.settings-form header,.user-list header{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start}.jobs ul,.user-list ul,.degraded ul{list-style:none;padding:0;margin:1rem 0 0}.jobs li{display:flex;justify-content:space-between;gap:1rem;padding:.8rem 0;border-top:1px solid var(--border)}.jobs small,.identity small{display:block;color:var(--muted);margin-top:.2rem}.empty{padding:1.2rem 0;color:var(--muted)}.capacity strong{font-size:2rem}.meter{height:.6rem;border-radius:999px;background:var(--surface-soft);overflow:hidden;margin:1rem 0}.meter i{display:block;height:100%;background:var(--accent);border-radius:inherit}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin:1.4rem 0}.settings-form footer,.confirm footer{display:flex;justify-content:space-between;align-items:center;gap:1rem;border-top:1px solid var(--border);padding-top:1rem}.users-layout{display:grid;grid-template-columns:minmax(220px,280px) minmax(0,1fr);gap:1rem;align-items:start}.create-user{display:grid;gap:.85rem;position:sticky;top:90px}.check{display:flex;gap:.55rem;align-items:center}.user-list{padding:1.2rem}.user-list li{display:grid;grid-template-columns:minmax(170px,1fr) auto;gap:.75rem;padding:1rem 0;border-top:1px solid var(--border)}.load-more{display:flex;justify-content:center;padding:.9rem 0 0}.identity{display:flex;gap:.65rem;align-items:center}.avatar{display:grid;place-items:center;width:2.35rem;height:2.35rem;border-radius:.65rem;background:var(--accent-soft);color:var(--accent-strong);font-weight:800}.state{font:700 .68rem/1 var(--font-mono);color:var(--danger)}.state[data-active="true"]{color:var(--accent-strong)}.actions{grid-column:1/-1;display:flex;justify-content:flex-end;gap:.45rem}.callout{margin:0;padding:.75rem 1rem;border:1px solid currentColor;border-radius:var(--radius-sm);background:var(--surface-raised)}.success{color:var(--accent-strong)}.dialog-backdrop{position:fixed;inset:0;z-index:60;display:grid;place-items:center;padding:1rem;background:rgb(0 0 0/.48)}.confirm{width:min(100%,470px);padding:1.3rem}.confirm footer{justify-content:flex-end;margin-top:1.2rem}@media(max-width:720px){.admin-head{align-items:flex-start}.overall{font-size:.8rem}.admin-tabs{width:100%;overflow:auto}.admin-tabs button{flex:1}.status-rail{grid-template-columns:1fr}.status-rail article{border-right:0;border-bottom:1px solid var(--border);padding:.75rem}.overview-grid,.storage-grid,.form-grid,.users-layout{grid-template-columns:1fr}.overview-grid .build{grid-column:auto}.build dl{grid-template-columns:1fr}.create-user{position:static}.actions{justify-content:flex-start;flex-wrap:wrap}.settings-form footer{align-items:flex-start;flex-direction:column}}
 </style>

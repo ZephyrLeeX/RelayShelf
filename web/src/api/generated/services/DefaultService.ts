@@ -5,6 +5,7 @@
 import type { AddAttachmentsRequest } from '../models/AddAttachmentsRequest';
 import type { AdminStatus } from '../models/AdminStatus';
 import type { AdminUser } from '../models/AdminUser';
+import type { AdminUserList } from '../models/AdminUserList';
 import type { AuthBootstrap } from '../models/AuthBootstrap';
 import type { CreateAdminUserRequest } from '../models/CreateAdminUserRequest';
 import type { CreateMessageRequest } from '../models/CreateMessageRequest';
@@ -973,16 +974,26 @@ export class DefaultService {
         });
     }
     /**
-     * @returns AdminUser Bounded operational user metadata
+     * @param cursor
+     * @param limit
+     * @returns AdminUserList Bounded operational user metadata page; every stored user is reachable via cursor pagination
      * @throws ApiError
      */
-    public static listAdminUsers(): CancelablePromise<Array<AdminUser>> {
+    public static listAdminUsers(
+        cursor?: string,
+        limit: number = 30,
+    ): CancelablePromise<AdminUserList> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/admin/users',
+            query: {
+                'cursor': cursor,
+                'limit': limit,
+            },
             errors: {
                 401: `API error`,
                 403: `API error`,
+                422: `API error`,
             },
         });
     }

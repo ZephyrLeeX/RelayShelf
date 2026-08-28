@@ -7,6 +7,12 @@ COPY web/ ./
 RUN pnpm build
 
 FROM golang:1.26 AS build
+# Release metadata is injected explicitly. The build context excludes .git, so
+# Go VCS stamping is unavailable here and an unset build arg stays empty rather
+# than being replaced by a fabricated version.
+ARG VERSION=""
+ARG GIT_COMMIT=""
+ARG BUILD_TIME=""
 WORKDIR /src
 COPY go.mod go.sum ./
 # Generator tools are pinned by go.mod but are not part of the production
@@ -16,7 +22,11 @@ RUN go mod download github.com/go-chi/chi/v5 github.com/google/uuid github.com/j
 COPY . .
 RUN rm -rf ./internal/webui/dist && mkdir -p ./internal/webui/dist
 COPY --from=web-build /src/web/dist ./internal/webui/dist
-RUN go build -o /out/relayshelf ./cmd/relayshelf
+RUN go build \
+  -ldflags="-X github.com/ZephyrLeeX/RelayShelf/internal/platform/buildinfo.Version=${VERSION} \
+    -X github.com/ZephyrLeeX/RelayShelf/internal/platform/buildinfo.GitCommit=${GIT_COMMIT} \
+    -X github.com/ZephyrLeeX/RelayShelf/internal/platform/buildinfo.BuildTime=${BUILD_TIME}" \
+  -o /out/relayshelf ./cmd/relayshelf
 
 FROM gcr.io/distroless/base-debian13:nonroot
 COPY --from=build /out/relayshelf /relayshelf

@@ -31,17 +31,29 @@ func (h *Handler) GetAdminStatus(w http.ResponseWriter, r *http.Request) {
 	write(w, http.StatusOK, statusDTO(h.status.Status(r.Context())))
 }
 
-func (h *Handler) ListAdminUsers(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.users.List(r.Context())
+func (h *Handler) ListAdminUsers(w http.ResponseWriter, r *http.Request, params httpapi.ListAdminUsersParams) {
+	filter := users.ListFilter{}
+	if params.Cursor != nil {
+		decoded, err := users.DecodeCursor(*params.Cursor)
+		if err != nil {
+			listError(w, r, err)
+			return
+		}
+		filter.Cursor = &decoded
+	}
+	if params.Limit != nil {
+		filter.Limit = *params.Limit
+	}
+	page, err := h.users.List(r.Context(), filter)
 	if err != nil {
-		internalError(w, r)
+		listError(w, r, err)
 		return
 	}
-	out := make([]httpapi.AdminUser, 0, len(rows))
-	for _, row := range rows {
+	out := make([]httpapi.AdminUser, 0, len(page.Items))
+	for _, row := range page.Items {
 		out = append(out, userDTO(row))
 	}
-	write(w, http.StatusOK, out)
+	write(w, http.StatusOK, httpapi.AdminUserList{Items: out, NextCursor: page.NextCursor})
 }
 
 func (h *Handler) CreateAdminUser(w http.ResponseWriter, r *http.Request) {
@@ -148,6 +160,17 @@ func userError(w http.ResponseWriter, r *http.Request, err error) {
 		auth.WriteError(w, r, http.StatusConflict, "USERNAME_ALREADY_EXISTS", "username already exists")
 	case errors.Is(err, users.ErrInvalidUsername), errors.Is(err, users.ErrInvalidPassword):
 		auth.WriteError(w, r, http.StatusUnprocessableEntity, "USER_INVALID", "user data is invalid")
+	default:
+		internalError(w, r)
+	}
+}
+
+func listError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, users.ErrCursorInvalid):
+		auth.WriteError(w, r, http.StatusUnprocessableEntity, "USER_LIST_CURSOR_INVALID", "user list cursor is invalid")
+	case errors.Is(err, users.ErrInvalidList):
+		auth.WriteError(w, r, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "invalid request")
 	default:
 		internalError(w, r)
 	}

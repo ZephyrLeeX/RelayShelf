@@ -157,7 +157,8 @@ func main() {
 			log.Printf("storage unavailable at startup")
 			os.Exit(1)
 		}
-		authRepo := auth.NewPostgreSQLRepository(db)
+		auditRecorder := audit.NewRecorder(id.UUIDv7{}, now)
+		authRepo := auth.NewPostgreSQLRepository(db, auditRecorder)
 		hasher := auth.NewPasswordHasher(auth.DefaultArgon2Params)
 		limiter := auth.NewRateLimiter(now, auth.DefaultRateLimitEntries)
 		authService := auth.NewService(authRepo, hasher, id.UUIDv7{}, now, limiter)
@@ -165,7 +166,6 @@ func main() {
 		cookies := auth.NewCookiePolicy(cfg.PublicOrigin)
 		authMiddleware := auth.NewMiddleware(authService, cookies, csrf, cfg.PublicOrigin, httpx.NewResolver(cfg.TrustedProxies))
 		authHandler := auth.NewHandler(authService, csrf, cookies)
-		auditRecorder := audit.NewRecorder(id.UUIDv7{}, now)
 		settingsService := settings.NewService(db, auditRecorder, now)
 		settingsHandler := settings.NewHandler(settingsService)
 		userAdminService := users.NewAdminService(db, hasher, id.UUIDv7{}, now, auditRecorder)

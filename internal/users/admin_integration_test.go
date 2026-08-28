@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"testing"
 	"time"
@@ -169,5 +170,64 @@ func TestAdminCreateAndDisableUseExistingPasswordPolicyAndRevokeSessions(t *test
 	var events int
 	if err = db.QueryRow(ctx, `SELECT count(*) FROM audit_logs WHERE target_id=$1 AND event_type IN ('USER_CREATED','USER_DISABLED') AND NOT (metadata::text ~* 'password|hash|token|body|secret')`, created.ID).Scan(&events); err != nil || events != 2 {
 		t.Fatalf("events=%d err=%v", events, err)
+	}
+}
+
+func TestAdminListUsersReachesEveryUserThroughCursorPagination(t *testing.T) {
+	ctx := context.Background()
+	db := postgresutil.NewDatabase(t)
+	base := time.Date(2026, 8, 28, 8, 0, 0, 0, time.UTC)
+	clock := fixedClock{now: base}
+	hasher := auth.NewPasswordHasher(auth.Argon2Params{Memory: 64, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32})
+	service := users.NewAdminService(db, hasher, id.UUIDv7{}, clock, audit.NewRecorder(id.UUIDv7{}, clock))
+	ids := make([]uuid.UUID, 0, 5)
+	for i := range 5 {
+		userID := uuid.Must(uuid.NewV7())
+		ids = append(ids, userID)
+		if _, err := db.Exec(ctx, `INSERT INTO users(id,username,display_name,password_hash,is_admin,status,created_at,updated_at)VALUES($1,$2,$2,'hash',false,'ACTIVE',$3,$3)`, userID, fmt.Sprintf("pager-%d", i), base.Add(time.Duration(i)*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seen := make([]uuid.UUID, 0, 5)
+	cursor := ""
+	pages := 0
+	for {
+		filter := users.ListFilter{Limit: 2}
+		if cursor != "" {
+			decoded, err := users.DecodeCursor(cursor)
+			if err != nil {
+				t.Fatal(err)
+			}
+			filter.Cursor = &decoded
+		}
+		page, err := service.List(ctx, filter)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pages++
+		for _, user := range page.Items {
+			seen = append(seen, user.ID)
+			if user.PasswordHash != "" {
+				t.Fatal("admin list leaked a password hash")
+			}
+		}
+		if page.NextCursor == nil {
+			break
+		}
+		cursor = *page.NextCursor
+	}
+	if pages != 3 {
+		t.Fatalf("pages=%d", pages)
+	}
+	if len(seen) != 5 {
+		t.Fatalf("paginated list reached %d of 5 users", len(seen))
+	}
+	for index, userID := range ids {
+		if seen[index] != userID {
+			t.Fatalf("stable (created_at,id) order broken at %d", index)
+		}
+	}
+	if _, err := service.List(ctx, users.ListFilter{Limit: users.MaxListLimit + 1}); !errors.Is(err, users.ErrInvalidList) {
+		t.Fatalf("oversized limit err=%v", err)
 	}
 }

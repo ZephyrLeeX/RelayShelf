@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ZephyrLeeX/RelayShelf/internal/audit"
 	"github.com/google/uuid"
 )
 
@@ -27,6 +28,9 @@ type memoryRepo struct {
 	touchCount  int
 	authLookups int
 	audits      []AuditEvent
+	resetEvent  *audit.Event
+	resetTarget uuid.UUID
+	resetHash   string
 	rehashed    string
 	revoked     []uuid.UUID
 }
@@ -114,12 +118,13 @@ func (m *memoryRepo) ChangePasswordAndRevokeOthers(_ context.Context, _ uuid.UUI
 	m.audits = append(m.audits, event)
 	return nil
 }
-func (m *memoryRepo) ResetPasswordAndRevokeAll(_ context.Context, _ uuid.UUID, hash string, _ time.Time, event AuditEvent) error {
-	m.rehashed = hash
+func (m *memoryRepo) ResetPasswordAndRevokeAll(_ context.Context, target uuid.UUID, hash string, _ time.Time, event audit.Event) error {
+	m.resetHash = hash
+	m.resetTarget = target
+	m.resetEvent = &event
 	for _, s := range m.sessions {
 		m.revoked = append(m.revoked, s.ID)
 	}
-	m.audits = append(m.audits, event)
 	return nil
 }
 func (m *memoryRepo) Audit(_ context.Context, e AuditEvent) error {
@@ -210,10 +215,24 @@ func TestPasswordChangeAndAdminResetRevocation(t *testing.T) {
 	}
 	repo.revoked = nil
 	target := uuid.New()
+	input = LoginInput{ClientIP: netip.MustParseAddr("192.0.2.9"), UserAgent: "admin-test", TraceID: "trace-1"}
 	if err := service.ResetPasswordByAdmin(context.Background(), actor, target, "admin-reset", input); err != nil {
 		t.Fatal(err)
 	}
 	if len(repo.revoked) != 2 {
 		t.Fatalf("admin reset revoked %d", len(repo.revoked))
+	}
+	if repo.resetHash == "" || repo.resetTarget != target {
+		t.Fatalf("reset not applied to target: hash=%q target=%v", repo.resetHash, repo.resetTarget)
+	}
+	event := repo.resetEvent
+	if event == nil {
+		t.Fatal("admin reset recorded no typed audit event")
+	}
+	if event.Type != audit.EventUserPasswordReset || event.TargetType != "USER" || event.TargetID != target {
+		t.Fatalf("typed reset event mismatch: %+v", event)
+	}
+	if event.Actor.UserID != actor.User.ID || event.Actor.DeviceID != actor.Device.ID || event.Actor.SessionID != actor.Session.ID || event.Actor.IP != input.ClientIP || event.Actor.UserAgent != "admin-test" || event.Actor.TraceID != "trace-1" {
+		t.Fatalf("reset audit actor mismatch: %+v", event.Actor)
 	}
 }
