@@ -183,7 +183,7 @@ func TestAdminResetRevokesAllTargetSessions(t *testing.T) {
 		t.Fatal("reset hash not persisted")
 	}
 	var auditCount int
-	if err = db.QueryRow(ctx, "SELECT count(*) FROM audit_logs WHERE event_type='PASSWORD_RESET_BY_ADMIN'").Scan(&auditCount); err != nil || auditCount != 1 {
+	if err = db.QueryRow(ctx, "SELECT count(*) FROM audit_logs WHERE event_type='USER_PASSWORD_RESET'").Scan(&auditCount); err != nil || auditCount != 1 {
 		t.Fatalf("audit=%d err=%v", auditCount, err)
 	}
 }

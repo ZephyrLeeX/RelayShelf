@@ -1,7 +1,7 @@
 openapi: 3.1.1
 info:
   title: RelayShelf API
-  version: 0.8.0
+  version: 0.10.0
   description: HTTP contract authority for RelayShelf.
 servers:
   - url: /api/v1
@@ -404,6 +404,89 @@ paths:
       operationId: deleteTag
       security: [{ cookieAuth: [] }]
       responses: { '204': { description: Deleted tag }, '404': { $ref: '#/components/responses/Error' } }
+  /admin/settings:
+    get:
+      operationId: getRuntimeSettings
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200': { description: Typed singleton runtime settings, content: { application/json: { schema: { $ref: '#/components/schemas/RuntimeSettings' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+    put:
+      operationId: updateRuntimeSettings
+      security: [{ cookieAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/UpdateRuntimeSettingsRequest' } } } }
+      responses:
+        '200': { description: Atomically updated runtime settings, content: { application/json: { schema: { $ref: '#/components/schemas/RuntimeSettings' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /admin/storage:
+    get:
+      operationId: getStorageStatus
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200': { description: Bounded storage health projection without internal paths, content: { application/json: { schema: { $ref: '#/components/schemas/StorageStatus' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /admin/status:
+    get:
+      operationId: getAdminStatus
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200': { description: Operational status without private content or raw job payloads, content: { application/json: { schema: { $ref: '#/components/schemas/AdminStatus' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /admin/users:
+    get:
+      operationId: listAdminUsers
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200': { description: Bounded operational user metadata, content: { application/json: { schema: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/AdminUser' } } } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+    post:
+      operationId: createAdminUser
+      security: [{ cookieAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateAdminUserRequest' } } } }
+      responses:
+        '201': { description: User created, content: { application/json: { schema: { $ref: '#/components/schemas/AdminUser' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /admin/users/{userId}/disable:
+    post:
+      operationId: disableAdminUser
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      responses:
+        '204': { description: User disabled and all sessions revoked }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /admin/users/{userId}/password/reset:
+    post:
+      operationId: resetAdminUserPassword
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ResetAdminUserPasswordRequest' } } } }
+      responses:
+        '204': { description: Password reset and all sessions revoked }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /admin/users/{userId}:
+    delete:
+      operationId: deleteAdminUser
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      responses:
+        '204': { description: User-owned data deleted without deleting shared file objects }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
 components:
   securitySchemes:
     cookieAuth: { type: apiKey, in: cookie, name: __Host-session }
@@ -435,6 +518,11 @@ components:
       schema: { type: string, format: uuid }
     AttachmentId:
       name: attachmentId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    UserId:
+      name: userId
       in: path
       required: true
       schema: { type: string, format: uuid }
@@ -706,3 +794,113 @@ components:
         message: { type: string }
         traceId: { type: string }
         details: {}
+    RuntimeSettings:
+      type: object
+      additionalProperties: false
+      required: [temporaryTtlHours, trashTtlHours, maxFileSizeBytes, maxStorageBytes, auditRetentionDays, uploadRetentionHours, updatedAt]
+      properties:
+        temporaryTtlHours: { type: integer, minimum: 1, maximum: 8760 }
+        trashTtlHours: { type: integer, minimum: 1, maximum: 8760 }
+        maxFileSizeBytes: { type: integer, format: int64, minimum: 1, maximum: 2199023255552 }
+        maxStorageBytes: { type: [integer, 'null'], format: int64, minimum: 1 }
+        auditRetentionDays: { type: integer, minimum: 1, maximum: 3650 }
+        uploadRetentionHours: { type: integer, minimum: 1, maximum: 168 }
+        updatedAt: { type: string, format: date-time }
+        updatedByUserId: { type: [string, 'null'], format: uuid }
+    UpdateRuntimeSettingsRequest:
+      type: object
+      additionalProperties: false
+      required: [temporaryTtlHours, trashTtlHours, maxFileSizeBytes, maxStorageBytes, auditRetentionDays, uploadRetentionHours]
+      properties:
+        temporaryTtlHours: { type: integer, minimum: 1, maximum: 8760 }
+        trashTtlHours: { type: integer, minimum: 1, maximum: 8760 }
+        maxFileSizeBytes: { type: integer, format: int64, minimum: 1, maximum: 2199023255552 }
+        maxStorageBytes: { type: [integer, 'null'], format: int64, minimum: 1 }
+        auditRetentionDays: { type: integer, minimum: 1, maximum: 3650 }
+        uploadRetentionHours: { type: integer, minimum: 1, maximum: 168 }
+    HealthState:
+      type: string
+      enum: [HEALTHY, DEGRADED, UNAVAILABLE]
+    StorageThresholdState:
+      type: string
+      enum: [UNCONFIGURED, NORMAL, WARNING, STRONG_WARNING, LIMIT_REACHED]
+    StorageStatus:
+      type: object
+      additionalProperties: false
+      required: [state, logicalUsageBytes, maxStorageBytes, thresholdState, nasAvailableBytes, nasTotalBytes, stagingUsageBytes, stagingAvailableBytes, stagingTotalBytes, degradedReasons]
+      properties:
+        state: { $ref: '#/components/schemas/HealthState' }
+        logicalUsageBytes: { type: integer, format: int64, minimum: 0 }
+        maxStorageBytes: { type: [integer, 'null'], format: int64, minimum: 1 }
+        thresholdState: { $ref: '#/components/schemas/StorageThresholdState' }
+        nasAvailableBytes: { type: [integer, 'null'], format: int64, minimum: 0 }
+        nasTotalBytes: { type: [integer, 'null'], format: int64, minimum: 0 }
+        stagingUsageBytes: { type: integer, format: int64, minimum: 0 }
+        stagingAvailableBytes: { type: [integer, 'null'], format: int64, minimum: 0 }
+        stagingTotalBytes: { type: [integer, 'null'], format: int64, minimum: 0 }
+        degradedReasons: { type: array, items: { type: string, enum: [NAS_UNAVAILABLE, NAS_TIMEOUT, LOGICAL_THRESHOLD_WARNING, LOGICAL_THRESHOLD_EXCEEDED, STAGING_UNAVAILABLE, DATABASE_UNAVAILABLE] }, uniqueItems: true }
+    BuildInfo:
+      type: object
+      additionalProperties: false
+      required: [version, gitCommit, buildTime]
+      properties:
+        version: { type: string }
+        gitCommit: { type: string }
+        buildTime: { type: string }
+    MigrationStatus:
+      type: object
+      additionalProperties: false
+      required: [currentVersion, latestVersion, compatible]
+      properties:
+        currentVersion: { type: integer, format: int64, minimum: 0 }
+        latestVersion: { type: integer, format: int64, minimum: 1 }
+        compatible: { type: boolean }
+    FailedJob:
+      type: object
+      additionalProperties: false
+      required: [id, type, subjectType, attempts, errorCode, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string }
+        subjectType: { type: string }
+        attempts: { type: integer, minimum: 0 }
+        errorCode: { type: string }
+        updatedAt: { type: string, format: date-time }
+    AdminStatus:
+      type: object
+      additionalProperties: false
+      required: [state, build, migration, databaseState, failedJobs, storage]
+      properties:
+        state: { $ref: '#/components/schemas/HealthState' }
+        build: { $ref: '#/components/schemas/BuildInfo' }
+        migration: { $ref: '#/components/schemas/MigrationStatus' }
+        databaseState: { $ref: '#/components/schemas/HealthState' }
+        failedJobs: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/FailedJob' } }
+        storage: { $ref: '#/components/schemas/StorageStatus' }
+    AdminUser:
+      type: object
+      additionalProperties: false
+      required: [id, username, displayName, isAdmin, status, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        displayName: { type: string }
+        isAdmin: { type: boolean }
+        status: { type: string, enum: [ACTIVE, DISABLED] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CreateAdminUserRequest:
+      type: object
+      additionalProperties: false
+      required: [username, displayName, password, isAdmin]
+      properties:
+        username: { type: string, minLength: 1, maxLength: 64 }
+        displayName: { type: string, minLength: 1, maxLength: 100 }
+        password: { type: string, minLength: 10, maxLength: 1024 }
+        isAdmin: { type: boolean }
+    ResetAdminUserPasswordRequest:
+      type: object
+      additionalProperties: false
+      required: [newPassword]
+      properties:
+        newPassword: { type: string, minLength: 10, maxLength: 1024 }

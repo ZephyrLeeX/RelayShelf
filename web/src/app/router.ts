@@ -17,7 +17,7 @@ export const router = createRouter({
         { path: 'trash', name: 'trash', component: () => import('@/features/messages/views/FeedView.vue'), props: { kind: 'trash' } },
         { path: 'search', name: 'search', component: () => import('@/features/search/SearchView.vue') },
         { path: 'messages/:id', name: 'message-detail', component: () => import('@/features/messages/views/MessageDetailView.vue'), props: true },
-        { path: 'admin/:pathMatch(.*)*', name: 'admin', component: () => import('@/features/admin/AdminPlaceholder.vue'), meta: { admin: true } },
+        { path: 'admin/:pathMatch(.*)*', name: 'admin', component: () => import('@/features/admin/AdminView.vue'), meta: { admin: true } },
       ],
     },
     { path: '/:pathMatch(.*)*', redirect: '/temporary' },

@@ -7,6 +7,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/ZephyrLeeX/RelayShelf/internal/audit"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/id"
 	"github.com/ZephyrLeeX/RelayShelf/internal/realtime"
 	"github.com/google/uuid"
@@ -206,11 +207,11 @@ func (s *Scheduler) purgeTrash(ctx context.Context, conn *pgxpool.Conn, now time
 
 func (s *Scheduler) cleanupAudit(ctx context.Context, conn *pgxpool.Conn, now time.Time) error {
 	for cycle := 0; cycle < s.maxBatches; cycle++ {
-		ct, err := conn.Exec(ctx, `WITH due AS (SELECT id FROM audit_logs WHERE created_at < $1::timestamptz-(SELECT audit_retention_days FROM system_settings WHERE id=1)*interval '1 day' ORDER BY created_at,id LIMIT $2) DELETE FROM audit_logs a USING due WHERE a.id=due.id`, now, s.batch)
+		deleted, err := audit.Cleanup(ctx, conn, now, s.batch)
 		if err != nil {
 			return err
 		}
-		if ct.RowsAffected() < int64(s.batch) {
+		if deleted < int64(s.batch) {
 			return nil
 		}
 	}

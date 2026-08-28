@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/ZephyrLeeX/RelayShelf/internal/audit"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/id"
 	usersdomain "github.com/ZephyrLeeX/RelayShelf/internal/users"
 	"github.com/google/uuid"
@@ -297,7 +298,7 @@ func (s *Service) ResetPasswordByAdmin(ctx context.Context, actor Authentication
 	if err != nil {
 		return err
 	}
-	event, err := s.event("PASSWORD_RESET_BY_ADMIN", &actor.User.ID, &targetID, &actor.Device.ID, &actor.Session.ID, input)
+	event, err := s.event(string(audit.EventUserPasswordReset), &actor.User.ID, &targetID, &actor.Device.ID, &actor.Session.ID, input)
 	if err != nil {
 		return err
 	}

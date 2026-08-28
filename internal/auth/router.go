@@ -2,6 +2,7 @@ package auth
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/ZephyrLeeX/RelayShelf/internal/httpapi"
 )
@@ -17,8 +18,18 @@ func Router(handler any, middleware *Middleware) http.Handler {
 	safe := middleware.Authenticate(true)(api)
 	stream := middleware.Authenticate(false)(api)
 	unsafe := middleware.Authenticate(false)(middleware.RequireSameOrigin(middleware.CSRF(middleware.Touch(api))))
+	adminSafe := middleware.Authenticate(true)(middleware.RequireAdmin(api))
+	adminUnsafe := middleware.Authenticate(false)(middleware.RequireSameOrigin(middleware.CSRF(middleware.Touch(middleware.RequireAdmin(api)))))
 	login := middleware.RequireSameOrigin(api)
 	dispatch := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/admin/") {
+			if isSafe(r.Method) {
+				adminSafe.ServeHTTP(w, r)
+			} else {
+				adminUnsafe.ServeHTTP(w, r)
+			}
+			return
+		}
 		if r.URL.Path == "/api/v1/search" {
 			w.Header().Set("Cache-Control", "no-store")
 			w.Header().Set("Pragma", "no-cache")

@@ -12,11 +12,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ZephyrLeeX/RelayShelf/internal/admin"
+	"github.com/ZephyrLeeX/RelayShelf/internal/audit"
 	"github.com/ZephyrLeeX/RelayShelf/internal/auth"
 	"github.com/ZephyrLeeX/RelayShelf/internal/files"
 	"github.com/ZephyrLeeX/RelayShelf/internal/httpapi"
 	"github.com/ZephyrLeeX/RelayShelf/internal/jobs"
 	"github.com/ZephyrLeeX/RelayShelf/internal/messages"
+	"github.com/ZephyrLeeX/RelayShelf/internal/platform/buildinfo"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/clock"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/config"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/database"
@@ -25,9 +28,11 @@ import (
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/staging"
 	"github.com/ZephyrLeeX/RelayShelf/internal/realtime"
 	"github.com/ZephyrLeeX/RelayShelf/internal/search"
+	"github.com/ZephyrLeeX/RelayShelf/internal/settings"
 	"github.com/ZephyrLeeX/RelayShelf/internal/storage"
 	"github.com/ZephyrLeeX/RelayShelf/internal/tags"
 	"github.com/ZephyrLeeX/RelayShelf/internal/uploads"
+	"github.com/ZephyrLeeX/RelayShelf/internal/users"
 	"github.com/ZephyrLeeX/RelayShelf/internal/webui"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -44,6 +49,8 @@ type uploadEndpoints struct{ *uploads.Handler }
 type fileEndpoints struct{ *files.Handler }
 type searchEndpoints struct{ *search.Handler }
 type realtimeEndpoints struct{ *realtime.Handler }
+type settingsEndpoints struct{ *settings.Handler }
+type adminEndpoints struct{ *admin.Handler }
 type apiHandler struct {
 	*authEndpoints
 	*messageEndpoints
@@ -52,6 +59,8 @@ type apiHandler struct {
 	*fileEndpoints
 	*searchEndpoints
 	*realtimeEndpoints
+	*settingsEndpoints
+	*adminEndpoints
 }
 
 var _ httpapi.ServerInterface = (*apiHandler)(nil)
@@ -99,6 +108,11 @@ func main() {
 	}
 	if command == "storage" && len(os.Args) > 2 && os.Args[2] == "check" {
 		storageCheck()
+		return
+	}
+	if command == "version" {
+		info := buildinfo.Current()
+		log.Printf("RelayShelf %s (commit %s, built %s)", info.Version, info.GitCommit, info.BuildTime)
 		return
 	}
 	var cfg config.Config
@@ -151,6 +165,10 @@ func main() {
 		cookies := auth.NewCookiePolicy(cfg.PublicOrigin)
 		authMiddleware := auth.NewMiddleware(authService, cookies, csrf, cfg.PublicOrigin, httpx.NewResolver(cfg.TrustedProxies))
 		authHandler := auth.NewHandler(authService, csrf, cookies)
+		auditRecorder := audit.NewRecorder(id.UUIDv7{}, now)
+		settingsService := settings.NewService(db, auditRecorder, now)
+		settingsHandler := settings.NewHandler(settingsService)
+		userAdminService := users.NewAdminService(db, hasher, id.UUIDv7{}, now, auditRecorder)
 		bodyCipher, cipherErr := messages.NewAESGCMCipher(cfg.AppEncryptionKey.Bytes())
 		if cipherErr != nil {
 			log.Printf("message encryption unavailable")
@@ -194,6 +212,8 @@ func main() {
 			os.Exit(1)
 		}
 		fileHandler := files.NewHandler(fileService)
+		adminStatus := admin.NewStatusService(db, storageAdapter, staging.NewStatFSProbe(cfg.StagingRoot))
+		adminHandler := admin.NewHandler(userAdminService, authService, adminStatus)
 		thumbnailer := files.NewThumbnailer(db, storageAdapter, id.UUIDv7{}, now.Now)
 		worker := jobs.NewWorker(jobRepo, map[string]jobs.Handler{jobs.TypeGenerateThumbnail: thumbnailer}, jobWake, now)
 		var background sync.WaitGroup
@@ -211,7 +231,7 @@ func main() {
 		scheduler := jobs.NewScheduler(db, jobRepo, uploadService, fileService, hub, id.UUIDv7{}, now, jobWake)
 		background.Add(1)
 		go func() { defer background.Done(); scheduler.Run(serveCtx) }()
-		handler := &apiHandler{authEndpoints: &authEndpoints{authHandler}, messageEndpoints: &messageEndpoints{messageHandler}, tagEndpoints: &tagEndpoints{tagHandler}, uploadEndpoints: &uploadEndpoints{uploadHandler}, fileEndpoints: &fileEndpoints{fileHandler}, searchEndpoints: &searchEndpoints{searchHandler}, realtimeEndpoints: &realtimeEndpoints{realtimeHandler}}
+		handler := &apiHandler{authEndpoints: &authEndpoints{authHandler}, messageEndpoints: &messageEndpoints{messageHandler}, tagEndpoints: &tagEndpoints{tagHandler}, uploadEndpoints: &uploadEndpoints{uploadHandler}, fileEndpoints: &fileEndpoints{fileHandler}, searchEndpoints: &searchEndpoints{searchHandler}, realtimeEndpoints: &realtimeEndpoints{realtimeHandler}, settingsEndpoints: &settingsEndpoints{settingsHandler}, adminEndpoints: &adminEndpoints{adminHandler}}
 		router := newHTTPRouter(authMiddleware.Host, auth.Router(handler, authMiddleware), health(http.StatusOK), ready(db))
 
 		address := os.Getenv("LISTEN_ADDR")
