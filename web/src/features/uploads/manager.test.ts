@@ -174,6 +174,42 @@ describe('UploadManager', () => {
     } finally { vi.useRealTimers() }
   })
 
+  it('treats Pause during retry backoff as a normal cancellation without an unhandled rejection', async () => {
+    vi.useFakeTimers()
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown) => unhandled.push(reason)
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      const single = { chunkSize: 9, partCount: 1, expectedSize: 9 }
+      const transport = new ScriptedTransport([{ part: 0, status: 503, code: 'HTTP_ERROR' }], true)
+      const api = {
+        create: vi.fn().mockResolvedValue(session(single)),
+        get: vi.fn().mockResolvedValue(session(single)),
+        complete: vi.fn().mockResolvedValue(session({ ...single, status: UploadStatus.COMPLETED, completedParts: [0] })),
+      }
+      const manager = new UploadManager(api, transport)
+      await manager.addFiles([file9()])
+      await flush()
+      expect(transport.requests).toHaveLength(1) // the 503 arrived; the chunk is in backoff
+      const clientId = manager.items[0].clientId
+      manager.pause(clientId)
+      await flush()
+      await vi.advanceTimersByTimeAsync(9_000)
+      expect(unhandled).toEqual([])
+      expect(manager.items[0].status).toBe('PAUSED')
+      expect(manager.scheduler.active).toBe(0)
+
+      await manager.resume(clientId)
+      expect(api.get).toHaveBeenCalledWith('upload-a')
+      for (let guard = 0; guard < 12 && manager.items[0]?.status !== 'COMPLETED'; guard++) await vi.advanceTimersByTimeAsync(9_000)
+      expect(manager.items[0].status).toBe('COMPLETED')
+      expect(unhandled).toEqual([])
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+      vi.useRealTimers()
+    }
+  })
+
   it('does not blindly retry a 4xx chunk rejection', async () => {
     const transport = new ScriptedTransport([{ part: 0, status: 409, code: 'UPLOAD_INVALID_STATE' }])
     const api = { create: vi.fn().mockResolvedValue(session()), get: vi.fn(), complete: vi.fn() }
@@ -228,6 +264,40 @@ describe('UploadManager', () => {
     expect(asFailed(manager.items[0]).retryable).toBe(true)
     expect(refresh.mock.calls.length).toBeLessThanOrEqual(2)
     expect(transport.requests).toHaveLength(2)
+  })
+
+  it('starts a new bounded CSRF recovery episode on an explicit user retry', async () => {
+    setCsrfToken('stale')
+    const refresh = vi.fn()
+      .mockImplementationOnce(() => { setCsrfToken('fresh1'); return Promise.resolve(undefined) })
+      .mockImplementationOnce(() => { setCsrfToken('fresh2'); return Promise.resolve(undefined) })
+    const single = { chunkSize: 9, partCount: 1, expectedSize: 9 }
+    const transport = new ScriptedTransport([
+      { part: 0, status: 403, code: 'CSRF_INVALID' }, // stale token
+      { part: 0, status: 403, code: 'CSRF_INVALID' }, // fresh1 is also invalid
+    ], true)
+    const api = {
+      create: vi.fn().mockResolvedValue(session(single)),
+      get: vi.fn()
+        .mockResolvedValueOnce(session(single)) // auto-resume after the first refresh
+        .mockResolvedValueOnce(session(single)), // user-retry reconciliation
+      complete: vi.fn().mockResolvedValue(session({ ...single, status: UploadStatus.COMPLETED, completedParts: [0] })),
+    }
+    const manager = new UploadManager(api, transport)
+    manager.setCsrfRefresh(refresh)
+    await manager.addFiles([file9()])
+    await flush()
+    // The auto-refreshed token also fails; the spent episode must NOT refresh
+    // again on its own, so the item lands in FAILED awaiting a user retry.
+    expect(manager.items[0].status).toBe('FAILED')
+    expect(asFailed(manager.items[0]).errorCode).toBe('CSRF_INVALID')
+
+    manager.retry(manager.items[0].clientId)
+    await flush()
+    expect(refresh).toHaveBeenCalledTimes(2)
+    expect(api.get).toHaveBeenCalledTimes(2)
+    expect(transport.requests.filter((request) => request.partNumber === 0).map((request) => request.csrfToken)).toEqual(['stale', 'fresh1', 'fresh2'])
+    expect(manager.items[0].status).toBe('COMPLETED')
   })
 
   it('reconciles a lost Complete response through GET instead of re-uploading parts', async () => {

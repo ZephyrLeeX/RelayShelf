@@ -145,10 +145,19 @@ export class UploadManager {
   retry(clientId: string) {
     const item = this.getItem(clientId)
     if (!item || item.status !== 'FAILED') return
-    if (item.serverUploadId) void this.resume(clientId); else if (item.file) {
-      this.replace(clientId, { ...item, status: 'QUEUED' })
-      void this.create(clientId, item.file)
+    if (!item.serverUploadId) {
+      if (item.file) {
+        this.replace(clientId, { ...item, status: 'QUEUED' })
+        void this.create(clientId, item.file)
+      }
+      return
     }
+    // An explicit Retry of a CSRF failure starts a NEW bounded recovery
+    // episode: drop the spent auto-recovery marker, refresh the token once,
+    // and only then reconcile through the resume GET — never replay the old
+    // token straight into another chunk.
+    if (item.errorCode === 'CSRF_INVALID') void this.retryAfterCsrfRefresh(clientId)
+    else void this.resume(clientId)
   }
 
   // Safe terminal action for server-FAILED or corrupt staging sessions: the
@@ -261,7 +270,14 @@ export class UploadManager {
           // token; fail immediately so the bounded recovery path can refresh.
           if (error.code === 'CSRF_INVALID') { this.fail(clientId, cause); return }
           if (!error.retryable || attempt === MAX_CHUNK_ATTEMPTS) { this.fail(clientId, cause); return }
-          await waitForRetry(retryDelay(attempt), controller.signal)
+          try {
+            await waitForRetry(retryDelay(attempt), controller.signal)
+          } catch {
+            // Pause aborts the backoff wait; that is a normal cancellation,
+            // not a chunk failure, so leave quietly (finally still books the
+            // part as inactive) instead of rejecting uploadPart.
+            return
+          }
         }
       }
     } finally {
@@ -342,6 +358,14 @@ export class UploadManager {
     const fresh = await this.refreshCsrfToken()
     if (!fresh || fresh === staleToken) return
     this.autoRecoveredCsrf.add(clientId)
+    await this.resume(clientId)
+  }
+
+  // User-triggered episode boundary for CSRF_INVALID: resets the marker so
+  // the retry is allowed exactly one fresh token refresh before resuming.
+  private async retryAfterCsrfRefresh(clientId: string) {
+    this.autoRecoveredCsrf.delete(clientId)
+    await this.refreshCsrfToken()
     await this.resume(clientId)
   }
 

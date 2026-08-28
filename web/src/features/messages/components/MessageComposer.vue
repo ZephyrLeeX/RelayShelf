@@ -47,6 +47,7 @@ const draftFields = () => [body.value, mode.value, lifecycle.value, sensitive.va
 const requestFingerprint = computed(() => JSON.stringify({ draft: draftFields(), uploadIds: selectedUploadIds.value }))
 const draftIdentity = computed(() => JSON.stringify({ draft: draftFields(), selection: [...selectedUploadClients.value] }))
 let attemptedIdentity = ''
+let attemptedFingerprint = ''
 
 interface SendSnapshot {
   key: string
@@ -77,6 +78,7 @@ const send = useMutation({
     }
     activeKey.value = ''
     attemptedIdentity = ''
+    attemptedFingerprint = ''
     failed.value = false
     error.value = ''
     void client.invalidateQueries({ queryKey: queryKeys.messages.root() })
@@ -86,12 +88,12 @@ const send = useMutation({
   onError: (cause, snapshot) => {
     failed.value = true
     error.value = displayError(cause)
-    if (draftIdentity.value !== snapshot.identity) activeKey.value = ''
+    if (requestFingerprint.value !== snapshot.fingerprint || draftIdentity.value !== snapshot.identity) activeKey.value = ''
   },
 })
 
-watch(draftIdentity, (value) => {
-  if (failed.value && value !== attemptedIdentity) {
+watch([requestFingerprint, draftIdentity], ([fingerprint, identity]) => {
+  if (failed.value && (fingerprint !== attemptedFingerprint || identity !== attemptedIdentity)) {
     activeKey.value = ''
     failed.value = false
     error.value = ''
@@ -106,6 +108,7 @@ function submit() {
   if (tooLarge.value) { error.value = '正文 UTF-8 大小不能超过 1 MiB。'; return }
   if (!activeKey.value) activeKey.value = crypto.randomUUID()
   attemptedIdentity = draftIdentity.value
+  attemptedFingerprint = requestFingerprint.value
   send.mutate({
     key: activeKey.value,
     fingerprint: requestFingerprint.value,

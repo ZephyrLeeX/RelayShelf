@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRegisterSW } from 'virtual:pwa-register/vue'
-import { hasActiveTransfers, visibleUploads } from '@/features/uploads/store'
+import { hasActiveTransfers, reloadUnsafe, visibleUploads } from '@/features/uploads/store'
 
 const { needRefresh, updateServiceWorker } = useRegisterSW({ immediate: true })
 const paused = computed(() => visibleUploads.value.some((item) => item.status === 'PAUSED'))
-function update() { if (!hasActiveTransfers.value) void updateServiceWorker(true) }
+const updateBlocked = computed(() => hasActiveTransfers.value || reloadUnsafe.value)
+function update() { if (!updateBlocked.value) void updateServiceWorker(true) }
 </script>
 
 <template>
@@ -20,6 +21,8 @@ function update() { if (!hasActiveTransfers.value) void updateServiceWorker(true
     </div><div>
       <strong>发现新版本</strong><p v-if="hasActiveTransfers">
         当前有文件正在上传，上传完成后再刷新。
+      </p><p v-else-if="reloadUnsafe">
+        恢复记录当前不可用：仍有仅保存在本页的上传（暂停、待重试或尚未使用），现在刷新会丢失它们。请先完成或移除这些上传。
       </p><p v-else-if="paused">
         更新后需要重新选择暂停的文件继续上传。
       </p><p v-else>
@@ -29,7 +32,7 @@ function update() { if (!hasActiveTransfers.value) void updateServiceWorker(true
     <button
       class="button primary"
       type="button"
-      :disabled="hasActiveTransfers"
+      :disabled="updateBlocked"
       @click="update"
     >
       更新并刷新

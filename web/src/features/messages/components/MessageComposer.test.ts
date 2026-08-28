@@ -333,6 +333,29 @@ describe('MessageComposer', () => {
     expect(create).toHaveBeenNthCalledWith(2, 'key-b', expect.objectContaining({ body: 'F2', uploadIds: ['upload-b'] }))
   })
 
+  it('resets the idempotency key when a completed upload is removed from the global queue after a failure', async () => {
+    uploadState.items.push(uploadItem('client-a', 'COMPLETED', uploadSession({ id: 'upload-a' })))
+    vi.spyOn(uploadManager, 'addFiles').mockResolvedValue(['client-a'])
+    const create = vi.spyOn(DefaultService, 'createMessage').mockRejectedValueOnce(new TypeError('offline')).mockResolvedValueOnce(messageFixture())
+    const wrapper = mountComposer()
+    const input = wrapper.get<HTMLInputElement>('input[type="file"]')
+    Object.defineProperty(input.element, 'files', { configurable: true, value: [new File(['data'], 'photo.png')] })
+    await input.trigger('change')
+    await wrapper.get('textarea').setValue('F1')
+    await wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await flushPromises()
+    expect(create).toHaveBeenNthCalledWith(1, 'key-a', expect.objectContaining({ body: 'F1', uploadIds: ['upload-a'] }))
+    // Removing A through the GLOBAL Upload Queue keeps the Composer selection
+    // client ID, but the request payload no longer contains upload-a — so the
+    // failed key must not be replayed against a changed payload.
+    uploadManager.remove('client-a')
+    await flushPromises()
+    await wrapper.get('button.primary').trigger('click')
+    await flushPromises()
+    expect(create).toHaveBeenNthCalledWith(2, 'key-b', expect.objectContaining({ body: 'F1', uploadIds: [] }))
+    expect(create.mock.calls[1][0]).not.toBe(create.mock.calls[0][0])
+  })
+
   it('resets the idempotency key when a pending attachment selection changes after a failure', async () => {
     uploadState.items.push(uploadItem('client-b', 'UPLOADING', uploadSession({ id: 'upload-b', originalFilename: 'second.png', status: UploadStatus.UPLOADING, completedParts: [] })))
     vi.spyOn(uploadManager, 'addFiles').mockResolvedValue(['client-b'])

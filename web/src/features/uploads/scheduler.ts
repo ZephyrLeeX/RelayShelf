@@ -23,12 +23,17 @@ export class UploadScheduler {
       const [task] = this.pending.splice(index, 1)
       this.activeGlobal++
       this.activeByFile.set(task.fileId, this.activeFor(task.fileId) + 1)
-      void task.run().finally(() => {
-        this.activeGlobal--
-        const remaining = this.activeFor(task.fileId) - 1
-        if (remaining > 0) this.activeByFile.set(task.fileId, remaining); else this.activeByFile.delete(task.fileId)
-        this.drain()
-      })
+      // Bookkeeping must always execute, and an unexpected task rejection must
+      // never leave an unhandled rejected promise: both settlement paths run
+      // the same cleanup and the chained promise resolves either way.
+      void task.run().then(() => this.finish(task.fileId), () => this.finish(task.fileId))
     }
+  }
+
+  private finish(fileId: string) {
+    this.activeGlobal--
+    const remaining = this.activeFor(fileId) - 1
+    if (remaining > 0) this.activeByFile.set(fileId, remaining); else this.activeByFile.delete(fileId)
+    this.drain()
   }
 }

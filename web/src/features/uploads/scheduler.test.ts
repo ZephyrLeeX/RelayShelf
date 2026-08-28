@@ -27,4 +27,28 @@ describe('UploadScheduler', () => {
     expect(globalMax).toBeLessThanOrEqual(4)
     expect([...perFileMax.values()].every((value) => value <= 2)).toBe(true)
   })
+
+  it('drains counters and leaves no unhandled rejection when a task rejects unexpectedly', async () => {
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown) => unhandled.push(reason)
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      const scheduler = new UploadScheduler(2, 2)
+      scheduler.enqueue('a', () => Promise.reject(new Error('boom')))
+      scheduler.enqueue('a', () => Promise.reject(new Error('boom')))
+      scheduler.enqueue('b', () => Promise.resolve())
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(scheduler.active).toBe(0)
+      expect(scheduler.activeFor('a')).toBe(0)
+      expect(scheduler.activeFor('b')).toBe(0)
+      // Capacity is fully restored: two fresh tasks start immediately again.
+      scheduler.enqueue('a', () => new Promise<void>(() => {}))
+      scheduler.enqueue('a', () => new Promise<void>(() => {}))
+      expect(scheduler.active).toBe(2)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(unhandled).toEqual([])
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
+  })
 })
