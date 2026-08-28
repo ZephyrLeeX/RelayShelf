@@ -212,8 +212,12 @@ func main() {
 		if reconcileErr := uploadService.ReconcileStaging(ctx, 1000); reconcileErr != nil {
 			log.Printf("bounded upload staging reconciliation incomplete")
 		}
+		storageMonitor := storage.NewMonitor(storageAdapter)
+		go storageMonitor.Run(serveCtx)
+		uploadService.SetMonitor(storageMonitor)
 		uploadHandler := uploads.NewHandler(uploadService)
 		fileService := files.NewService(db, storageAdapter)
+		fileService.SetMonitor(storageMonitor)
 		if reconcileErr := fileService.Reconcile(ctx, 100); reconcileErr != nil {
 			log.Printf("file object reconciliation failed")
 			os.Exit(1)
