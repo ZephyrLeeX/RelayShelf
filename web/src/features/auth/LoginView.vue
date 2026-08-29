@@ -6,24 +6,51 @@ import { useAuthStore } from './store'
 
 const username = ref('')
 const password = ref('')
+const totpCode = ref('')
+const pendingChallenge = ref<string | null>(null)
 const submitting = ref(false)
 const error = ref('')
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 
+async function finishLogin() {
+  const redirect = typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/') ? route.query.redirect : '/temporary'
+  await router.replace(redirect)
+}
+
 async function submit() {
   error.value = ''
   submitting.value = true
   try {
-    await auth.login(username.value, password.value)
-    const redirect = typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/') ? route.query.redirect : '/temporary'
-    await router.replace(redirect)
+    if (pendingChallenge.value) {
+      await auth.completeTotpLogin(pendingChallenge.value, totpCode.value.trim())
+      pendingChallenge.value = null
+      await finishLogin()
+      return
+    }
+    const challenge = await auth.login(username.value, password.value)
+    if (challenge) {
+      pendingChallenge.value = challenge.challengeToken
+      totpCode.value = ''
+      return
+    }
+    await finishLogin()
   } catch (cause) {
     const adapted = toApiError(cause)
-    error.value = adapted.code === apiCodes.invalidCredentials
-      ? '用户名或密码错误。'
-      : adapted.status === 429 ? '尝试次数过多，请稍后再试。' : displayError(cause)
+    if (adapted.code === apiCodes.totpChallengeExpired) {
+      pendingChallenge.value = null
+      password.value = ''
+      error.value = '两步验证已过期，请重新登录。'
+    } else if (adapted.code === apiCodes.totpInvalid || (adapted.status === 401 && pendingChallenge.value)) {
+      error.value = '验证码错误。'
+    } else if (adapted.code === apiCodes.invalidCredentials) {
+      error.value = '用户名或密码错误。'
+    } else if (adapted.status === 429) {
+      error.value = '尝试次数过多，请稍后再试。'
+    } else {
+      error.value = displayError(cause)
+    }
   } finally { submitting.value = false }
 }
 </script>
@@ -47,21 +74,38 @@ async function submit() {
       </p>
     </div>
     <form @submit.prevent="submit">
-      <label class="field">用户名<input
-        v-model="username"
-        name="username"
-        autocomplete="username"
-        required
-        autofocus
-      ></label>
-      <label class="field">密码<input
-        v-model="password"
-        name="password"
-        type="password"
-        autocomplete="current-password"
-        required
-        minlength="10"
-      ></label>
+      <template v-if="!pendingChallenge">
+        <label class="field">用户名<input
+          v-model="username"
+          name="username"
+          autocomplete="username"
+          required
+          autofocus
+        ></label>
+        <label class="field">密码<input
+          v-model="password"
+          name="password"
+          type="password"
+          autocomplete="current-password"
+          required
+          minlength="10"
+        ></label>
+      </template>
+      <template v-else>
+        <p class="muted">
+          此账号已启用两步验证。请输入验证器应用中的 6 位代码。
+        </p>
+        <label class="field">验证码<input
+          v-model="totpCode"
+          name="totp-code"
+          inputmode="numeric"
+          autocomplete="one-time-code"
+          pattern="[0-9]{6}"
+          maxlength="6"
+          required
+          autofocus
+        ></label>
+      </template>
       <p
         v-if="auth.status === 'error'"
         class="error"
@@ -80,7 +124,7 @@ async function submit() {
         type="submit"
         :disabled="submitting"
       >
-        {{ submitting ? '登录中…' : '登录' }}
+        {{ submitting ? '登录中…' : pendingChallenge ? '验证' : '登录' }}
       </button>
     </form>
   </section>

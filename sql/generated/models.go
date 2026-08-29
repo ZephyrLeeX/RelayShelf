@@ -165,6 +165,19 @@ type Tag struct {
 	UpdatedAt      pgtype.Timestamptz
 }
 
+type TotpChallenge struct {
+	ID                pgtype.UUID
+	UserID            pgtype.UUID
+	DeviceID          pgtype.UUID
+	TokenHash         []byte
+	ExpiresAt         pgtype.Timestamptz
+	Attempts          int32
+	ConsumedAt        pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	PendingDeviceName string
+	PendingUserAgent  string
+}
+
 type UploadPart struct {
 	UploadSessionID pgtype.UUID
 	PartNumber      int32
@@ -198,4 +211,21 @@ type User struct {
 	Status       string
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+}
+
+type UserTotp struct {
+	ID                      pgtype.UUID
+	UserID                  pgtype.UUID
+	SecretCiphertext        []byte
+	SecretNonce             []byte
+	SecretEncryptionVersion int16
+	Digits                  int16
+	PeriodSeconds           int16
+	Algorithm               string
+	EnabledAt               pgtype.Timestamptz
+	LastUsedStep            pgtype.Int8
+	FailedAttempts          int32
+	LockedUntil             pgtype.Timestamptz
+	CreatedAt               pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
 }

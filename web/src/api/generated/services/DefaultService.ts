@@ -32,6 +32,12 @@ import type { Session } from '../models/Session';
 import type { StorageStatus } from '../models/StorageStatus';
 import type { Tag } from '../models/Tag';
 import type { TagRequest } from '../models/TagRequest';
+import type { TOTPChallengeRequest } from '../models/TOTPChallengeRequest';
+import type { TOTPCodeRequest } from '../models/TOTPCodeRequest';
+import type { TOTPEnrollmentPending } from '../models/TOTPEnrollmentPending';
+import type { TOTPEnrollmentRequest } from '../models/TOTPEnrollmentRequest';
+import type { TOTPLoginChallenge } from '../models/TOTPLoginChallenge';
+import type { TOTPStatus } from '../models/TOTPStatus';
 import type { UpdateRuntimeSettingsRequest } from '../models/UpdateRuntimeSettingsRequest';
 import type { UpdateTagRequest } from '../models/UpdateTagRequest';
 import type { UploadSession } from '../models/UploadSession';
@@ -57,11 +63,12 @@ export class DefaultService {
     /**
      * @param requestBody
      * @returns AuthBootstrap Authenticated session bootstrap
+     * @returns TOTPLoginChallenge Password accepted but a TOTP second factor is required; no session cookie is issued until the challenge completes
      * @throws ApiError
      */
     public static login(
         requestBody: LoginRequest,
-    ): CancelablePromise<AuthBootstrap> {
+    ): CancelablePromise<AuthBootstrap | TOTPLoginChallenge> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/auth/login',
@@ -69,6 +76,104 @@ export class DefaultService {
             mediaType: 'application/json',
             errors: {
                 401: `API error`,
+                429: `API error`,
+            },
+        });
+    }
+    /**
+     * @param requestBody
+     * @returns AuthBootstrap Second factor accepted; authenticated session bootstrap
+     * @throws ApiError
+     */
+    public static completeLoginTotp(
+        requestBody: TOTPChallengeRequest,
+    ): CancelablePromise<AuthBootstrap> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/auth/login/totp',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                401: `API error`,
+                410: `API error`,
+                429: `API error`,
+            },
+        });
+    }
+    /**
+     * @returns TOTPStatus Current user TOTP enrollment state without any secret material
+     * @throws ApiError
+     */
+    public static getTotpStatus(): CancelablePromise<TOTPStatus> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/auth/totp',
+            errors: {
+                401: `API error`,
+            },
+        });
+    }
+    /**
+     * @param requestBody
+     * @returns TOTPEnrollmentPending Pending enrollment material; TOTP stays disabled until the confirmation code validates
+     * @throws ApiError
+     */
+    public static startTotpEnrollment(
+        requestBody: TOTPEnrollmentRequest,
+    ): CancelablePromise<TOTPEnrollmentPending> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/auth/totp/enroll',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                401: `API error`,
+                403: `API error`,
+                409: `API error`,
+                422: `API error`,
+                429: `API error`,
+            },
+        });
+    }
+    /**
+     * @param requestBody
+     * @returns TOTPStatus TOTP enabled
+     * @throws ApiError
+     */
+    public static confirmTotpEnrollment(
+        requestBody: TOTPCodeRequest,
+    ): CancelablePromise<TOTPStatus> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/auth/totp/confirm',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                401: `API error`,
+                403: `API error`,
+                404: `API error`,
+                409: `API error`,
+                429: `API error`,
+            },
+        });
+    }
+    /**
+     * @param requestBody
+     * @returns TOTPStatus TOTP disabled
+     * @throws ApiError
+     */
+    public static disableTotp(
+        requestBody: TOTPCodeRequest,
+    ): CancelablePromise<TOTPStatus> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/auth/totp/disable',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                401: `API error`,
+                403: `API error`,
+                404: `API error`,
                 429: `API error`,
             },
         });

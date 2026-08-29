@@ -128,7 +128,7 @@ func statusDTO(value AdminStatus) httpapi.AdminStatus {
 	for _, job := range value.FailedJobs {
 		failed = append(failed, httpapi.FailedJob{Id: job.ID, Type: job.Type, SubjectType: job.SubjectType, Attempts: job.Attempts, ErrorCode: job.ErrorCode, UpdatedAt: job.UpdatedAt.UTC()})
 	}
-	return httpapi.AdminStatus{State: httpapi.HealthState(value.State), DatabaseState: httpapi.HealthState(value.DatabaseState), Build: httpapi.BuildInfo{Version: value.Build.Version, GitCommit: value.Build.GitCommit, BuildTime: value.Build.BuildTime}, Migration: httpapi.MigrationStatus{CurrentVersion: value.Migration.Current, LatestVersion: value.Migration.Latest, Compatible: value.Migration.Compatible}, FailedJobs: failed, Storage: storageDTO(value.Storage)}
+	return httpapi.AdminStatus{State: httpapi.HealthState(value.State), DatabaseState: httpapi.HealthState(value.DatabaseState), Build: httpapi.BuildInfo{Version: value.Build.Version, GitCommit: value.Build.GitCommit, BuildTime: value.Build.BuildTime}, Migration: httpapi.MigrationStatus{CurrentVersion: value.Migration.Current, LatestVersion: value.Migration.Latest, Compatible: value.Migration.Compatible}, FailedJobs: failed, Storage: storageDTO(value.Storage), Security: httpapi.AdminSecurityStatus{ActiveAdmins: value.Security.ActiveAdmins, ActiveAdminsWithoutTOTP: value.Security.ActiveAdminsWithoutTOTP, AdminTotpSatisfied: value.Security.AdminTotpSatisfied}}
 }
 func decode(w http.ResponseWriter, r *http.Request, target any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)

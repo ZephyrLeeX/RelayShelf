@@ -10,14 +10,17 @@ import (
 	"github.com/ZephyrLeeX/RelayShelf/internal/audit"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/id"
 	"github.com/ZephyrLeeX/RelayShelf/internal/realtime"
+	"github.com/ZephyrLeeX/RelayShelf/sql/generated"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
-	DefaultSchedulerInterval       = time.Hour
-	DefaultMaintenanceBatch        = 200
-	SchedulerAdvisoryLockID  int64 = 823174592117
+	DefaultSchedulerInterval          = time.Hour
+	DefaultMaintenanceBatch           = 200
+	TOTPChallengeRetentionGrace       = time.Hour
+	SchedulerAdvisoryLockID     int64 = 823174592117
 )
 
 type UploadMaintenance interface {
@@ -100,6 +103,7 @@ func (s *Scheduler) RunOnce(ctx context.Context) (bool, error) {
 	run("temporary expiry", func() error { return s.expireTemporary(ctx, conn, now) })
 	run("trash purge", func() error { return s.purgeTrash(ctx, conn, now) })
 	run("audit retention", func() error { return s.cleanupAudit(ctx, conn, now) })
+	run("totp challenge retention", func() error { return s.cleanupTOTPChallenges(ctx, conn, now) })
 	run("thumbnail backfill", func() error {
 		for i := 0; i < s.maxBatches; i++ {
 			n, e := s.repo.EnqueueMissingThumbnailJobs(ctx, now, s.batch)
@@ -123,6 +127,25 @@ func (s *Scheduler) RunOnce(ctx context.Context) (bool, error) {
 		run("file object reconcile", func() error { return s.files.Reconcile(ctx, s.batch) })
 	}
 	return true, errors.Join(errs...)
+}
+
+func (s *Scheduler) cleanupTOTPChallenges(ctx context.Context, conn *pgxpool.Conn, now time.Time) error {
+	q := generated.New(conn)
+	cutoff := now.Add(-TOTPChallengeRetentionGrace)
+	for cycle := 0; cycle < s.maxBatches; cycle++ {
+		deleted, err := q.DeleteExpiredTOTPChallenges(ctx, generated.DeleteExpiredTOTPChallengesParams{ExpiresAt: pgt(cutoff), Limit: int32(s.batch)})
+		if err != nil {
+			return err
+		}
+		if deleted < int64(s.batch) {
+			return nil
+		}
+	}
+	return nil
+}
+
+func pgt(value time.Time) pgtype.Timestamptz {
+	return pgtype.Timestamptz{Time: value, Valid: true}
 }
 
 type changedMessage struct {

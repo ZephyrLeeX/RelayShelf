@@ -27,6 +27,28 @@ func Handler() http.Handler {
 	return spaHandler{files: http.FileServer(http.FS(dist)), dist: dist}
 }
 
+// AssetNames lists the hashed Vite asset paths from the embedded build. It
+// lets tests and verification tooling exercise real production artifacts
+// instead of guessing what the frontend emits.
+func AssetNames() ([]string, error) {
+	dist, err := fs.Sub(embedded, "dist")
+	if err != nil {
+		return nil, err
+	}
+	out := []string{}
+	err = fs.WalkDir(dist, "assets", func(path string, _ fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !strings.Contains(path, "/") || strings.HasSuffix(path, "/") {
+			return nil
+		}
+		out = append(out, "/"+path)
+		return nil
+	})
+	return out, err
+}
+
 func (h spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/")
 	if path == "" {

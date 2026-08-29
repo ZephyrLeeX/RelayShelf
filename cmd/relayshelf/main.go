@@ -90,7 +90,9 @@ func ready(db *pgxpool.Pool) http.HandlerFunc {
 
 func newHTTPRouter(apiHost func(http.Handler) http.Handler, api, live, readiness http.Handler) http.Handler {
 	router := chi.NewRouter()
-	router.Use(httpx.Trace, httpx.SecurityHeaders, httpx.RequestLog(log.Default()))
+	// RequestLog sits outside Recovery so panicked requests still produce a
+	// request log line; Recovery never sees headers or bodies, only the path.
+	router.Use(httpx.Trace, httpx.SecurityHeaders, httpx.RequestLog(log.Default()), httpx.Recovery(log.Default()))
 	router.Handle("/health/live", live)
 	router.Handle("/health/ready", readiness)
 	router.Group(func(router chi.Router) {
@@ -108,6 +110,10 @@ func main() {
 	}
 	if command == "storage" && len(os.Args) > 2 && os.Args[2] == "check" {
 		storageCheck()
+		return
+	}
+	if command == "security" && len(os.Args) > 2 && os.Args[2] == "check" {
+		securityCheck()
 		return
 	}
 	if command == "version" {
@@ -161,7 +167,12 @@ func main() {
 		authRepo := auth.NewPostgreSQLRepository(db, auditRecorder)
 		hasher := auth.NewPasswordHasher(auth.DefaultArgon2Params)
 		limiter := auth.NewRateLimiter(now, auth.DefaultRateLimitEntries)
-		authService := auth.NewService(authRepo, hasher, id.UUIDv7{}, now, limiter)
+		totpCipher, totpErr := auth.NewTOTPCipher(cfg.AppEncryptionKey.Bytes())
+		if totpErr != nil {
+			log.Printf("totp encryption unavailable")
+			os.Exit(1)
+		}
+		authService := auth.NewService(authRepo, hasher, id.UUIDv7{}, now, limiter, totpCipher)
 		csrf := auth.NewCSRF(cfg.CSRFSecret.Bytes())
 		cookies := auth.NewCookiePolicy(cfg.PublicOrigin)
 		authMiddleware := auth.NewMiddleware(authService, cookies, csrf, cfg.PublicOrigin, httpx.NewResolver(cfg.TrustedProxies))
@@ -194,17 +205,30 @@ func main() {
 		}
 		uploadRepo := uploads.NewPostgreSQLRepository(db)
 		uploadService := uploads.NewService(uploadRepo, stagingManager, staging.NewStatFSProbe(cfg.StagingRoot), id.UUIDv7{}, now, uploads.NewLockRegistry(), cfg.MaxActiveChunkWrites, cfg.UploadStagingMaxBytes, cfg.StagingMinFreeBytes, cfg.StagingMinFreePercent)
-		uploadService.SetFinalizer(uploads.NewFileFinalizer(db, storageAdapter, id.UUIDv7{}, now, cfg.FileFinalizeConcurrency))
+		finalizerDuringHash, finalizerHooks, failpointsEnabled, failpointErr := testFailoutHooks()
+		if failpointErr != nil {
+			log.Printf("invalid test failpoint configuration: %v", failpointErr)
+			os.Exit(1)
+		}
+		if !failpointsEnabled {
+			uploadService.SetFinalizer(uploads.NewFileFinalizer(db, storageAdapter, id.UUIDv7{}, now, cfg.FileFinalizeConcurrency))
+		} else {
+			uploadService.SetFinalizer(uploads.NewFileFinalizerWithHashFailureHooks(db, storageAdapter, id.UUIDv7{}, now, cfg.FileFinalizeConcurrency, finalizerHooks, finalizerDuringHash))
+		}
 		if cleanupErr := uploadService.ExpireDueUploads(ctx, 100); cleanupErr != nil {
 			log.Printf("bounded upload expiration cleanup incomplete")
 		}
 		if reconcileErr := uploadService.ReconcileStaging(ctx, 1000); reconcileErr != nil {
 			log.Printf("bounded upload staging reconciliation incomplete")
 		}
+		storageMonitor := storage.NewMonitor(storageAdapter)
+		go storageMonitor.Run(serveCtx)
+		uploadService.SetMonitor(storageMonitor)
 		uploadHandler := uploads.NewHandler(uploadService)
 		fileService := files.NewService(db, storageAdapter)
+		fileService.SetMonitor(storageMonitor)
 		if reconcileErr := fileService.Reconcile(ctx, 100); reconcileErr != nil {
-			log.Printf("file object reconciliation failed")
+			log.Printf("file object reconciliation failed: %v", reconcileErr)
 			os.Exit(1)
 		}
 		if integrityErr := fileService.VerifyReady(ctx, 100); integrityErr != nil {
@@ -258,7 +282,7 @@ func main() {
 			log.Printf("background shutdown deadline reached")
 		}
 	default:
-		log.Printf("unknown command %q (use serve, migrate, or storage check)", command)
+		log.Printf("unknown command %q (use serve, migrate, storage check, or security check)", command)
 		os.Exit(2)
 	}
 }

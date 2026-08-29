@@ -14,6 +14,7 @@ import (
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/clock"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/id"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/staging"
+	"github.com/ZephyrLeeX/RelayShelf/internal/storage"
 	"github.com/google/uuid"
 )
 
@@ -30,7 +31,14 @@ type Service struct {
 	minFreePercent int
 	stagingLife    sync.RWMutex
 	finalizer      Finalizer
+	monitor        *storage.Monitor
 }
+
+// SetMonitor installs the storage health monitor used to fast-reject
+// Complete while storage is known degraded; chunk uploads into VM staging
+// deliberately never consult it. A nil monitor keeps the unmonitored
+// behavior.
+func (s *Service) SetMonitor(monitor *storage.Monitor) { s.monitor = monitor }
 
 type Finalizer interface {
 	Finalize(context.Context, Session, staging.Provider) (Session, error)
@@ -200,6 +208,9 @@ func (w *offsetWriter) Write(data []byte) (int, error) {
 }
 
 func (s *Service) Complete(ctx context.Context, ownerID, uploadID uuid.UUID) (Session, error) {
+	if !s.monitor.Healthy() {
+		return Session{}, ErrFinalizeRetryable
+	}
 	unlock := s.locks.Exclusive(uploadID)
 	defer unlock()
 	result, err := s.repo.Complete(ctx, ownerID, uploadID, s.clock.Now(), func(row Session, parts []Part) error {

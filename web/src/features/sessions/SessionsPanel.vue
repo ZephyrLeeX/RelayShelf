@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { onMounted, onUnmounted, ref } from 'vue'
-import { DefaultService } from '@/api/generated'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { DefaultService, type TOTPEnrollmentPending } from '@/api/generated'
 import { queryKeys } from '@/shared/api/queryKeys'
-import { displayError } from '@/shared/api/errors'
+import { apiCodes, displayError, toApiError } from '@/shared/api/errors'
 import { useAuthStore } from '@/features/auth/store'
 
 const emit = defineEmits<{ close: [] }>()
@@ -13,6 +13,40 @@ const name = ref(auth.device?.name ?? '')
 const error = ref('')
 const currentPassword = ref('')
 const newPassword = ref('')
+const enrollmentPassword = ref('')
+const totpCode = ref('')
+const pendingEnrollment = ref<TOTPEnrollmentPending | null>(null)
+const totp = useQuery({ queryKey: ['auth', 'totp'], queryFn: () => DefaultService.getTotpStatus() })
+const totpEnabled = computed(() => totp.data.value?.enabled === true)
+const enroll = useMutation({
+  mutationFn: () => DefaultService.startTotpEnrollment({ currentPassword: enrollmentPassword.value }),
+  onSuccess: (data) => { enrollmentPassword.value = ''; pendingEnrollment.value = data; totpCode.value = '' },
+  onError: (cause) => { enrollmentPassword.value = ''; error.value = displayError(cause) },
+})
+const confirmEnrollment = useMutation({
+  mutationFn: () => DefaultService.confirmTotpEnrollment({ code: totpCode.value.trim() }),
+  onSuccess: () => { pendingEnrollment.value = null; totpCode.value = ''; void totp.refetch() },
+  onError: (cause) => {
+    if (toApiError(cause).code === apiCodes.totpEnrollmentChanged) {
+      pendingEnrollment.value = null
+      totpCode.value = ''
+      error.value = '两步验证设置已更新，请重新开始启用。'
+      return
+    }
+    error.value = totpMessage(cause, '验证码错误。')
+  },
+})
+const disableTotp = useMutation({
+  mutationFn: () => DefaultService.disableTotp({ code: totpCode.value.trim() }),
+  onSuccess: () => { totpCode.value = ''; pendingEnrollment.value = null; void totp.refetch() },
+  onError: (cause) => { error.value = totpMessage(cause, '验证码错误。') },
+})
+function totpMessage(cause: unknown, fallback: string) {
+  const adapted = toApiError(cause)
+  if (adapted.status === 429) return '尝试次数过多，请稍后再试。'
+  if (adapted.code === apiCodes.totpInvalid) return fallback
+  return displayError(cause)
+}
 const sessions = useQuery({ queryKey: queryKeys.sessions.all(), queryFn: () => DefaultService.listSessions() })
 const devices = useQuery({ queryKey: queryKeys.sessions.devices(), queryFn: () => DefaultService.listDevices() })
 const rename = useMutation({
@@ -55,7 +89,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
             <h2 id="sessions-title">
               设备与会话
             </h2><p class="muted">
-              {{ auth.user?.displayName || auth.user?.username }}
+              {{ auth.user?.displayName || auth.user?.username }} · 用户 ID <code class="user-id">{{ auth.user?.id }}</code>（直发/转发时分享此 ID）
             </p>
           </div><button
             class="button"
@@ -120,6 +154,69 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
             修改并撤销其他会话
           </button>
         </form>
+        <div class="section">
+          <h3>两步验证（TOTP）</h3>
+          <template v-if="pendingEnrollment">
+            <p class="muted">
+              在验证器应用中添加以下密钥，然后输入当前 6 位代码完成启用。
+            </p>
+            <p class="secret">
+              {{ pendingEnrollment.secret }}
+            </p>
+            <label class="field">验证码<input
+              v-model="totpCode"
+              inputmode="numeric"
+              pattern="[0-9]{6}"
+              maxlength="6"
+              required
+            ></label>
+            <button
+              class="button primary"
+              :disabled="confirmEnrollment.isPending.value"
+              @click="confirmEnrollment.mutate()"
+            >
+              确认并启用
+            </button>
+          </template>
+          <template v-else-if="totpEnabled">
+            <p class="muted">
+              已启用。输入当前验证码可关闭两步验证。
+            </p>
+            <label class="field">验证码<input
+              v-model="totpCode"
+              inputmode="numeric"
+              pattern="[0-9]{6}"
+              maxlength="6"
+              required
+            ></label>
+            <button
+              class="button danger"
+              :disabled="disableTotp.isPending.value"
+              @click="disableTotp.mutate()"
+            >
+              关闭两步验证
+            </button>
+          </template>
+          <template v-else>
+            <p class="muted">
+              为账号增加第二重登录保护；管理员在公开暴露前必须启用。
+            </p>
+            <label class="field">当前密码<input
+              v-model="enrollmentPassword"
+              type="password"
+              autocomplete="current-password"
+              maxlength="1024"
+              required
+            ></label>
+            <button
+              class="button"
+              :disabled="enroll.isPending.value || !enrollmentPassword"
+              @click="enroll.mutate()"
+            >
+              开始启用
+            </button>
+          </template>
+        </div>
         <p
           v-if="error"
           class="error"
@@ -135,7 +232,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
 <style scoped>
 .backdrop { position:fixed; inset:0; z-index:50; background:rgb(0 0 0 / .45); display:flex; justify-content:flex-end; }
 .drawer { width:min(100%, 520px); height:100%; overflow:auto; border-radius:0; padding:1.25rem; }
-header,li { display:flex; justify-content:space-between; gap:1rem; align-items:center; } h2,h3,p { margin:.25rem 0; }
-.section { display:grid; gap:.75rem; padding:1.25rem 0; border-top:1px solid var(--border); } ul { list-style:none; padding:0; display:grid; gap:.65rem; } small { display:block; color:var(--muted); margin-top:.2rem; }
+header,li { display:flex; justify-content:space-between; gap:1rem; align-items:center; } h2,h3,p { margin:.25rem 0; } .user-id { font-family:var(--font-mono); font-size:.72rem; user-select:all; }
+.section { display:grid; gap:.75rem; padding:1.25rem 0; border-top:1px solid var(--border); } .secret { font-family:var(--font-mono); word-break:break-all; padding:.5rem; background:var(--surface-soft); border-radius:var(--radius-sm); } ul { list-style:none; padding:0; display:grid; gap:.65rem; } small { display:block; color:var(--muted); margin-top:.2rem; }
 @media (prefers-reduced-motion:no-preference) { .drawer { animation:enter .16s ease-out; } @keyframes enter { from { transform:translateX(20px); opacity:.7; } } }
 </style>

@@ -44,7 +44,7 @@ func TestPostgreSQLLoginSessionOwnershipAndRevocation(t *testing.T) {
 	}
 	repo := auth.NewPostgreSQLRepository(db, audit.NewRecorder(id.UUIDv7{}, clock.Real{}))
 	now := clock.Real{}
-	service := auth.NewService(repo, hasher, id.UUIDv7{}, now, auth.NewRateLimiter(now, 100))
+	service := auth.NewService(repo, hasher, id.UUIDv7{}, now, auth.NewRateLimiter(now, 100), nil)
 	ip := netip.MustParseAddr("192.0.2.10")
 	login := func(name string, device *uuid.UUID) auth.LoginResult {
 		result, err := service.Login(ctx, auth.LoginInput{Username: name, Password: password, DeviceID: device, ClientIP: ip, UserAgent: "integration"})
@@ -156,7 +156,7 @@ func TestAdminResetRevokesAllTargetSessions(t *testing.T) {
 		}
 	}
 	now := clock.Real{}
-	service := auth.NewService(auth.NewPostgreSQLRepository(db, audit.NewRecorder(id.UUIDv7{}, now)), hasher, id.UUIDv7{}, now, auth.NewRateLimiter(now, 100))
+	service := auth.NewService(auth.NewPostgreSQLRepository(db, audit.NewRecorder(id.UUIDv7{}, now)), hasher, id.UUIDv7{}, now, auth.NewRateLimiter(now, 100), nil)
 	ip := netip.MustParseAddr("192.0.2.1")
 	login := func(name string) auth.LoginResult {
 		r, e := service.Login(ctx, auth.LoginInput{Username: name, Password: "initial-password", ClientIP: ip})
@@ -228,7 +228,7 @@ func TestAdminResetRollsBackWhenAuditInsertFails(t *testing.T) {
 		}
 	}
 	now := clock.Real{}
-	service := auth.NewService(auth.NewPostgreSQLRepository(db, audit.NewRecorder(id.UUIDv7{}, now)), hasher, id.UUIDv7{}, now, auth.NewRateLimiter(now, 100))
+	service := auth.NewService(auth.NewPostgreSQLRepository(db, audit.NewRecorder(id.UUIDv7{}, now)), hasher, id.UUIDv7{}, now, auth.NewRateLimiter(now, 100), nil)
 	ip := netip.MustParseAddr("192.0.2.1")
 	targetSession, err := service.Login(ctx, auth.LoginInput{Username: "target", Password: "initial-password", ClientIP: ip})
 	if err != nil {

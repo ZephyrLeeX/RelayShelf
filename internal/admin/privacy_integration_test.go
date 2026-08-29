@@ -34,7 +34,7 @@ func TestAdminSurfaceNeverExposesPrivateContentOrSecrets(t *testing.T) {
 	hasher := auth.NewPasswordHasher(auth.Argon2Params{Memory: 64, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32})
 	recorder := audit.NewRecorder(id.UUIDv7{}, now)
 	userAdmin := users.NewAdminService(db, hasher, id.UUIDv7{}, now, recorder)
-	authService := auth.NewService(auth.NewPostgreSQLRepository(db, recorder), hasher, id.UUIDv7{}, now, auth.NewRateLimiter(now, 100))
+	authService := auth.NewService(auth.NewPostgreSQLRepository(db, recorder), hasher, id.UUIDv7{}, now, auth.NewRateLimiter(now, 100), nil)
 	statusService := NewStatusService(db, fakeStorageSpace{}, fakeStagingSpace{})
 	handler := NewHandler(userAdmin, authService, statusService)
 	settingsHandler := settings.NewHandler(settings.NewService(db, recorder, now))

@@ -33,15 +33,26 @@ type ThumbnailDownload struct {
 	Modified                   time.Time
 }
 type Service struct {
-	pool  *pgxpool.Pool
-	store storage.Adapter
+	pool    *pgxpool.Pool
+	store   storage.Adapter
+	monitor *storage.Monitor
 }
 
 func NewService(pool *pgxpool.Pool, store storage.Adapter) *Service {
 	return &Service{pool: pool, store: store}
 }
 
+// SetMonitor installs the storage health monitor. When storage is known
+// degraded, attachment reads reject immediately instead of blocking behind a
+// hard-mounted NFS outage; a nil monitor keeps the unmonitored behavior.
+func (s *Service) SetMonitor(monitor *storage.Monitor) { s.monitor = monitor }
+
+func (s *Service) degraded() bool { return !s.monitor.Healthy() }
+
 func (s *Service) AuthorizedDownload(ctx context.Context, ownerID, attachmentID uuid.UUID) (Download, error) {
+	if s.degraded() {
+		return Download{}, ErrStorageUnavailable
+	}
 	var d Download
 	var key string
 	err := s.pool.QueryRow(ctx, `SELECT ma.id,ma.original_filename,fo.detected_mime,fo.storage_key,fo.sha256,fo.size_bytes,COALESCE(fo.ready_at,fo.updated_at) FROM message_attachments ma JOIN messages m ON m.id=ma.message_id JOIN file_objects fo ON fo.id=ma.file_object_id WHERE ma.id=$1 AND m.owner_id=$2 AND fo.status='READY'`, attachmentID, ownerID).Scan(&d.AttachmentID, &d.Filename, &d.MIME, &key, &d.SHA, &d.Size, &d.Modified)

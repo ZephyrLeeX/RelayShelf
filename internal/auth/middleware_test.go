@@ -54,7 +54,7 @@ func TestRequestActivityPipeline(t *testing.T) {
 	clock := &fakeClock{now: time.Now()}
 	authn := validAuthentication(clock.now)
 	repo := &memoryRepo{auth: authn, sessions: []Session{authn.Session}}
-	service := NewService(repo, testHasher(), &sequenceIDs{}, clock, NewRateLimiter(clock, 10))
+	service := NewService(repo, testHasher(), &sequenceIDs{}, clock, NewRateLimiter(clock, 10), nil)
 	csrf := NewCSRF([]byte("01234567890123456789012345678901"))
 	cookies := NewCookiePolicy(origin)
 	mw := NewMiddleware(service, cookies, csrf, origin, httpx.NewResolver(nil))
@@ -138,7 +138,7 @@ func TestAuthenticateWithoutTouchPreservesNonInteractiveCapability(t *testing.T)
 	clock := &fakeClock{now: time.Now()}
 	authn := validAuthentication(clock.now)
 	repo := &memoryRepo{auth: authn}
-	service := NewService(repo, testHasher(), &sequenceIDs{}, clock, NewRateLimiter(clock, 10))
+	service := NewService(repo, testHasher(), &sequenceIDs{}, clock, NewRateLimiter(clock, 10), nil)
 	cookies := NewCookiePolicy(origin)
 	mw := NewMiddleware(service, cookies, NewCSRF([]byte("01234567890123456789012345678901")), origin, httpx.NewResolver(nil))
 	token, _, err := NewSessionToken()
@@ -174,7 +174,7 @@ func TestExpiredSessionFailsWhileCookieExists(t *testing.T) {
 			authn := validAuthentication(clock.now)
 			test.expire(&authn)
 			repo := &memoryRepo{auth: authn}
-			service := NewService(repo, testHasher(), &sequenceIDs{}, clock, NewRateLimiter(clock, 10))
+			service := NewService(repo, testHasher(), &sequenceIDs{}, clock, NewRateLimiter(clock, 10), nil)
 			mw := NewMiddleware(service, cookies, NewCSRF([]byte("01234567890123456789012345678901")), origin, httpx.NewResolver(nil))
 			handler := mw.Authenticate(false)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("expired session reached handler") }))
 			r := httptest.NewRequest(http.MethodGet, "https://example.test/api/v1/auth/session", nil)

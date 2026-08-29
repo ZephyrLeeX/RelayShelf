@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AdminSecurityStatus } from './AdminSecurityStatus';
 import type { BuildInfo } from './BuildInfo';
 import type { FailedJob } from './FailedJob';
 import type { HealthState } from './HealthState';
@@ -14,5 +15,6 @@ export type AdminStatus = {
     databaseState: HealthState;
     failedJobs: Array<FailedJob>;
     storage: StorageStatus;
+    security: AdminSecurityStatus;
 };
 

@@ -1,7 +1,7 @@
 openapi: 3.1.1
 info:
   title: RelayShelf API
-  version: 0.10.0
+  version: 0.11.0
   description: HTTP contract authority for RelayShelf.
 servers:
   - url: /api/v1
@@ -32,7 +32,99 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AuthBootstrap' }
+        '202':
+          description: Password accepted but a TOTP second factor is required; no session cookie is issued until the challenge completes
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TOTPLoginChallenge' }
         '401': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /auth/login/totp:
+    post:
+      operationId: completeLoginTOTP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TOTPChallengeRequest' }
+      responses:
+        '200':
+          description: Second factor accepted; authenticated session bootstrap
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthBootstrap' }
+        '401': { $ref: '#/components/responses/Error' }
+        '410': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /auth/totp:
+    get:
+      operationId: getTOTPStatus
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200':
+          description: Current user TOTP enrollment state without any secret material
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TOTPStatus' }
+        '401': { $ref: '#/components/responses/Error' }
+  /auth/totp/enroll:
+    post:
+      operationId: startTOTPEnrollment
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TOTPEnrollmentRequest' }
+      responses:
+        '201':
+          description: Pending enrollment material; TOTP stays disabled until the confirmation code validates
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TOTPEnrollmentPending' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /auth/totp/confirm:
+    post:
+      operationId: confirmTOTPEnrollment
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TOTPCodeRequest' }
+      responses:
+        '200':
+          description: TOTP enabled
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TOTPStatus' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /auth/totp/disable:
+    post:
+      operationId: disableTOTP
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TOTPCodeRequest' }
+      responses:
+        '200':
+          description: TOTP disabled
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TOTPStatus' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
         '429': { $ref: '#/components/responses/Error' }
   /auth/logout:
     post:
@@ -563,6 +655,48 @@ components:
         password: { type: string, minLength: 10, maxLength: 1024 }
         deviceId: { type: string, format: uuid }
         deviceName: { type: string, maxLength: 100 }
+    TOTPLoginChallenge:
+      type: object
+      additionalProperties: false
+      required: [challengeToken, expiresAt]
+      properties:
+        challengeToken: { type: string, minLength: 32, maxLength: 128, description: Single-purpose, short-lived bearer capability; only valid together with a correct TOTP code }
+        expiresAt: { type: string, format: date-time }
+    TOTPChallengeRequest:
+      type: object
+      additionalProperties: false
+      required: [challengeToken, code]
+      properties:
+        challengeToken: { type: string, minLength: 32, maxLength: 128 }
+        code: { type: string, minLength: 6, maxLength: 8, pattern: '^[0-9]+$' }
+    TOTPCodeRequest:
+      type: object
+      additionalProperties: false
+      required: [code]
+      properties:
+        code: { type: string, minLength: 6, maxLength: 8, pattern: '^[0-9]+$' }
+    TOTPEnrollmentRequest:
+      type: object
+      additionalProperties: false
+      required: [currentPassword]
+      properties:
+        currentPassword: { type: string, maxLength: 1024 }
+    TOTPStatus:
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+    TOTPEnrollmentPending:
+      type: object
+      additionalProperties: false
+      required: [secret, otpauthUrl, digits, periodSeconds, algorithm]
+      properties:
+        secret: { type: string, minLength: 16, maxLength: 128, description: Base32 shared secret returned exactly once during enrollment }
+        otpauthUrl: { type: string, maxLength: 512 }
+        digits: { type: integer, enum: [6, 8] }
+        periodSeconds: { type: integer, enum: [30] }
+        algorithm: { type: string, enum: [SHA1] }
     PasswordChangeRequest:
       type: object
       required: [currentPassword, newPassword]
@@ -873,7 +1007,7 @@ components:
     AdminStatus:
       type: object
       additionalProperties: false
-      required: [state, build, migration, databaseState, failedJobs, storage]
+      required: [state, build, migration, databaseState, failedJobs, storage, security]
       properties:
         state: { $ref: '#/components/schemas/HealthState' }
         build: { $ref: '#/components/schemas/BuildInfo' }
@@ -881,6 +1015,15 @@ components:
         databaseState: { $ref: '#/components/schemas/HealthState' }
         failedJobs: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/FailedJob' } }
         storage: { $ref: '#/components/schemas/StorageStatus' }
+        security: { $ref: '#/components/schemas/AdminSecurityStatus' }
+    AdminSecurityStatus:
+      type: object
+      additionalProperties: false
+      required: [activeAdmins, activeAdminsWithoutTOTP, adminTotpSatisfied]
+      properties:
+        activeAdmins: { type: integer, minimum: 0 }
+        activeAdminsWithoutTOTP: { type: integer, minimum: 0 }
+        adminTotpSatisfied: { type: boolean, description: True when at least one active admin exists and every active admin has confirmed TOTP }
     AdminUser:
       type: object
       additionalProperties: false

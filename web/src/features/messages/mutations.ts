@@ -13,6 +13,7 @@ export type MessageCommand =
   | { type: 'edit'; message: Message; body: string; bodyFormat: BodyFormat }
   | { type: 'editSensitive'; message: Message; body: string }
   | { type: 'tags'; message: Message; tagIds: string[] }
+  | { type: 'forward'; message: Message; recipientUserId: string }
 
 async function execute(command: MessageCommand) {
   const { message } = command
@@ -26,6 +27,7 @@ async function execute(command: MessageCommand) {
     case 'edit': return DefaultService.editMessage(message.id, { expectedVersion: message.version, body: command.body, bodyFormat: command.bodyFormat })
     case 'editSensitive': return DefaultService.editSensitiveBody(message.id, { expectedVersion: message.version, body: command.body })
     case 'tags': return DefaultService.replaceMessageTags(message.id, { expectedVersion: message.version, tagIds: command.tagIds })
+    case 'forward': return DefaultService.forwardMessage(message.id, crypto.randomUUID(), { expectedVersion: message.version, recipientUserId: command.recipientUserId })
   }
 }
 

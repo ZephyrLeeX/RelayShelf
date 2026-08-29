@@ -23,12 +23,13 @@ type Service struct {
 	ids              id.Generator
 	clock            Clock
 	limiter          *RateLimiter
+	totp             *TOTPCipher
 	auditMu          sync.Mutex
 	lastFailureAudit map[string]time.Time
 }
 
-func NewService(repo Repository, hasher PasswordHasher, ids id.Generator, clock Clock, limiter *RateLimiter) *Service {
-	return &Service{repo: repo, hasher: hasher, ids: ids, clock: clock, limiter: limiter, lastFailureAudit: make(map[string]time.Time)}
+func NewService(repo Repository, hasher PasswordHasher, ids id.Generator, clock Clock, limiter *RateLimiter, totp *TOTPCipher) *Service {
+	return &Service{repo: repo, hasher: hasher, ids: ids, clock: clock, limiter: limiter, totp: totp, lastFailureAudit: make(map[string]time.Time)}
 }
 
 func validDeviceName(name string) bool {
@@ -116,6 +117,21 @@ func (s *Service) Login(ctx context.Context, input LoginInput) (LoginResult, err
 			return LoginResult{}, err
 		}
 		user.PasswordHash = encoded
+	}
+	// A confirmed TOTP enrollment means a correct password is not a complete
+	// authentication. Pending device metadata stays in the bounded challenge;
+	// no persistent device is created until the second factor succeeds.
+	if _, enabled, totpErr := s.totpEnabled(ctx, user.ID); totpErr != nil {
+		return LoginResult{}, totpErr
+	} else if enabled {
+		if !s.limiter.AllowChallenge(input.ClientIP.String(), normalized) {
+			return LoginResult{}, ErrRateLimited
+		}
+		challenge, challengeErr := s.newLoginChallenge(ctx, user, input)
+		if challengeErr != nil {
+			return LoginResult{}, challengeErr
+		}
+		return LoginResult{Challenge: challenge}, nil
 	}
 	var device Device
 	if input.DeviceID != nil {

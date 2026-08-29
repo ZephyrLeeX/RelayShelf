@@ -112,3 +112,48 @@ func TestStorageHealthyDegradedAndAdminStatusRedaction(t *testing.T) {
 		t.Fatalf("status leaked job summary: %s", text)
 	}
 }
+
+// TestSecurityProjectionTracksActiveAdminTOTP pins the public-exposure gate
+// semantics in the admin status surface: only ACTIVE admins count, pending
+// enrollments do not satisfy the gate, and confirming the last admin's
+// enrollment flips the projection to satisfied.
+func TestSecurityProjectionTracksActiveAdminTOTP(t *testing.T) {
+	ctx := context.Background()
+	db := postgresutil.NewDatabase(t)
+	service := NewStatusService(db, fakeStorageSpace{space: storage.Space{AvailableBytes: 1, TotalBytes: 1}}, fakeStagingSpace{space: staging.Space{AvailableBytes: 1, TotalBytes: 1}})
+	seedAdmin := func(name string) uuid.UUID {
+		id := uuid.Must(uuid.NewV7())
+		if _, err := db.Exec(ctx, `INSERT INTO users(id,username,display_name,password_hash,is_admin,status)VALUES($1,$2,$2,'hash',true,'ACTIVE')`, id, name); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	disabledAdmin := seedAdmin("disabled-admin")
+	if _, err := db.Exec(ctx, `UPDATE users SET status='DISABLED' WHERE id=$1`, disabledAdmin); err != nil {
+		t.Fatal(err)
+	}
+	loneAdmin := seedAdmin("lone-admin")
+
+	status := service.Status(ctx)
+	if status.Security.ActiveAdmins != 1 || status.Security.ActiveAdminsWithoutTOTP != 1 || status.Security.AdminTotpSatisfied {
+		t.Fatalf("before enrollment: %+v", status.Security)
+	}
+
+	// A pending enrollment must not satisfy the gate.
+	if _, err := db.Exec(ctx, `INSERT INTO user_totp(id,user_id,secret_ciphertext,secret_nonce,secret_encryption_version,digits,period_seconds,algorithm,created_at,updated_at)VALUES($1,$2,decode('00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff','hex'),decode('0011223344556677889900aa','hex'),1,6,30,'SHA1',now(),now())`, uuid.Must(uuid.NewV7()), loneAdmin); err != nil {
+		t.Fatal(err)
+	}
+	status = service.Status(ctx)
+	if status.Security.AdminTotpSatisfied || status.Security.ActiveAdminsWithoutTOTP != 1 {
+		t.Fatalf("pending enrollment satisfied gate: %+v", status.Security)
+	}
+
+	// Confirming it does.
+	if _, err := db.Exec(ctx, `UPDATE user_totp SET enabled_at=now() WHERE user_id=$1`, loneAdmin); err != nil {
+		t.Fatal(err)
+	}
+	status = service.Status(ctx)
+	if !status.Security.AdminTotpSatisfied || status.Security.ActiveAdminsWithoutTOTP != 0 {
+		t.Fatalf("confirmed enrollment did not satisfy gate: %+v", status.Security)
+	}
+}

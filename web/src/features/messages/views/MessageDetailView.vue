@@ -39,6 +39,8 @@ const editBody = ref('')
 const editFormat = ref(BodyFormat.TEXT)
 const selectedTags = ref<string[]>([])
 const error = ref('')
+const forwardRecipient = ref('')
+const notice = ref('')
 const attachmentInput = ref<HTMLInputElement>()
 const detailUploadClients = ref<string[]>([])
 const attachmentMutationPending = ref(false)
@@ -118,6 +120,15 @@ function run(command: Parameters<typeof mutation.mutate>[0], success?: () => voi
   error.value = ''
   mutation.mutate(command, {
     onSuccess: () => { clearRevealedBody(); success?.() },
+    onError: (cause) => { error.value = mutationErrorMessage(cause) },
+  })
+}
+function forward() {
+  if (!message.value) return
+  error.value = ''
+  notice.value = ''
+  mutation.mutate({ type: 'forward', message: message.value, recipientUserId: forwardRecipient.value.trim() }, {
+    onSuccess: () => { notice.value = '已转发；接收者会看到一条独立副本。'; forwardRecipient.value = '' },
     onError: (cause) => { error.value = mutationErrorMessage(cause) },
   })
 }
@@ -375,6 +386,30 @@ async function removeAttachment(id: string) {
               </li>
             </ul>
           </section>
+          <section
+            v-if="!message.trashedAt"
+            class="forward panel"
+          >
+            <strong>转发给其他用户</strong>
+            <div class="forward-row">
+              <input
+                v-model="forwardRecipient"
+                class="input"
+                placeholder="接收者用户 ID（UUID）"
+                maxlength="64"
+              ><button
+                class="button"
+                type="button"
+                :disabled="forwardRecipient.trim().length !== 36 || mutation.isPending.value"
+                @click="forward"
+              >
+                转发副本
+              </button>
+            </div>
+            <p class="muted">
+              接收者会得到一条独立的临时副本；此内容保持不变。
+            </p>
+          </section>
           <div class="actions">
             <template v-if="message.trashedAt">
               <button
@@ -426,6 +461,12 @@ async function removeAttachment(id: string) {
             </template>
           </div>
           <p
+            v-if="notice"
+            role="status"
+          >
+            {{ notice }}
+          </p>
+          <p
             v-if="error"
             class="error"
             role="alert"
@@ -447,6 +488,7 @@ async function removeAttachment(id: string) {
 
 <style scoped>
 .detail-backdrop{position:fixed;inset:0;z-index:45;background:rgb(0 0 0 / .42);display:flex;justify-content:flex-end}.detail{height:100%;width:min(760px,82vw);overflow:auto;border-radius:var(--radius-lg) 0 0 var(--radius-lg);padding:1.3rem;display:grid;align-content:start;gap:1rem;box-shadow:var(--shadow)}header{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start}h1,h2,p{margin:.2rem 0}h1{font-size:1.35rem}.close{font-size:1.3rem}pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}.code{font-family:var(--font-mono);background:var(--surface-soft);padding:1rem;border-radius:var(--radius)}.sensitive{padding:1.25rem;box-shadow:none}.edit{display:grid;gap:.75rem}.edit textarea{resize:vertical}.tags,.actions,.tag-picker{display:flex;flex-wrap:wrap;gap:.5rem}.files{display:grid;gap:.5rem}.add-files{display:flex;align-items:center;gap:.5rem;padding:.7rem;box-shadow:none}.add-files>div{display:grid;flex:1}.add-files span{color:var(--muted);font-size:.75rem}details{display:grid;gap:.6rem}summary{cursor:pointer}.state{padding:3rem;text-align:center}
+.forward{display:grid;gap:.5rem;padding:.7rem;box-shadow:none}.forward-row{display:grid;grid-template-columns:1fr auto;gap:.5rem}
 .restored{border:1px solid var(--border);border-radius:var(--radius-sm);padding:.55rem .65rem;display:grid;gap:.4rem}.restored h2{font-size:.78rem;color:var(--muted)}.restored ul{list-style:none;margin:0;padding:0;display:grid;gap:.35rem}.restored li{display:flex;align-items:center;justify-content:space-between;gap:.7rem;font-size:.82rem}.restored span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.restored .button{min-height:32px;padding:.25rem .55rem;font-size:.76rem;white-space:nowrap}
 @media(prefers-reduced-motion:no-preference){.detail{animation:slide .16s ease-out}@keyframes slide{from{transform:translateX(25px);opacity:.8}}}
 @media(max-width:720px){.detail-backdrop{display:block;background:var(--surface)}.detail{width:100%;height:100%;border:0;border-radius:0;padding:1rem}.add-files{flex-wrap:wrap}.add-files>div{width:100%;flex-basis:100%}}
