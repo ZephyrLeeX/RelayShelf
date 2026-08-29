@@ -13,14 +13,15 @@ const name = ref(auth.device?.name ?? '')
 const error = ref('')
 const currentPassword = ref('')
 const newPassword = ref('')
+const enrollmentPassword = ref('')
 const totpCode = ref('')
 const pendingEnrollment = ref<TOTPEnrollmentPending | null>(null)
 const totp = useQuery({ queryKey: ['auth', 'totp'], queryFn: () => DefaultService.getTotpStatus() })
 const totpEnabled = computed(() => totp.data.value?.enabled === true)
 const enroll = useMutation({
-  mutationFn: () => DefaultService.startTotpEnrollment(),
-  onSuccess: (data) => { pendingEnrollment.value = data; totpCode.value = '' },
-  onError: (cause) => { error.value = displayError(cause) },
+  mutationFn: () => DefaultService.startTotpEnrollment({ currentPassword: enrollmentPassword.value }),
+  onSuccess: (data) => { enrollmentPassword.value = ''; pendingEnrollment.value = data; totpCode.value = '' },
+  onError: (cause) => { enrollmentPassword.value = ''; error.value = displayError(cause) },
 })
 const confirmEnrollment = useMutation({
   mutationFn: () => DefaultService.confirmTotpEnrollment({ code: totpCode.value.trim() }),
@@ -192,9 +193,16 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
             <p class="muted">
               为账号增加第二重登录保护；管理员在公开暴露前必须启用。
             </p>
+            <label class="field">当前密码<input
+              v-model="enrollmentPassword"
+              type="password"
+              autocomplete="current-password"
+              maxlength="1024"
+              required
+            ></label>
             <button
               class="button"
-              :disabled="enroll.isPending.value"
+              :disabled="enroll.isPending.value || !enrollmentPassword"
               @click="enroll.mutate()"
             >
               开始启用

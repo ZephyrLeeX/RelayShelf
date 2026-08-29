@@ -80,6 +80,7 @@ func TestApplicationLogsNeverContainSecrets(t *testing.T) {
 	suffix := strings.ReplaceAll(base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("%d", time.Now().UnixNano()))), "=", "")
 	passwordSentinel := "PASSWORD_SECRET_" + suffix
 	wrongPasswordSentinel := "WRONGPW_SECRET_" + suffix
+	totpEnrollmentPasswordSentinel := "TOTP_ENROLL_PASSWORD_SENTINEL_" + suffix
 	bodySentinel := "BODY_SECRET_" + suffix
 	sensitiveSentinel := "SENSITIVE_SECRET_" + suffix
 	resetSentinel := "RESET_SECRET_" + suffix
@@ -283,6 +284,13 @@ func TestApplicationLogsNeverContainSecrets(t *testing.T) {
 	if response, _, _ = login("alice", wrongPasswordSentinel); response.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("bad login status=%d", response.StatusCode)
 	}
+	enrollResponse, enrollErrorPayload := do(http.MethodPost, "/api/v1/auth/totp/enroll", map[string]any{"currentPassword": totpEnrollmentPasswordSentinel}, authHeaders)
+	if enrollResponse.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("bad TOTP enrollment re-auth status=%d", enrollResponse.StatusCode)
+	}
+	if strings.Contains(enrollErrorPayload, totpEnrollmentPasswordSentinel) {
+		t.Fatalf("TOTP enrollment error payload leaked password sentinel: %s", enrollErrorPayload)
+	}
 
 	// 2. CSRF failure: write without the token.
 	if response, _ = do(http.MethodPost, "/api/v1/messages", map[string]any{"body": bodySentinel}, map[string]string{"Cookie": "relayshelf_session=" + sessionCookie}); response.StatusCode != http.StatusForbidden {
@@ -404,6 +412,13 @@ func TestApplicationLogsNeverContainSecrets(t *testing.T) {
 	}
 
 	output := logBuffer.String()
+	var enrollmentPasswordAuditCount int
+	if err = db.QueryRow(ctx, `SELECT count(*) FROM audit_logs WHERE metadata::text LIKE '%' || $1 || '%' OR COALESCE(user_agent, '') LIKE '%' || $1 || '%' OR COALESCE(trace_id, '') LIKE '%' || $1 || '%'`, totpEnrollmentPasswordSentinel).Scan(&enrollmentPasswordAuditCount); err != nil {
+		t.Fatal(err)
+	}
+	if enrollmentPasswordAuditCount != 0 {
+		t.Fatalf("TOTP enrollment password sentinel appeared in %d audit row(s)", enrollmentPasswordAuditCount)
+	}
 	// The log must actually be non-vacuous, otherwise the assertions below
 	// would pass without exercising anything.
 	if !strings.Contains(output, "path=/api/v1/auth/login") {
@@ -417,6 +432,7 @@ func TestApplicationLogsNeverContainSecrets(t *testing.T) {
 	sentinelKeys := map[string]string{
 		"login password":       passwordSentinel,
 		"wrong password":       wrongPasswordSentinel,
+		"TOTP enroll password": totpEnrollmentPasswordSentinel,
 		"message body":         bodySentinel,
 		"sensitive plaintext":  sensitiveSentinel,
 		"reset password":       resetSentinel,

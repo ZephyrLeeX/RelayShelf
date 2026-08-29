@@ -576,6 +576,11 @@ type TOTPEnrollmentPendingDigits int
 // TOTPEnrollmentPendingPeriodSeconds defines model for TOTPEnrollmentPending.PeriodSeconds.
 type TOTPEnrollmentPendingPeriodSeconds int
 
+// TOTPEnrollmentRequest defines model for TOTPEnrollmentRequest.
+type TOTPEnrollmentRequest struct {
+	CurrentPassword string `json:"currentPassword"`
+}
+
 // TOTPLoginChallenge defines model for TOTPLoginChallenge.
 type TOTPLoginChallenge struct {
 	// ChallengeToken Single-purpose
@@ -755,6 +760,9 @@ type ConfirmTOTPEnrollmentJSONRequestBody = TOTPCodeRequest
 
 // DisableTOTPJSONRequestBody defines body for DisableTOTP for application/json ContentType.
 type DisableTOTPJSONRequestBody = TOTPCodeRequest
+
+// StartTOTPEnrollmentJSONRequestBody defines body for StartTOTPEnrollment for application/json ContentType.
+type StartTOTPEnrollmentJSONRequestBody = TOTPEnrollmentRequest
 
 // RenameDeviceJSONRequestBody defines body for RenameDevice for application/json ContentType.
 type RenameDeviceJSONRequestBody = RenameDeviceRequest

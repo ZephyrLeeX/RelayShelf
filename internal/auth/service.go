@@ -124,6 +124,9 @@ func (s *Service) Login(ctx context.Context, input LoginInput) (LoginResult, err
 	if _, enabled, totpErr := s.totpEnabled(ctx, user.ID); totpErr != nil {
 		return LoginResult{}, totpErr
 	} else if enabled {
+		if !s.limiter.AllowChallenge(input.ClientIP.String(), normalized) {
+			return LoginResult{}, ErrRateLimited
+		}
 		challenge, challengeErr := s.newLoginChallenge(ctx, user, input)
 		if challengeErr != nil {
 			return LoginResult{}, challengeErr

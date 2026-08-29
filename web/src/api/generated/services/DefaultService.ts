@@ -35,6 +35,7 @@ import type { TagRequest } from '../models/TagRequest';
 import type { TOTPChallengeRequest } from '../models/TOTPChallengeRequest';
 import type { TOTPCodeRequest } from '../models/TOTPCodeRequest';
 import type { TOTPEnrollmentPending } from '../models/TOTPEnrollmentPending';
+import type { TOTPEnrollmentRequest } from '../models/TOTPEnrollmentRequest';
 import type { TOTPLoginChallenge } from '../models/TOTPLoginChallenge';
 import type { TOTPStatus } from '../models/TOTPStatus';
 import type { UpdateRuntimeSettingsRequest } from '../models/UpdateRuntimeSettingsRequest';
@@ -113,17 +114,24 @@ export class DefaultService {
         });
     }
     /**
+     * @param requestBody
      * @returns TOTPEnrollmentPending Pending enrollment material; TOTP stays disabled until the confirmation code validates
      * @throws ApiError
      */
-    public static startTotpEnrollment(): CancelablePromise<TOTPEnrollmentPending> {
+    public static startTotpEnrollment(
+        requestBody: TOTPEnrollmentRequest,
+    ): CancelablePromise<TOTPEnrollmentPending> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/auth/totp/enroll',
+            body: requestBody,
+            mediaType: 'application/json',
             errors: {
                 401: `API error`,
                 403: `API error`,
                 409: `API error`,
+                422: `API error`,
+                429: `API error`,
             },
         });
     }

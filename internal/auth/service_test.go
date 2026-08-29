@@ -148,11 +148,14 @@ func (m *memoryRepo) UpsertPendingTOTP(_ context.Context, enrollment UserTOTP, _
 	m.totp = &enrollment
 	return true, nil
 }
-func (m *memoryRepo) ConfirmTOTP(_ context.Context, user uuid.UUID, at time.Time) (bool, error) {
+func (m *memoryRepo) ConfirmTOTPEnrollment(_ context.Context, user uuid.UUID, step int64, at time.Time) (bool, error) {
 	if m.totp == nil || m.totp.EnabledAt != nil {
 		return false, nil
 	}
 	m.totp.EnabledAt = &at
+	m.totp.LastUsedStep = &step
+	m.totp.FailedAttempts = 0
+	m.totp.LockedUntil = nil
 	return true, nil
 }
 func (m *memoryRepo) DeleteUserTOTP(context.Context, uuid.UUID) (bool, error) {
@@ -161,13 +164,6 @@ func (m *memoryRepo) DeleteUserTOTP(context.Context, uuid.UUID) (bool, error) {
 	}
 	m.totp = nil
 	return true, nil
-}
-func (m *memoryRepo) RecordTOTPSuccess(_ context.Context, _ uuid.UUID, _ time.Time, step int64) error {
-	if m.totp != nil {
-		m.totp.LastUsedStep = &step
-		m.totp.FailedAttempts = 0
-	}
-	return nil
 }
 func (m *memoryRepo) RecordTOTPFailure(_ context.Context, _ uuid.UUID, _ time.Time, _ int, _ time.Time) error {
 	return nil

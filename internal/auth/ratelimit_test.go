@@ -38,3 +38,26 @@ func TestRateLimiterDimensionsExpiryAndBound(t *testing.T) {
 		t.Fatalf("expired state remains: %d", limiter.Size())
 	}
 }
+
+func TestRateLimiterChallengePressureAndSuccess(t *testing.T) {
+	clock := &fakeClock{now: time.Unix(2000, 0)}
+	limiter := NewRateLimiter(clock, 16)
+	for range 3 {
+		if !limiter.AllowChallenge("192.0.2.10", "alice") {
+			t.Fatal("challenge capacity rejected too early")
+		}
+	}
+	if limiter.AllowChallenge("192.0.2.10", "alice") {
+		t.Fatal("challenge capacity did not reject the bounded request")
+	}
+	if limiter.Allow("192.0.2.10", "other") {
+		t.Fatal("challenge pressure did not block the IP dimension")
+	}
+	if limiter.Allow("192.0.2.11", "alice") {
+		t.Fatal("challenge pressure did not block the username dimension")
+	}
+	limiter.Success("192.0.2.10", "alice")
+	if !limiter.Allow("192.0.2.10", "alice") {
+		t.Fatal("successful TOTP completion did not relax challenge pressure")
+	}
+}

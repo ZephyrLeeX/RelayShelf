@@ -155,7 +155,7 @@ func TestTOTPEnrollmentConfirmationAndLogin(t *testing.T) {
 	}
 
 	// Enrollment returns the secret exactly once.
-	response, body = h.call(t, http.MethodPost, "/api/v1/auth/totp/enroll", map[string]any{}, headers)
+	response, body = h.call(t, http.MethodPost, "/api/v1/auth/totp/enroll", map[string]any{"currentPassword": user.password}, headers)
 	if response.Code != http.StatusCreated {
 		t.Fatalf("enroll status=%d body=%v", response.Code, body)
 	}
@@ -248,6 +248,246 @@ func TestTOTPEnrollmentConfirmationAndLogin(t *testing.T) {
 	secondToken, _ := body["challengeToken"].(string)
 	if response, _ = h.call(t, http.MethodPost, "/api/v1/auth/login/totp", map[string]any{"challengeToken": secondToken, "code": code}, nil); response.Code != http.StatusUnauthorized {
 		t.Fatalf("replayed code accepted: status=%d", response.Code)
+	}
+}
+
+func TestTOTPEnrollmentRequiresCurrentPassword(t *testing.T) {
+	h := newTOTPHarness(t)
+	user := h.createUser(t, "reauth-user", false)
+	headers := h.sessionFor(t, user)
+
+	response, _ := h.call(t, http.MethodPost, "/api/v1/auth/totp/enroll", map[string]any{}, headers)
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("missing password status=%d", response.Code)
+	}
+	response, _ = h.call(t, http.MethodPost, "/api/v1/auth/totp/enroll", map[string]any{"currentPassword": "wrong-password-123"}, headers)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong password status=%d", response.Code)
+	}
+	var count int
+	if err := h.pool.QueryRow(context.Background(), `SELECT count(*) FROM user_totp WHERE user_id=$1`, user.id).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("wrong-password enrollment rows=%d err=%v", count, err)
+	}
+
+	response, body := h.call(t, http.MethodPost, "/api/v1/auth/totp/enroll", map[string]any{"currentPassword": user.password}, headers)
+	if response.Code != http.StatusCreated || body["secret"] == nil {
+		t.Fatalf("correct password status=%d body=%v", response.Code, body)
+	}
+	var enabledAt *time.Time
+	var ciphertext []byte
+	if err := h.pool.QueryRow(context.Background(), `SELECT enabled_at, secret_ciphertext FROM user_totp WHERE user_id=$1`, user.id).Scan(&enabledAt, &ciphertext); err != nil {
+		t.Fatal(err)
+	}
+	if enabledAt != nil || len(ciphertext) == 0 {
+		t.Fatalf("pending enrollment enabledAt=%v ciphertext=%d", enabledAt, len(ciphertext))
+	}
+}
+
+func TestTOTPEnrollmentPasswordReauthIsRateLimited(t *testing.T) {
+	h := newTOTPHarness(t)
+	user := h.createUser(t, "reauth-rate-user", false)
+	headers := h.sessionFor(t, user)
+	statuses := make([]int, 4)
+	for i := range statuses {
+		response, _ := h.call(t, http.MethodPost, "/api/v1/auth/totp/enroll", map[string]any{"currentPassword": "wrong-password-123"}, headers)
+		statuses[i] = response.Code
+	}
+	if statuses[0] != http.StatusUnauthorized || statuses[1] != http.StatusUnauthorized || statuses[2] != http.StatusUnauthorized || statuses[3] != http.StatusTooManyRequests {
+		t.Fatalf("reauth rate statuses=%v", statuses)
+	}
+	var count int
+	if err := h.pool.QueryRow(context.Background(), `SELECT count(*) FROM user_totp WHERE user_id=$1`, user.id).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("rate-limited enrollment rows=%d err=%v", count, err)
+	}
+}
+
+func TestTOTPEnrollmentPersistsFutureAcceptedStepAndRejectsReplay(t *testing.T) {
+	h := newTOTPHarness(t)
+	user := h.createUser(t, "future-step-user", false)
+	headers := h.sessionFor(t, user)
+	response, body := h.call(t, http.MethodPost, "/api/v1/auth/totp/enroll", map[string]any{"currentPassword": user.password}, headers)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("enroll status=%d body=%v", response.Code, body)
+	}
+	secret, err := DecodeTOTPSecret(body["secret"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	futureStep := h.clock.Now().Unix()/TOTPPeriodSeconds + 1
+	futureCode := TOTPCode(secret, futureStep, TOTPDigits)
+	response, body = h.call(t, http.MethodPost, "/api/v1/auth/totp/confirm", map[string]any{"code": futureCode}, headers)
+	if response.Code != http.StatusOK {
+		t.Fatalf("future-window confirmation status=%d body=%v", response.Code, body)
+	}
+	var enabledAt *time.Time
+	var lastStep int64
+	if err = h.pool.QueryRow(context.Background(), `SELECT enabled_at,last_used_step FROM user_totp WHERE user_id=$1`, user.id).Scan(&enabledAt, &lastStep); err != nil {
+		t.Fatal(err)
+	}
+	if enabledAt == nil || lastStep != futureStep {
+		t.Fatalf("enabledAt=%v lastStep=%d want=%d", enabledAt, lastStep, futureStep)
+	}
+	response, body = h.call(t, http.MethodPost, "/api/v1/auth/login", map[string]any{"username": user.username, "password": user.password, "deviceName": "replay-device"}, nil)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("challenge status=%d body=%v", response.Code, body)
+	}
+	response, _ = h.call(t, http.MethodPost, "/api/v1/auth/login/totp", map[string]any{"challengeToken": body["challengeToken"], "code": futureCode}, nil)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("future confirmation code replay status=%d", response.Code)
+	}
+}
+
+func TestTOTPEnrollmentConfirmationMutationRollsBack(t *testing.T) {
+	h := newTOTPHarness(t)
+	user := h.createUser(t, "rollback-user", false)
+	headers := h.sessionFor(t, user)
+	response, body := h.call(t, http.MethodPost, "/api/v1/auth/totp/enroll", map[string]any{"currentPassword": user.password}, headers)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("enroll status=%d body=%v", response.Code, body)
+	}
+	secret, err := DecodeTOTPSecret(body["secret"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = h.pool.Exec(context.Background(), `
+CREATE FUNCTION reject_totp_confirmation() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF OLD.enabled_at IS NULL AND NEW.enabled_at IS NOT NULL THEN
+    RAISE EXCEPTION 'injected confirmation failure';
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER reject_totp_confirmation BEFORE UPDATE ON user_totp
+FOR EACH ROW EXECUTE FUNCTION reject_totp_confirmation()`); err != nil {
+		t.Fatal(err)
+	}
+	response, _ = h.call(t, http.MethodPost, "/api/v1/auth/totp/confirm", map[string]any{"code": h.code(secret)}, headers)
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("injected failure status=%d", response.Code)
+	}
+	var enabledAt *time.Time
+	var lastStep *int64
+	if err = h.pool.QueryRow(context.Background(), `SELECT enabled_at,last_used_step FROM user_totp WHERE user_id=$1`, user.id).Scan(&enabledAt, &lastStep); err != nil {
+		t.Fatal(err)
+	}
+	if enabledAt != nil || lastStep != nil {
+		t.Fatalf("partial confirmation persisted enabledAt=%v lastStep=%v", enabledAt, lastStep)
+	}
+}
+
+func TestConcurrentTOTPEnrollmentConfirmationHasOneWinner(t *testing.T) {
+	h := newTOTPHarness(t)
+	user := h.createUser(t, "confirm-race-user", false)
+	headers := h.sessionFor(t, user)
+	response, body := h.call(t, http.MethodPost, "/api/v1/auth/totp/enroll", map[string]any{"currentPassword": user.password}, headers)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("enroll status=%d body=%v", response.Code, body)
+	}
+	secret, err := DecodeTOTPSecret(body["secret"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := h.code(secret)
+	start := make(chan struct{})
+	statuses := make([]int, 2)
+	var wg sync.WaitGroup
+	for i := range statuses {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			request := httptest.NewRequest(http.MethodPost, "http://relayshelf.test/api/v1/auth/totp/confirm", strings.NewReader(`{"code":"`+code+`"}`))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Origin", "http://relayshelf.test")
+			for key, value := range headers {
+				request.Header.Set(key, value)
+			}
+			recorder := httptest.NewRecorder()
+			h.router.ServeHTTP(recorder, request)
+			statuses[i] = recorder.Code
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	successes, conflicts := 0, 0
+	for _, status := range statuses {
+		switch status {
+		case http.StatusOK:
+			successes++
+		case http.StatusConflict:
+			conflicts++
+		default:
+			t.Fatalf("concurrent confirmation statuses=%v", statuses)
+		}
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("concurrent confirmation statuses=%v", statuses)
+	}
+	var enabledCount int
+	var lastStep int64
+	if err = h.pool.QueryRow(context.Background(), `SELECT count(*) FILTER (WHERE enabled_at IS NOT NULL),max(last_used_step) FROM user_totp WHERE user_id=$1`, user.id).Scan(&enabledCount, &lastStep); err != nil {
+		t.Fatal(err)
+	}
+	if enabledCount != 1 || lastStep != h.clock.Now().Unix()/TOTPPeriodSeconds {
+		t.Fatalf("enabled=%d lastStep=%d", enabledCount, lastStep)
+	}
+}
+
+func TestTOTPChallengeIssuanceBurstIsBoundedAndSuccessResets(t *testing.T) {
+	h := newTOTPHarness(t)
+	user := h.createUser(t, "challenge-rate-user", false)
+	secret := h.enrollAndConfirm(t, user)
+	const requests = 20
+	statuses := make([]int, requests)
+	tokens := make([]string, requests)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range statuses {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			body := strings.NewReader(`{"username":"` + user.username + `","password":"` + user.password + `","deviceName":"burst-device"}`)
+			request := httptest.NewRequest(http.MethodPost, "http://relayshelf.test/api/v1/auth/login", body)
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Origin", "http://relayshelf.test")
+			recorder := httptest.NewRecorder()
+			h.router.ServeHTTP(recorder, request)
+			statuses[i] = recorder.Code
+			var decoded map[string]any
+			_ = json.Unmarshal(recorder.Body.Bytes(), &decoded)
+			tokens[i], _ = decoded["challengeToken"].(string)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	accepted, limited, token := 0, 0, ""
+	for i, status := range statuses {
+		switch status {
+		case http.StatusAccepted:
+			accepted++
+			token = tokens[i]
+		case http.StatusTooManyRequests:
+			limited++
+		default:
+			t.Fatalf("challenge issuance statuses=%v", statuses)
+		}
+	}
+	if accepted != 3 || limited != requests-3 || token == "" {
+		t.Fatalf("accepted=%d limited=%d statuses=%v", accepted, limited, statuses)
+	}
+	var rows int
+	if err := h.pool.QueryRow(context.Background(), `SELECT count(*) FROM totp_challenges WHERE user_id=$1`, user.id).Scan(&rows); err != nil || rows != 3 {
+		t.Fatalf("challenge rows=%d err=%v", rows, err)
+	}
+	h.clock.Advance(2 * time.Second)
+	response, body := h.call(t, http.MethodPost, "/api/v1/auth/login/totp", map[string]any{"challengeToken": token, "code": h.code(secret)}, nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("completion after temporary bound status=%d body=%v", response.Code, body)
+	}
+	response, _ = h.call(t, http.MethodPost, "/api/v1/auth/login", map[string]any{"username": user.username, "password": user.password, "deviceName": "after-success"}, nil)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("challenge after success status=%d", response.Code)
 	}
 }
 
@@ -539,7 +779,7 @@ func TestTOTPAuditContainsNoSecretMaterial(t *testing.T) {
 
 	// Enroll through the real endpoints so both audit events fire.
 	headers := h.sessionFor(t, user)
-	response, body := h.call(t, http.MethodPost, "/api/v1/auth/totp/enroll", map[string]any{}, headers)
+	response, body := h.call(t, http.MethodPost, "/api/v1/auth/totp/enroll", map[string]any{"currentPassword": user.password}, headers)
 	if response.Code != http.StatusCreated {
 		t.Fatalf("enroll status=%d body=%v", response.Code, body)
 	}
@@ -551,7 +791,7 @@ func TestTOTPAuditContainsNoSecretMaterial(t *testing.T) {
 	if response, _ = h.call(t, http.MethodPost, "/api/v1/auth/totp/confirm", map[string]any{"code": h.code(secretBytes)}, headers); response.Code != http.StatusOK {
 		t.Fatalf("confirm status=%d", response.Code)
 	}
-	if response, _ = h.call(t, http.MethodPost, "/api/v1/auth/totp/enroll", map[string]any{}, headers); response.Code != http.StatusConflict {
+	if response, _ = h.call(t, http.MethodPost, "/api/v1/auth/totp/enroll", map[string]any{"currentPassword": user.password}, headers); response.Code != http.StatusConflict {
 		t.Fatalf("double enroll status=%d", response.Code)
 	}
 	// The confirmed code is consumed by replay protection; disabling needs a

@@ -42,19 +42,24 @@ func (q *Queries) ClaimTOTPStep(ctx context.Context, arg ClaimTOTPStepParams) (i
 	return result.RowsAffected(), nil
 }
 
-const confirmTOTP = `-- name: ConfirmTOTP :execrows
+const confirmTOTPEnrollment = `-- name: ConfirmTOTPEnrollment :execrows
 UPDATE user_totp
-SET enabled_at = $2, updated_at = $2
+SET enabled_at = $2,
+    last_used_step = $3,
+    failed_attempts = 0,
+    locked_until = NULL,
+    updated_at = $2
 WHERE user_id = $1 AND enabled_at IS NULL
 `
 
-type ConfirmTOTPParams struct {
-	UserID    pgtype.UUID
-	EnabledAt pgtype.Timestamptz
+type ConfirmTOTPEnrollmentParams struct {
+	UserID       pgtype.UUID
+	EnabledAt    pgtype.Timestamptz
+	LastUsedStep pgtype.Int8
 }
 
-func (q *Queries) ConfirmTOTP(ctx context.Context, arg ConfirmTOTPParams) (int64, error) {
-	result, err := q.db.Exec(ctx, confirmTOTP, arg.UserID, arg.EnabledAt)
+func (q *Queries) ConfirmTOTPEnrollment(ctx context.Context, arg ConfirmTOTPEnrollmentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, confirmTOTPEnrollment, arg.UserID, arg.EnabledAt, arg.LastUsedStep)
 	if err != nil {
 		return 0, err
 	}
@@ -245,23 +250,6 @@ func (q *Queries) RecordTOTPFailure(ctx context.Context, arg RecordTOTPFailurePa
 		arg.FailedAttempts,
 		arg.LockedUntil,
 	)
-	return err
-}
-
-const recordTOTPSuccess = `-- name: RecordTOTPSuccess :exec
-UPDATE user_totp
-SET last_used_step = $3, failed_attempts = 0, locked_until = NULL, updated_at = $2
-WHERE user_id = $1
-`
-
-type RecordTOTPSuccessParams struct {
-	UserID       pgtype.UUID
-	UpdatedAt    pgtype.Timestamptz
-	LastUsedStep pgtype.Int8
-}
-
-func (q *Queries) RecordTOTPSuccess(ctx context.Context, arg RecordTOTPSuccessParams) error {
-	_, err := q.db.Exec(ctx, recordTOTPSuccess, arg.UserID, arg.UpdatedAt, arg.LastUsedStep)
 	return err
 }
 

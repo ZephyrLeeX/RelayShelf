@@ -7,14 +7,18 @@ made from available evidence.
 
 ## Automated coverage already in CI
 
-- `make generate && git diff --exit-code` — contract/codegen idempotence
-- `make lint` — gofmt, go vet, golangci-lint, frontend lint + typecheck
-- `make test` — Go unit, frontend unit, PostgreSQL integration (real server)
+- Contract/codegen idempotence (`make generate`, then `git diff --exit-code`)
+- Go format, vet, and lint checks (`gofmt`, `go vet ./...`, `golangci-lint run`)
+- Go unit tests (`go test ./...`)
+- PostgreSQL internal integration with race detection (`go test -race -tags=integration ./internal/...`)
+- Review harness safety (`./scripts/review-harness-tests.sh`)
+- Frontend typecheck, lint, unit tests, and build (frontend job)
 - `make e2e` — Playwright journeys against the real Go binary + PostgreSQL
-- `make container` — image build + metadata smoke
-- Crash-window process tests (`go test -tags=integration -run TestCrashWindow ./cmd/...`)
-- NFS-outage service tests (`go test -tags=integration -run TestNFSOutage ./internal/uploads/...`)
-- TOTP integration tests (`go test -tags=integration -run TOTP ./internal/auth/...`)
+- Container image build and injected-metadata smoke (container job)
+- Application secret logging sentinel (`DATABASE_URL=... go test -tags=integration -run TestApplicationLogsNeverContainSecrets -count=1 -v ./cmd/...`)
+- Crash-window process tests (`DATABASE_URL=... RELAYSHELF_TEST_DESTRUCTIVE=1 go test -tags=integration -run TestCrashWindow -count=1 -v ./cmd/...`)
+- NFS-outage service tests (included in the raced `./internal/...` integration command)
+- TOTP integration tests (included in the raced `./internal/...` integration command)
 
 ## Reference-hardware qualification commands
 

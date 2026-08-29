@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ZephyrLeeX/RelayShelf/internal/audit"
+	usersdomain "github.com/ZephyrLeeX/RelayShelf/internal/users"
 	"github.com/google/uuid"
 )
 
@@ -225,7 +226,24 @@ type TOTPEnrollment struct {
 
 // StartTOTPEnrollment replaces any pending enrollment with a fresh encrypted
 // secret. An already confirmed enrollment must be disabled first.
-func (s *Service) StartTOTPEnrollment(ctx context.Context, actor Authentication, input LoginInput) (TOTPEnrollment, error) {
+func (s *Service) StartTOTPEnrollment(ctx context.Context, actor Authentication, currentPassword string, input LoginInput) (TOTPEnrollment, error) {
+	limiterUsername := "totp-enroll:" + actor.User.Username
+	if !s.limiter.Allow(input.ClientIP.String(), limiterUsername) {
+		return TOTPEnrollment{}, ErrRateLimited
+	}
+	user, err := s.repo.FindUserByID(ctx, actor.User.ID)
+	if err != nil {
+		return TOTPEnrollment{}, err
+	}
+	if user.Status != "ACTIVE" || len(currentPassword) > usersdomain.MaxPasswordBytes {
+		s.limiter.Failure(input.ClientIP.String(), limiterUsername)
+		return TOTPEnrollment{}, ErrInvalidCredentials
+	}
+	ok, _, verifyErr := s.hasher.Verify(user.PasswordHash, currentPassword)
+	if verifyErr != nil || !ok {
+		s.limiter.Failure(input.ClientIP.String(), limiterUsername)
+		return TOTPEnrollment{}, ErrInvalidCredentials
+	}
 	if _, enabled, err := s.totpEnabled(ctx, actor.User.ID); err != nil {
 		return TOTPEnrollment{}, err
 	} else if enabled {
@@ -279,18 +297,18 @@ func (s *Service) ConfirmTOTPEnrollment(ctx context.Context, actor Authenticatio
 	if decryptErr != nil {
 		return ErrTOTPCodeInvalid
 	}
-	if _, validateErr := ValidateTOTP(secret, code, now.Unix(), -1); validateErr != nil {
+	acceptedStep, validateErr := ValidateTOTP(secret, code, now.Unix(), -1)
+	if validateErr != nil {
 		_ = s.repo.RecordTOTPFailure(ctx, actor.User.ID, now, MaxTOTPFailedAttempts, now.Add(TOTPLockoutDuration))
 		return ErrTOTPCodeInvalid
 	}
-	confirmed, err := s.repo.ConfirmTOTP(ctx, actor.User.ID, now)
+	confirmed, err := s.repo.ConfirmTOTPEnrollment(ctx, actor.User.ID, acceptedStep, now)
 	if err != nil {
 		return err
 	}
 	if !confirmed {
 		return ErrTOTPAlreadyEnabled
 	}
-	_ = s.repo.RecordTOTPSuccess(ctx, actor.User.ID, now, now.Unix()/TOTPPeriodSeconds)
 	s.recordTOTPAudit(ctx, audit.EventTOTPEnrollmentConfirmed, actor, input)
 	return nil
 }

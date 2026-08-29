@@ -44,9 +44,8 @@ type Repository interface {
 	Audit(context.Context, AuditEvent) error
 	GetUserTOTP(context.Context, uuid.UUID) (UserTOTP, error)
 	UpsertPendingTOTP(context.Context, UserTOTP, uuid.UUID, time.Time) (bool, error)
-	ConfirmTOTP(context.Context, uuid.UUID, time.Time) (bool, error)
+	ConfirmTOTPEnrollment(context.Context, uuid.UUID, int64, time.Time) (bool, error)
 	DeleteUserTOTP(context.Context, uuid.UUID) (bool, error)
-	RecordTOTPSuccess(context.Context, uuid.UUID, time.Time, int64) error
 	RecordTOTPFailure(context.Context, uuid.UUID, time.Time, int, time.Time) error
 	CreateTOTPChallenge(context.Context, TOTPChallengeRow, []byte) error
 	GetTOTPChallengeByHash(context.Context, []byte) (TOTPChallengeRow, error)
@@ -239,18 +238,14 @@ func (r *PostgreSQLRepository) UpsertPendingTOTP(ctx context.Context, enrollment
 	return n > 0, err
 }
 
-func (r *PostgreSQLRepository) ConfirmTOTP(ctx context.Context, userID uuid.UUID, now time.Time) (bool, error) {
-	n, err := r.q.ConfirmTOTP(ctx, generated.ConfirmTOTPParams{UserID: pgu(userID), EnabledAt: pgt(now)})
+func (r *PostgreSQLRepository) ConfirmTOTPEnrollment(ctx context.Context, userID uuid.UUID, acceptedStep int64, now time.Time) (bool, error) {
+	n, err := r.q.ConfirmTOTPEnrollment(ctx, generated.ConfirmTOTPEnrollmentParams{UserID: pgu(userID), EnabledAt: pgt(now), LastUsedStep: pgtype.Int8{Int64: acceptedStep, Valid: true}})
 	return n > 0, err
 }
 
 func (r *PostgreSQLRepository) DeleteUserTOTP(ctx context.Context, userID uuid.UUID) (bool, error) {
 	n, err := r.q.DeleteUserTOTP(ctx, pgu(userID))
 	return n > 0, err
-}
-
-func (r *PostgreSQLRepository) RecordTOTPSuccess(ctx context.Context, userID uuid.UUID, now time.Time, step int64) error {
-	return r.q.RecordTOTPSuccess(ctx, generated.RecordTOTPSuccessParams{UserID: pgu(userID), UpdatedAt: pgt(now), LastUsedStep: pgtype.Int8{Int64: step, Valid: true}})
 }
 
 func (r *PostgreSQLRepository) RecordTOTPFailure(ctx context.Context, userID uuid.UUID, now time.Time, maxFailures int, lockedUntil time.Time) error {

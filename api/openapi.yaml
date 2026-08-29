@@ -71,6 +71,11 @@ paths:
     post:
       operationId: startTOTPEnrollment
       security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TOTPEnrollmentRequest' }
       responses:
         '201':
           description: Pending enrollment material; TOTP stays disabled until the confirmation code validates
@@ -80,6 +85,8 @@ paths:
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
   /auth/totp/confirm:
     post:
       operationId: confirmTOTPEnrollment
@@ -667,6 +674,12 @@ components:
       required: [code]
       properties:
         code: { type: string, minLength: 6, maxLength: 8, pattern: '^[0-9]+$' }
+    TOTPEnrollmentRequest:
+      type: object
+      additionalProperties: false
+      required: [currentPassword]
+      properties:
+        currentPassword: { type: string, maxLength: 1024 }
     TOTPStatus:
       type: object
       additionalProperties: false

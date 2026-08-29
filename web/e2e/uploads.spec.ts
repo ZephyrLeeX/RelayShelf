@@ -123,6 +123,7 @@ test.describe('TOTP journey', () => {
     await page.locator('button.account').click()
     const drawer = page.locator('.drawer')
     await expect(drawer).toBeVisible()
+    await drawer.getByLabel('当前密码').last().fill(alice.password)
     await drawer.getByRole('button', { name: '开始启用' }).click()
 
     const secretElement = drawer.locator('.secret')

@@ -19,18 +19,17 @@ SET secret_ciphertext = EXCLUDED.secret_ciphertext,
     updated_at = EXCLUDED.updated_at
 WHERE user_totp.enabled_at IS NULL;
 
--- name: ConfirmTOTP :execrows
+-- name: ConfirmTOTPEnrollment :execrows
 UPDATE user_totp
-SET enabled_at = $2, updated_at = $2
+SET enabled_at = $2,
+    last_used_step = $3,
+    failed_attempts = 0,
+    locked_until = NULL,
+    updated_at = $2
 WHERE user_id = $1 AND enabled_at IS NULL;
 
 -- name: DeleteUserTOTP :execrows
 DELETE FROM user_totp WHERE user_id = $1 AND enabled_at IS NOT NULL;
-
--- name: RecordTOTPSuccess :exec
-UPDATE user_totp
-SET last_used_step = $3, failed_attempts = 0, locked_until = NULL, updated_at = $2
-WHERE user_id = $1;
 
 -- name: ClaimTOTPStep :execrows
 UPDATE user_totp

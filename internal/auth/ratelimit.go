@@ -47,6 +47,27 @@ func (l *RateLimiter) Failure(ip, username string) {
 	defer l.mu.Unlock()
 	now := l.clock.Now()
 	l.cleanup(now)
+	l.recordPressure(now, ip, username)
+}
+
+// AllowChallenge atomically checks and consumes challenge-issuance capacity.
+// Reserving capacity before the database insert prevents concurrent requests
+// with a correct password from all passing an otherwise separate Allow check.
+func (l *RateLimiter) AllowChallenge(ip, username string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.clock.Now()
+	l.cleanup(now)
+	for _, key := range keys(ip, username) {
+		if e, ok := l.entries[key]; ok && now.Before(e.blockedUntil) {
+			return false
+		}
+	}
+	l.recordPressure(now, ip, username)
+	return true
+}
+
+func (l *RateLimiter) recordPressure(now time.Time, ip, username string) {
 	for _, key := range keys(ip, username) {
 		if len(l.entries) >= l.max {
 			l.evictOldest()

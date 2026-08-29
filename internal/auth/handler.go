@@ -135,7 +135,15 @@ func (h *Handler) StartTOTPEnrollment(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, r, http.StatusUnauthorized, "AUTH_REQUIRED", "authentication required")
 		return
 	}
-	enrollment, err := h.service.StartTOTPEnrollment(r.Context(), actor.Authentication, requestInput(r))
+	var body httpapi.TOTPEnrollmentRequest
+	if !decode(w, r, &body) {
+		return
+	}
+	if body.CurrentPassword == "" {
+		mapError(w, r, ErrValidation)
+		return
+	}
+	enrollment, err := h.service.StartTOTPEnrollment(r.Context(), actor.Authentication, body.CurrentPassword, requestInput(r))
 	if err != nil {
 		mapError(w, r, err)
 		return

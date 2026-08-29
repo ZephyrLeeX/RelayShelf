@@ -59,6 +59,7 @@ export type { TagRequest } from './models/TagRequest';
 export type { TOTPChallengeRequest } from './models/TOTPChallengeRequest';
 export type { TOTPCodeRequest } from './models/TOTPCodeRequest';
 export { TOTPEnrollmentPending } from './models/TOTPEnrollmentPending';
+export type { TOTPEnrollmentRequest } from './models/TOTPEnrollmentRequest';
 export type { TOTPLoginChallenge } from './models/TOTPLoginChallenge';
 export type { TOTPStatus } from './models/TOTPStatus';
 export type { UpdateRuntimeSettingsRequest } from './models/UpdateRuntimeSettingsRequest';
