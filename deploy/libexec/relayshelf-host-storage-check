@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+mount_path=${1:-/mnt/relayshelf}
+
+if ! findmnt --noheadings --mountpoint "$mount_path" --types nfs,nfs4 >/dev/null 2>&1; then
+  echo "RelayShelf storage preflight: $mount_path is not a mounted NFS filesystem" >&2
+  exit 1
+fi
+
+if [ ! -r "$mount_path" ] || [ ! -w "$mount_path" ] || [ ! -x "$mount_path" ]; then
+  echo "RelayShelf storage preflight: $mount_path is not accessible for read/write/traverse" >&2
+  exit 1
+fi
+
+echo "RelayShelf storage preflight: mounted NFS verified at $mount_path"

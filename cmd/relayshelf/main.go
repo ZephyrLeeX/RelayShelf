@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"sync"
@@ -121,6 +123,22 @@ func main() {
 		log.Printf("RelayShelf %s (commit %s, built %s)", info.Version, info.GitCommit, info.BuildTime)
 		return
 	}
+	if command == "healthcheck" {
+		if err := healthCheck(os.Getenv("RELAYSHELF_HEALTHCHECK_URL")); err != nil {
+			log.Printf("Health check: FAIL (%v)", err)
+			os.Exit(1)
+		}
+		log.Printf("Health check: PASS")
+		return
+	}
+	if command == "config" && len(os.Args) > 2 && os.Args[2] == "check" {
+		if _, err := config.Load(); err != nil {
+			log.Printf("Config check: FAIL (%v)", err)
+			os.Exit(1)
+		}
+		log.Printf("Config check: PASS")
+		return
+	}
 	var cfg config.Config
 	var err error
 	if command == "migrate" {
@@ -141,6 +159,24 @@ func main() {
 	defer db.Close()
 	switch command {
 	case "migrate":
+		if len(os.Args) > 2 && os.Args[2] == "status" {
+			current, currentErr := database.CurrentVersion(ctx, db)
+			latest, latestErr := database.LatestVersion()
+			if currentErr != nil || latestErr != nil {
+				log.Printf("Migration status: FAIL")
+				os.Exit(1)
+			}
+			if current > latest {
+				log.Printf("Migration status: FAIL (database=%d is newer than binary=%d)", current, latest)
+				os.Exit(1)
+			}
+			state := "current"
+			if current < latest {
+				state = "upgrade-required"
+			}
+			log.Printf("Migration status: PASS (database=%d binary=%d state=%s)", current, latest, state)
+			return
+		}
 		if err := database.Migrate(ctx, db); err != nil {
 			log.Printf("migration failed: %v", err)
 			os.Exit(1)
@@ -282,9 +318,42 @@ func main() {
 			log.Printf("background shutdown deadline reached")
 		}
 	default:
-		log.Printf("unknown command %q (use serve, migrate, storage check, or security check)", command)
+		log.Printf("unknown command %q (use serve, migrate, migrate status, storage check, config check, healthcheck, security check, or version)", command)
 		os.Exit(2)
 	}
+}
+
+func healthCheck(rawURL string) error {
+	return healthCheckWithClient(rawURL, http.DefaultClient)
+}
+
+type httpDoer interface {
+	Do(*http.Request) (*http.Response, error)
+}
+
+func healthCheckWithClient(rawURL string, client httpDoer) error {
+	if rawURL == "" {
+		rawURL = "http://127.0.0.1:8080/health/live"
+	}
+	endpoint, err := url.Parse(rawURL)
+	if err != nil || endpoint.Scheme != "http" || endpoint.Host == "" || endpoint.User != nil {
+		return errors.New("RELAYSHELF_HEALTHCHECK_URL must be an absolute http URL without credentials")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return err
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("live endpoint returned HTTP %d", response.StatusCode)
+	}
+	return nil
 }
 
 func storageCheck() {

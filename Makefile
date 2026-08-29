@@ -9,7 +9,7 @@ RELEASE_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || e
 GIT_COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
 BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
-.PHONY: generate lint test build e2e integration container
+.PHONY: generate lint test build e2e integration container deploy-verify
 
 generate:
 	./scripts/generate.sh
@@ -44,3 +44,6 @@ container:
 		--build-arg GIT_COMMIT="$(GIT_COMMIT)" \
 		--build-arg BUILD_TIME="$(BUILD_TIME)" \
 		-t relayshelf:ci .
+
+deploy-verify:
+	./deploy/tests/deployment-tests.sh
