@@ -1,14 +1,52 @@
 package main
 
 import (
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/ZephyrLeeX/RelayShelf/internal/auth"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/httpx"
 )
+
+func TestHealthCheckUsesSelfContainedHTTPProbe(t *testing.T) {
+	ok := roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.String() != "http://127.0.0.1:8080/health/live" {
+			t.Fatalf("unexpected URL %q", request.URL)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("ok"))}, nil
+	})
+	if err := healthCheckWithClient("", ok); err != nil {
+		t.Fatalf("healthCheck: %v", err)
+	}
+
+	unavailable := roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader("unavailable"))}, nil
+	})
+	if err := healthCheckWithClient("http://127.0.0.1:8080/health/live", unavailable); err == nil {
+		t.Fatal("healthCheck must reject a non-200 response")
+	}
+
+	failing := roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("connection refused")
+	})
+	if err := healthCheckWithClient("http://127.0.0.1:1/health/live", failing); err == nil {
+		t.Fatal("healthCheck must reject an unreachable endpoint")
+	}
+	if err := healthCheckWithClient("https://example.invalid/health/live", ok); err == nil {
+		t.Fatal("healthCheck must reject non-http URLs")
+	}
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) Do(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
 
 func TestHealthBypassesPublicHostValidation(t *testing.T) {
 	origin, err := url.Parse("https://public.example")

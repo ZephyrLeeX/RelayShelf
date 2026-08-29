@@ -1,0 +1,28 @@
+[Unit]
+Description=RelayShelf PostgreSQL 17
+
+[Container]
+Image=docker.io/library/postgres:17.11-bookworm
+Pull=never
+ContainerName=relayshelf-postgres
+Network=relayshelf.network
+NetworkAlias=relayshelf-postgres
+EnvironmentFile=/etc/relayshelf/postgres.env
+Volume=/var/lib/relayshelf/postgres:/var/lib/postgresql/data:rw
+HealthCmd=pg_isready -U relayshelf -d relayshelf
+HealthInterval=10s
+HealthTimeout=5s
+HealthRetries=6
+HealthStartPeriod=30s
+Notify=healthy
+LogDriver=journald
+
+[Service]
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=120
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target
+

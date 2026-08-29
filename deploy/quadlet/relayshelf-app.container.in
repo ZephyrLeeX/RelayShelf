@@ -1,0 +1,39 @@
+[Unit]
+Description=RelayShelf application
+Requires=relayshelf-postgres.service
+After=relayshelf-postgres.service
+RequiresMountsFor=/mnt/relayshelf /var/lib/relayshelf/staging
+
+[Container]
+Image=@@RELAYSHELF_IMAGE@@
+Pull=never
+ContainerName=relayshelf-app
+Network=relayshelf.network
+NetworkAlias=relayshelf-app
+EnvironmentFile=/etc/relayshelf/relayshelf.env
+Volume=/var/lib/relayshelf/staging:/staging:rw
+Volume=/mnt/relayshelf:/storage:rw
+PublishPort=@@RELAYSHELF_LISTEN_ADDRESS@@:8080:8080
+User=65532
+Group=65532
+ReadOnly=true
+NoNewPrivileges=true
+DropCapability=all
+HealthCmd=/relayshelf healthcheck
+HealthInterval=30s
+HealthTimeout=5s
+HealthRetries=3
+HealthStartPeriod=20s
+Notify=healthy
+LogDriver=journald
+Exec=serve
+
+[Service]
+ExecStartPre=/usr/local/libexec/relayshelf-host-storage-check /mnt/relayshelf
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=120
+TimeoutStopSec=45
+
+[Install]
+WantedBy=multi-user.target

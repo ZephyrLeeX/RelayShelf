@@ -1,0 +1,8 @@
+[Unit]
+Description=RelayShelf private application network
+
+[Network]
+NetworkName=relayshelf
+Driver=bridge
+Internal=true
+

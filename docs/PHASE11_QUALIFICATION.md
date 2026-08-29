@@ -1,9 +1,9 @@
 # Phase 11 Qualification Runbook
 
-Status: implementation complete; reference-hardware execution pending.
-This file lists the exact commands the Intel J4125 reference environment
-must run to close the Phase 11 exit gate, and records the decisions already
-made from available evidence.
+Status: implementation complete; reference-hardware qualification passed.
+The Phase 12 authority handoff records T123-T128 as executed and passed on the
+real reference environment. This file preserves the qualification commands and
+the pre-execution record that existed at the Phase 11 implementation baseline.
 
 ## Automated coverage already in CI
 
@@ -120,21 +120,19 @@ pgx MaxConns=10
 chunk=8MiB
 ```
 
-No tuning change is justified by the evidence collected so far: the only
-measurements available come from a development machine (AMD Ryzen 7800X3D,
-tmpfs scratch), which the execution authority explicitly disallows as a
-basis for production defaults. The reference-hardware baseline above is
-the required evidence for any future change. Status:
+The completed reference-hardware review retained the frozen defaults. Future
+tuning changes still require new J4125/reference-NFS evidence; development-host
+measurements are not authority. Status:
 
 ```text
-T127 IMPLEMENTATION READY
-REFERENCE HARDWARE QUALIFICATION PENDING
+T127 IMPLEMENTATION COMPLETE
+REFERENCE HARDWARE QUALIFICATION PASSED
 ```
 
 ## Gate status
 
 ```text
-PHASE 11 CODE GATE: see CI results for this commit
-PHASE 11 REFERENCE HARDWARE QUALIFICATION: PENDING (run the commands above)
-PHASE 11 EXIT GATE: NOT PASSED until the reference environment executes T123-T128
+PHASE 11 CODE IMPLEMENTATION: COMPLETE
+PHASE 11 REFERENCE HARDWARE QUALIFICATION: PASSED
+PHASE 11 EXIT GATE: PASSED
 ```

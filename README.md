@@ -5,7 +5,8 @@ Cross-device content relay and storage.
 
 RelayShelf 是一个面向个人/家庭使用的轻量级跨设备内容中转与存储系统，用于在 Windows、Linux、Android、iPhone、iPad 等设备之间快速保存、发送和取用文本、命令、链接、图片与文件。
 
-> 当前状态：项目初始化阶段。
+> 当前状态：Phase 12 deployment/release engineering。Phase 11 exit gate 已由
+> Phase 12 authority handoff 记录为通过。
 
 ## 核心定位
 
@@ -35,6 +36,9 @@ RelayShelf 是一个面向个人/家庭使用的轻量级跨设备内容中转�
 - `docs/ARCHITECTURE.md`
 - `docs/DATA_MODEL.md`
 - `docs/IMPLEMENTATION_PLAN.md`
+
+Production operator bundle、Podman Quadlet、升级流程和 OpenWrt nginx reference
+位于 [`deploy/`](deploy/README.md)。
 
 ## Branding
 
