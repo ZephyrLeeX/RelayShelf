@@ -51,8 +51,17 @@ Take the NAS export offline when prompted, restore it when prompted. Pair
 with the automated boundary proof:
 
 ```bash
+# The default -race run requires CGO and a C compiler.
+sudo apt-get install -y podman build-essential
 CONTAINER_RUNTIME=podman ./scripts/test-integration.sh   # includes TestNFSOutage*
 ```
+
+The harness uses the fully qualified
+`docker.io/library/postgres:17-alpine` image by default so Podman does not
+need an unqualified-search registry. Set `POSTGRES_TEST_IMAGE` to use a
+pre-approved mirror instead. `GO_TEST_FLAGS` continues to override the default
+`-race`; when race detection is requested, the harness enables CGO and reports
+a missing C toolchain before starting PostgreSQL.
 
 ### T125 — crash/restart windows
 

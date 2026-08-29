@@ -299,9 +299,9 @@ VALUES($1,'UNCERTAIN_RESULT','TEST','PENDING',$3,$3,$3),
 }
 
 func TestWorkerStopsPersistingLostClaimAndContinues(t *testing.T) {
+	db := postgresutil.NewDatabase(t)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	db := postgresutil.NewDatabase(t)
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	firstID := uuid.Must(uuid.NewV7())
 	followingID := uuid.Must(uuid.NewV7())
