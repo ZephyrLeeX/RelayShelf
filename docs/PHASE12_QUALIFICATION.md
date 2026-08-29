@@ -99,12 +99,13 @@ make e2e
 make deploy-verify
 ```
 
-Deployment-specific verification includes real Quadlet generator dry-run when
-available, shell syntax, exact image rules, non-exposure of PostgreSQL, mount
-dependencies, missing-NFS and missing-env failures, render policy, nginx
-directives, migration-before-unit ordering, readiness failure reporting, and
-previous-unit retention. CI installs Podman and runs this suite. Container CI
-also runs production image inspection.
+Deployment-specific verification requires Podman/Quadlet >= 5.2.0 and includes
+a real Quadlet generator dry-run, shell syntax, exact image rules,
+non-exposure of PostgreSQL, mount dependencies, missing-NFS and missing-env
+failures, render policy, nginx directives, migration-before-unit ordering,
+readiness failure reporting, and previous-unit retention. CI runs this suite in
+Debian 13 with its Podman package pinned to 5.4.2+ds1-2+b2. Container CI also
+runs production image inspection.
 
 ## Reference-environment qualification checklist
 
@@ -133,4 +134,3 @@ Current status:
 REFERENCE-ENVIRONMENT VERIFICATION: NOT EXECUTED / REQUIRES REFERENCE ENVIRONMENT
 PHASE 12 EXIT GATE: NOT PASSED
 ```
-

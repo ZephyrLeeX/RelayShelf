@@ -8,7 +8,8 @@ authority.
 
 ## Prerequisites
 
-- Debian 13 VM with a fixed LAN address, cgroup v2, systemd, Podman/Quadlet,
+- Debian 13 VM with a fixed LAN address, cgroup v2, systemd, Podman/Quadlet
+  >= 5.2.0 (Debian 13 provides 5.4.2),
   `findmnt`, NFS client tools, `openssl`, and at least 6 GiB RAM.
 - An exact, fully-qualified RelayShelf image with a SemVer tag, for example
   `<registry>/relayshelf:0.12.0`. `latest` and unqualified names are rejected.
@@ -21,10 +22,16 @@ authority.
 Check the host runtime:
 
 ```bash
+podman --version
 podman info --format '{{.Host.CgroupsVersion}}'
 test "$(podman info --format '{{.Host.CgroupsVersion}}')" = v2
 sudo ./scripts/verify.sh
 ```
+
+The 5.2.0 minimum is required by the production Quadlets' `NetworkAlias=`
+syntax; `Notify=healthy` additionally requires 5.0.0 or newer. Verification
+reports the generator version and fails before parsing units when this contract
+is not met.
 
 ## Directory layout and ownership
 

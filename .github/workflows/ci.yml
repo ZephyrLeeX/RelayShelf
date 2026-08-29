@@ -117,9 +117,14 @@ jobs:
 
   deployment:
     runs-on: ubuntu-24.04
+    container: debian:13-slim
+    env:
+      DEPLOYMENT_PODMAN_VERSION: 5.4.2+ds1-2+b2
     steps:
       - uses: actions/checkout@v4
-      - name: Install Quadlet generator
-        run: sudo apt-get update && sudo apt-get install -y podman
+      - name: Install pinned Debian 13 Quadlet generator
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends make "podman=${DEPLOYMENT_PODMAN_VERSION}"
       - name: Verify Quadlet, scripts, NFS gate, nginx, and release policy
         run: make deploy-verify
