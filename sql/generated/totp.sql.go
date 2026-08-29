@@ -44,22 +44,37 @@ func (q *Queries) ClaimTOTPStep(ctx context.Context, arg ClaimTOTPStepParams) (i
 
 const confirmTOTPEnrollment = `-- name: ConfirmTOTPEnrollment :execrows
 UPDATE user_totp
-SET enabled_at = $2,
-    last_used_step = $3,
+SET enabled_at = $1,
+    last_used_step = $2,
     failed_attempts = 0,
     locked_until = NULL,
-    updated_at = $2
-WHERE user_id = $1 AND enabled_at IS NULL
+    updated_at = $1
+WHERE user_id = $3
+  AND enabled_at IS NULL
+  -- Confirmation is compare-and-swap against the exact pending enrollment that supplied the validated secret.
+  AND secret_nonce = $4
+  AND secret_ciphertext = $5
+  AND secret_encryption_version = $6
 `
 
 type ConfirmTOTPEnrollmentParams struct {
-	UserID       pgtype.UUID
-	EnabledAt    pgtype.Timestamptz
-	LastUsedStep pgtype.Int8
+	Now                       pgtype.Timestamptz
+	AcceptedStep              pgtype.Int8
+	UserID                    pgtype.UUID
+	ExpectedSecretNonce       []byte
+	ExpectedSecretCiphertext  []byte
+	ExpectedEncryptionVersion int16
 }
 
 func (q *Queries) ConfirmTOTPEnrollment(ctx context.Context, arg ConfirmTOTPEnrollmentParams) (int64, error) {
-	result, err := q.db.Exec(ctx, confirmTOTPEnrollment, arg.UserID, arg.EnabledAt, arg.LastUsedStep)
+	result, err := q.db.Exec(ctx, confirmTOTPEnrollment,
+		arg.Now,
+		arg.AcceptedStep,
+		arg.UserID,
+		arg.ExpectedSecretNonce,
+		arg.ExpectedSecretCiphertext,
+		arg.ExpectedEncryptionVersion,
+	)
 	if err != nil {
 		return 0, err
 	}

@@ -55,6 +55,8 @@ func mapError(w http.ResponseWriter, r *http.Request, err error) {
 		WriteError(w, r, http.StatusGone, "TOTP_CHALLENGE_EXPIRED", "totp challenge expired")
 	case errors.Is(err, ErrTOTPAlreadyEnabled):
 		WriteError(w, r, http.StatusConflict, "TOTP_ALREADY_ENABLED", "totp is already enabled")
+	case errors.Is(err, ErrTOTPEnrollmentChanged):
+		WriteError(w, r, http.StatusConflict, "TOTP_ENROLLMENT_CHANGED", "totp enrollment changed; start again")
 	case errors.Is(err, ErrTOTPNotEnabled):
 		WriteError(w, r, http.StatusNotFound, "TOTP_NOT_ENROLLED", "totp is not enrolled")
 	case errors.Is(err, ErrForbidden):

@@ -3,8 +3,10 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -41,6 +43,22 @@ type totpHarness struct {
 	cipher  *TOTPCipher
 	csrf    *CSRF
 	clock   *stepClock
+}
+
+type blockingGetTOTPRepository struct {
+	Repository
+	once        sync.Once
+	readReached chan struct{}
+	resume      chan struct{}
+}
+
+func (r *blockingGetTOTPRepository) GetUserTOTP(ctx context.Context, userID uuid.UUID) (UserTOTP, error) {
+	row, err := r.Repository.GetUserTOTP(ctx, userID)
+	r.once.Do(func() {
+		close(r.readReached)
+		<-r.resume
+	})
+	return row, err
 }
 
 func newTOTPHarness(t *testing.T) totpHarness {
@@ -430,6 +448,110 @@ func TestConcurrentTOTPEnrollmentConfirmationHasOneWinner(t *testing.T) {
 	}
 	if enabledCount != 1 || lastStep != h.clock.Now().Unix()/TOTPPeriodSeconds {
 		t.Fatalf("enabled=%d lastStep=%d", enabledCount, lastStep)
+	}
+}
+
+func TestTOTPEnrollmentStaleConfirmationCannotEnableReplacement(t *testing.T) {
+	h := newTOTPHarness(t)
+	user := h.createUser(t, "stale-enrollment-user", false)
+	headers := h.sessionFor(t, user)
+	rawToken := strings.TrimPrefix(headers["Cookie"], "relayshelf_session=")
+	actor, err := h.service.Authenticate(context.Background(), rawToken, false, netip.MustParseAddr("192.0.2.10"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	enrollmentA, err := h.service.StartTOTPEnrollment(context.Background(), actor, user.password, LoginInput{ClientIP: netip.MustParseAddr("192.0.2.10")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretA, err := DecodeTOTPSecret(enrollmentA.Secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	blockingRepo := &blockingGetTOTPRepository{
+		Repository:  h.service.repo,
+		readReached: make(chan struct{}),
+		resume:      make(chan struct{}),
+	}
+	confirmService := NewService(blockingRepo, h.service.hasher, h.service.ids, h.clock, h.service.limiter, h.cipher)
+	confirmResult := make(chan error, 1)
+	go func() {
+		confirmResult <- confirmService.ConfirmTOTPEnrollment(context.Background(), actor, h.code(secretA), LoginInput{ClientIP: netip.MustParseAddr("192.0.2.10")})
+	}()
+
+	select {
+	case <-blockingRepo.readReached:
+	case <-time.After(5 * time.Second):
+		close(blockingRepo.resume)
+		t.Fatal("confirmation did not reach the post-read barrier")
+	}
+
+	enrollmentB, err := h.service.StartTOTPEnrollment(context.Background(), actor, user.password, LoginInput{ClientIP: netip.MustParseAddr("192.0.2.10")})
+	if err != nil {
+		close(blockingRepo.resume)
+		t.Fatal(err)
+	}
+	secretB, err := DecodeTOTPSecret(enrollmentB.Secret)
+	if err != nil {
+		close(blockingRepo.resume)
+		t.Fatal(err)
+	}
+	var bCiphertext, bNonce []byte
+	var bVersion int16
+	var pendingEnabledAt *time.Time
+	if err = h.pool.QueryRow(context.Background(), `SELECT secret_ciphertext,secret_nonce,secret_encryption_version,enabled_at FROM user_totp WHERE user_id=$1`, user.id).Scan(&bCiphertext, &bNonce, &bVersion, &pendingEnabledAt); err != nil {
+		close(blockingRepo.resume)
+		t.Fatal(err)
+	}
+	if pendingEnabledAt != nil {
+		close(blockingRepo.resume)
+		t.Fatalf("replacement enrollment was prematurely enabled at %v", pendingEnabledAt)
+	}
+
+	close(blockingRepo.resume)
+	select {
+	case err = <-confirmResult:
+	case <-time.After(5 * time.Second):
+		t.Fatal("stale confirmation did not finish")
+	}
+	if !errors.Is(err, ErrTOTPEnrollmentChanged) {
+		t.Fatalf("stale confirmation error=%v", err)
+	}
+
+	var actualCiphertext, actualNonce []byte
+	var actualVersion int16
+	var enabledAt *time.Time
+	var lastStep *int64
+	var failedAttempts int
+	if err = h.pool.QueryRow(context.Background(), `SELECT secret_ciphertext,secret_nonce,secret_encryption_version,enabled_at,last_used_step,failed_attempts FROM user_totp WHERE user_id=$1`, user.id).Scan(&actualCiphertext, &actualNonce, &actualVersion, &enabledAt, &lastStep, &failedAttempts); err != nil {
+		t.Fatal(err)
+	}
+	if enabledAt != nil || lastStep != nil || failedAttempts != 0 {
+		t.Fatalf("stale confirmation mutated replacement: enabledAt=%v lastStep=%v failedAttempts=%d", enabledAt, lastStep, failedAttempts)
+	}
+	if !bytes.Equal(actualCiphertext, bCiphertext) || !bytes.Equal(actualNonce, bNonce) || actualVersion != bVersion {
+		t.Fatal("stale confirmation changed replacement enrollment identity")
+	}
+	var confirmedAudits int
+	if err = h.pool.QueryRow(context.Background(), `SELECT count(*) FROM audit_logs WHERE actor_user_id=$1 AND event_type='TOTP_ENROLLMENT_CONFIRMED'`, user.id).Scan(&confirmedAudits); err != nil {
+		t.Fatal(err)
+	}
+	if confirmedAudits != 0 {
+		t.Fatalf("stale confirmation emitted %d confirmed audit events", confirmedAudits)
+	}
+
+	if err = h.service.ConfirmTOTPEnrollment(context.Background(), actor, h.code(secretB), LoginInput{ClientIP: netip.MustParseAddr("192.0.2.10")}); err != nil {
+		t.Fatalf("confirm replacement enrollment: %v", err)
+	}
+	var confirmedAt *time.Time
+	var acceptedStep int64
+	if err = h.pool.QueryRow(context.Background(), `SELECT enabled_at,last_used_step FROM user_totp WHERE user_id=$1`, user.id).Scan(&confirmedAt, &acceptedStep); err != nil {
+		t.Fatal(err)
+	}
+	if confirmedAt == nil || acceptedStep != h.clock.Now().Unix()/TOTPPeriodSeconds {
+		t.Fatalf("replacement confirmation enabledAt=%v acceptedStep=%d", confirmedAt, acceptedStep)
 	}
 }
 

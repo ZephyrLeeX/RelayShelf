@@ -15,6 +15,7 @@ var (
 	ErrTOTPRequired           = errors.New("totp required")
 	ErrTOTPChallengeExpired   = errors.New("totp challenge expired")
 	ErrTOTPAlreadyEnabled     = errors.New("totp already enabled")
+	ErrTOTPEnrollmentChanged  = errors.New("totp enrollment changed")
 	ErrTOTPNotEnabled         = errors.New("totp not enabled")
 	ErrCryptoKey              = errors.New("crypto key error")
 )

@@ -74,6 +74,15 @@ type CompleteTOTPLoginCommand struct {
 	ClientIP          netip.Addr
 }
 
+type ConfirmTOTPEnrollmentCommand struct {
+	UserID                    uuid.UUID
+	ExpectedSecretNonce       []byte
+	ExpectedSecretCiphertext  []byte
+	ExpectedEncryptionVersion int16
+	AcceptedStep              int64
+	Now                       time.Time
+}
+
 // totpEnabled reports whether the user must complete a second factor.
 func (s *Service) totpEnabled(ctx context.Context, userID uuid.UUID) (UserTOTP, bool, error) {
 	row, err := s.repo.GetUserTOTP(ctx, userID)
@@ -302,12 +311,19 @@ func (s *Service) ConfirmTOTPEnrollment(ctx context.Context, actor Authenticatio
 		_ = s.repo.RecordTOTPFailure(ctx, actor.User.ID, now, MaxTOTPFailedAttempts, now.Add(TOTPLockoutDuration))
 		return ErrTOTPCodeInvalid
 	}
-	confirmed, err := s.repo.ConfirmTOTPEnrollment(ctx, actor.User.ID, acceptedStep, now)
+	confirmed, err := s.repo.ConfirmTOTPEnrollment(ctx, ConfirmTOTPEnrollmentCommand{
+		UserID:                    actor.User.ID,
+		ExpectedSecretNonce:       append([]byte(nil), row.SecretNonce...),
+		ExpectedSecretCiphertext:  append([]byte(nil), row.SecretCiphertext...),
+		ExpectedEncryptionVersion: row.SecretEncryptionVersion,
+		AcceptedStep:              acceptedStep,
+		Now:                       now,
+	})
 	if err != nil {
 		return err
 	}
 	if !confirmed {
-		return ErrTOTPAlreadyEnabled
+		return ErrTOTPEnrollmentChanged
 	}
 	s.recordTOTPAudit(ctx, audit.EventTOTPEnrollmentConfirmed, actor, input)
 	return nil

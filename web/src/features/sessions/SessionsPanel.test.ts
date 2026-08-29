@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { nextTick } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { DefaultService, TOTPEnrollmentPending } from '@/api/generated'
+import { ApiError, DefaultService, TOTPEnrollmentPending } from '@/api/generated'
 import { useAuthStore } from '@/features/auth/store'
 import SessionsPanel from './SessionsPanel.vue'
 
@@ -48,6 +48,39 @@ describe('TOTP enrollment re-authentication', () => {
     expect(start).toHaveBeenCalledWith({ currentPassword: 'TOTP_ENROLL_PASSWORD_SENTINEL' })
     expect((wrapper.vm as unknown as { enrollmentPassword: string }).enrollmentPassword).toBe('')
     expect(wrapper.findAll('input[type="password"]')).toHaveLength(2)
+    wrapper.unmount()
+  })
+
+  it('clears stale enrollment material and requires a fresh password after a rotation conflict', async () => {
+    vi.spyOn(DefaultService, 'startTotpEnrollment').mockResolvedValue({
+      secret: 'ABCDEFGHIJKLMNOPQRSTUVWX23456789',
+      otpauthUrl: 'otpauth://totp/RelayShelf%3Aalice',
+      digits: TOTPEnrollmentPending.digits._6,
+      periodSeconds: TOTPEnrollmentPending.periodSeconds._30,
+      algorithm: TOTPEnrollmentPending.algorithm.SHA1,
+    })
+    vi.spyOn(DefaultService, 'confirmTotpEnrollment').mockRejectedValue(new ApiError(
+      {} as never,
+      { url: '/auth/totp/confirm', ok: false, status: 409, statusText: 'Conflict', body: { code: 'TOTP_ENROLLMENT_CHANGED', message: 'changed' } },
+      'Conflict',
+    ))
+    const wrapper = await render()
+    const passwordInput = wrapper.findAll('input[type="password"]').at(-1)
+    if (!passwordInput) throw new Error('TOTP enrollment password input missing')
+    await passwordInput.setValue('TOTP_ENROLL_PASSWORD_SENTINEL')
+    await wrapper.findAll('button').find((item) => item.text().includes('开始启用'))!.trigger('click')
+    await flushPromises()
+    const codeInput = wrapper.find('input[inputmode="numeric"]')
+    await codeInput.setValue('123456')
+    await wrapper.findAll('button').find((item) => item.text().includes('确认并启用'))!.trigger('click')
+    await flushPromises()
+
+    const state = wrapper.vm as unknown as { pendingEnrollment: unknown; totpCode: string; enrollmentPassword: string }
+    expect(state.pendingEnrollment).toBeNull()
+    expect(state.totpCode).toBe('')
+    expect(state.enrollmentPassword).toBe('')
+    expect(wrapper.text()).toContain('两步验证设置已更新，请重新开始启用。')
+    expect(wrapper.findAll('input[type="password"]')).toHaveLength(3)
     wrapper.unmount()
   })
 })

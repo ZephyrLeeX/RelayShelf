@@ -12,6 +12,7 @@ export const apiCodes = {
   totpInvalid: 'TOTP_INVALID',
   totpChallengeExpired: 'TOTP_CHALLENGE_EXPIRED',
   totpAlreadyEnabled: 'TOTP_ALREADY_ENABLED',
+  totpEnrollmentChanged: 'TOTP_ENROLLMENT_CHANGED',
   totpNotEnrolled: 'TOTP_NOT_ENROLLED',
   recipientUnavailable: 'RECIPIENT_UNAVAILABLE',
 } as const

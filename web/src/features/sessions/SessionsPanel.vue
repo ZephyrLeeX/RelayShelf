@@ -26,7 +26,15 @@ const enroll = useMutation({
 const confirmEnrollment = useMutation({
   mutationFn: () => DefaultService.confirmTotpEnrollment({ code: totpCode.value.trim() }),
   onSuccess: () => { pendingEnrollment.value = null; totpCode.value = ''; void totp.refetch() },
-  onError: (cause) => { error.value = totpMessage(cause, '验证码错误。') },
+  onError: (cause) => {
+    if (toApiError(cause).code === apiCodes.totpEnrollmentChanged) {
+      pendingEnrollment.value = null
+      totpCode.value = ''
+      error.value = '两步验证设置已更新，请重新开始启用。'
+      return
+    }
+    error.value = totpMessage(cause, '验证码错误。')
+  },
 })
 const disableTotp = useMutation({
   mutationFn: () => DefaultService.disableTotp({ code: totpCode.value.trim() }),

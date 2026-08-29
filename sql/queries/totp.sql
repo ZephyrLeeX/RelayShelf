@@ -21,12 +21,17 @@ WHERE user_totp.enabled_at IS NULL;
 
 -- name: ConfirmTOTPEnrollment :execrows
 UPDATE user_totp
-SET enabled_at = $2,
-    last_used_step = $3,
+SET enabled_at = sqlc.arg(now),
+    last_used_step = sqlc.arg(accepted_step),
     failed_attempts = 0,
     locked_until = NULL,
-    updated_at = $2
-WHERE user_id = $1 AND enabled_at IS NULL;
+    updated_at = sqlc.arg(now)
+WHERE user_id = sqlc.arg(user_id)
+  AND enabled_at IS NULL
+  -- Confirmation is compare-and-swap against the exact pending enrollment that supplied the validated secret.
+  AND secret_nonce = sqlc.arg(expected_secret_nonce)
+  AND secret_ciphertext = sqlc.arg(expected_secret_ciphertext)
+  AND secret_encryption_version = sqlc.arg(expected_encryption_version);
 
 -- name: DeleteUserTOTP :execrows
 DELETE FROM user_totp WHERE user_id = $1 AND enabled_at IS NOT NULL;

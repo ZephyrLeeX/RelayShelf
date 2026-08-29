@@ -44,7 +44,7 @@ type Repository interface {
 	Audit(context.Context, AuditEvent) error
 	GetUserTOTP(context.Context, uuid.UUID) (UserTOTP, error)
 	UpsertPendingTOTP(context.Context, UserTOTP, uuid.UUID, time.Time) (bool, error)
-	ConfirmTOTPEnrollment(context.Context, uuid.UUID, int64, time.Time) (bool, error)
+	ConfirmTOTPEnrollment(context.Context, ConfirmTOTPEnrollmentCommand) (bool, error)
 	DeleteUserTOTP(context.Context, uuid.UUID) (bool, error)
 	RecordTOTPFailure(context.Context, uuid.UUID, time.Time, int, time.Time) error
 	CreateTOTPChallenge(context.Context, TOTPChallengeRow, []byte) error
@@ -238,8 +238,15 @@ func (r *PostgreSQLRepository) UpsertPendingTOTP(ctx context.Context, enrollment
 	return n > 0, err
 }
 
-func (r *PostgreSQLRepository) ConfirmTOTPEnrollment(ctx context.Context, userID uuid.UUID, acceptedStep int64, now time.Time) (bool, error) {
-	n, err := r.q.ConfirmTOTPEnrollment(ctx, generated.ConfirmTOTPEnrollmentParams{UserID: pgu(userID), EnabledAt: pgt(now), LastUsedStep: pgtype.Int8{Int64: acceptedStep, Valid: true}})
+func (r *PostgreSQLRepository) ConfirmTOTPEnrollment(ctx context.Context, command ConfirmTOTPEnrollmentCommand) (bool, error) {
+	n, err := r.q.ConfirmTOTPEnrollment(ctx, generated.ConfirmTOTPEnrollmentParams{
+		Now:                       pgt(command.Now),
+		AcceptedStep:              pgtype.Int8{Int64: command.AcceptedStep, Valid: true},
+		UserID:                    pgu(command.UserID),
+		ExpectedSecretNonce:       append([]byte(nil), command.ExpectedSecretNonce...),
+		ExpectedSecretCiphertext:  append([]byte(nil), command.ExpectedSecretCiphertext...),
+		ExpectedEncryptionVersion: command.ExpectedEncryptionVersion,
+	})
 	return n > 0, err
 }
 

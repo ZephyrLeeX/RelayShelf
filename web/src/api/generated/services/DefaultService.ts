@@ -152,6 +152,7 @@ export class DefaultService {
                 401: `API error`,
                 403: `API error`,
                 404: `API error`,
+                409: `API error`,
                 429: `API error`,
             },
         });

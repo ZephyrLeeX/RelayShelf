@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -148,12 +149,18 @@ func (m *memoryRepo) UpsertPendingTOTP(_ context.Context, enrollment UserTOTP, _
 	m.totp = &enrollment
 	return true, nil
 }
-func (m *memoryRepo) ConfirmTOTPEnrollment(_ context.Context, user uuid.UUID, step int64, at time.Time) (bool, error) {
+func (m *memoryRepo) ConfirmTOTPEnrollment(_ context.Context, command ConfirmTOTPEnrollmentCommand) (bool, error) {
 	if m.totp == nil || m.totp.EnabledAt != nil {
 		return false, nil
 	}
-	m.totp.EnabledAt = &at
-	m.totp.LastUsedStep = &step
+	if m.totp.UserID != command.UserID ||
+		!bytes.Equal(m.totp.SecretNonce, command.ExpectedSecretNonce) ||
+		!bytes.Equal(m.totp.SecretCiphertext, command.ExpectedSecretCiphertext) ||
+		m.totp.SecretEncryptionVersion != command.ExpectedEncryptionVersion {
+		return false, nil
+	}
+	m.totp.EnabledAt = &command.Now
+	m.totp.LastUsedStep = &command.AcceptedStep
 	m.totp.FailedAttempts = 0
 	m.totp.LockedUntil = nil
 	return true, nil
