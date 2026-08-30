@@ -1,0 +1,97 @@
+<script setup lang="ts">
+import { onMounted, onUnmounted } from 'vue'
+import { useAuthStore } from '@/features/auth/store'
+import { useTagsQuery } from '@/features/tags/queries'
+import AccountButton from './AccountButton.vue'
+import ThemeToggle from './ThemeToggle.vue'
+
+const emit = defineEmits<{ close: [], openSessions: [], logout: [] }>()
+const auth = useAuthStore()
+const tags = useTagsQuery()
+function onKey(event: KeyboardEvent) { if (event.key === 'Escape') emit('close') }
+onMounted(() => document.addEventListener('keydown', onKey))
+onUnmounted(() => document.removeEventListener('keydown', onKey))
+</script>
+
+<template>
+  <Teleport to="body">
+    <div
+      class="more-backdrop"
+      @click.self="emit('close')"
+    >
+      <section
+        class="more-sheet panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="more-title"
+      >
+        <div class="grab" /><header>
+          <h2 id="more-title">
+            我的
+          </h2><button
+            type="button"
+            aria-label="关闭"
+            @click="emit('close')"
+          >
+            ×
+          </button>
+        </header>
+        <AccountButton
+          :name="auth.user?.displayName || auth.user?.username"
+          :device="auth.device?.name"
+          @open="emit('openSessions')"
+        />
+        <nav aria-label="我的菜单">
+          <button
+            type="button"
+            @click="emit('openSessions')"
+          >
+            设备与会话
+          </button>
+          <RouterLink
+            to="/favorites"
+            @click="emit('close')"
+          >
+            收藏
+          </RouterLink>
+          <RouterLink
+            to="/trash"
+            @click="emit('close')"
+          >
+            回收站
+          </RouterLink>
+          <RouterLink
+            v-for="tag in tags.data.value"
+            :key="tag.id"
+            :to="`/tags/${tag.id}`"
+            @click="emit('close')"
+          >
+            <i :style="{ backgroundColor:tag.color }" />{{ tag.name }}
+          </RouterLink>
+          <RouterLink
+            v-if="auth.user?.isAdmin"
+            to="/admin"
+            @click="emit('close')"
+          >
+            管理
+          </RouterLink>
+        </nav>
+        <div class="theme-row">
+          <span>外观</span><ThemeToggle />
+        </div>
+        <button
+          class="logout"
+          type="button"
+          @click="emit('logout')"
+        >
+          退出登录
+        </button>
+      </section>
+    </div>
+  </Teleport>
+</template>
+
+<style scoped>
+.more-backdrop{position:fixed;inset:0;z-index:60;display:none;align-items:flex-end;padding:1rem;background:var(--surface-overlay)}.more-sheet{width:min(100%,560px);max-height:min(78vh,680px);margin:0 auto;padding:.55rem 1rem 1rem;overflow:auto;border-radius:var(--radius-lg)}.grab{width:38px;height:4px;margin:.1rem auto .55rem;border-radius:999px;background:var(--border-strong)}header{display:flex;align-items:center;justify-content:space-between}h2{margin:.3rem 0;font-size:1.1rem}header button{width:40px;height:40px;border:0;background:transparent;font-size:1.3rem}nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.4rem;padding:1rem 0;border-top:1px solid var(--border-default);border-bottom:1px solid var(--border-default)}nav a,nav button{display:flex;align-items:center;gap:.5rem;min-height:44px;padding:.55rem .7rem;border:0;border-radius:var(--radius-sm);background:var(--surface-soft);text-decoration:none;font-size:.8rem}nav i{width:.5rem;height:.5rem;border-radius:50%}.theme-row{display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding:1rem 0}.theme-row>span{font-size:.78rem;color:var(--text-secondary)}.logout{width:100%;min-height:44px;border:0;border-radius:var(--radius-sm);background:transparent;color:var(--state-danger)}
+@media(max-width:1179px){.more-backdrop{display:flex}}@media(prefers-reduced-motion:no-preference){.more-sheet{animation:sheet-in .16s ease-out}@keyframes sheet-in{from{transform:translateY(18px);opacity:.8}}}
+</style>
