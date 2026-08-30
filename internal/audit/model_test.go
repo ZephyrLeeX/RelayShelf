@@ -15,6 +15,7 @@ func TestPhase10MetadataIsExplicitlyAllowlisted(t *testing.T) {
 		UserDisabled(Actor{}, uuid.Must(uuid.NewV7())),
 		UserPasswordReset(Actor{}, uuid.Must(uuid.NewV7())),
 		UserDeleted(Actor{}, uuid.Must(uuid.NewV7()), "alice"),
+		InitialAdminBootstrapped(uuid.Must(uuid.NewV7()), "initial-admin"),
 	}
 	for _, event := range events {
 		encoded, err := json.Marshal(event.metadata)
@@ -27,6 +28,17 @@ func TestPhase10MetadataIsExplicitlyAllowlisted(t *testing.T) {
 				t.Fatalf("event=%s metadata=%s contains %q", event.Type, text, forbidden)
 			}
 		}
+	}
+}
+
+func TestInitialAdminBootstrapUsesSystemActor(t *testing.T) {
+	target := uuid.Must(uuid.NewV7())
+	event := InitialAdminBootstrapped(target, "initial-admin")
+	if event.Type != EventInitialAdminBootstrapped || event.TargetType != "USER" || event.TargetID != target {
+		t.Fatalf("event shape changed: %+v", event)
+	}
+	if event.Actor.UserID != uuid.Nil || event.Actor.DeviceID != uuid.Nil || event.Actor.SessionID != uuid.Nil || event.Actor.IP.IsValid() || event.Actor.UserAgent != "" || event.Actor.TraceID != "" {
+		t.Fatalf("bootstrap event fabricated an actor: %+v", event.Actor)
 	}
 }
 

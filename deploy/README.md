@@ -138,6 +138,57 @@ curl --fail http://<debian-vm-ip>:8080/health/ready
 
 不要在这些命令中放入凭据。密钥只能从受保护的环境文件中读取。
 
+## 首次管理员初始化
+
+全新数据库迁移完成后不会自动生成账号。首次管理员必须由生产运维人员通过
+容器内的本地 CLI 明确创建；该能力没有公网 HTTP endpoint，也不会由
+`install.sh`、`upgrade.sh`、应用启动或 migration 自动触发。
+
+`admin bootstrap` 只在 `users` 表完全为空时可用。只要存在任何用户行（包括
+禁用用户或非管理员），命令就会拒绝执行；没有 `--force`、覆盖、密码重置或
+权限提升入口。命令会先要求数据库 schema 与当前二进制完全兼容，再以单个
+事务完成空表检查、首管理员创建和 system/bootstrap 审计。创建出的用户固定为
+`ACTIVE` 且 `is_admin=true`。
+
+以下是 v0.1.3 正式发布后的生产 runbook。**这些命令只在生产机执行，不得在
+开发环境执行。** 首先确认 PostgreSQL 和 `APP_ENCRYPTION_KEY` 的异机备份均可用，
+然后升级到精确发布镜像：
+
+```bash
+sudo ./deploy/scripts/upgrade.sh \
+  --image ghcr.io/zephyrleex/relayshelf:0.1.3 \
+  --backup-confirmed
+
+sudo podman exec relayshelf-app /relayshelf version
+sudo podman exec relayshelf-app /relayshelf healthcheck
+```
+
+随后使用交互式 TTY 创建首管理员。用户名会按正常用户创建规则规范化；密码和
+确认密码由终端无回显读取，绝不能作为 argv、环境变量或日志内容传入：
+
+```bash
+sudo podman exec -it relayshelf-app \
+  /relayshelf admin bootstrap \
+  --username <username> \
+  --display-name "<display-name>"
+```
+
+成功后通过正式 HTTPS Origin 正常登录，在 RelayShelf UI/API 中完成并确认 TOTP
+注册，再继续 TLS、反向代理及其他资格验证。bootstrap 不会生成或显示 TOTP
+secret，也不会设置 `RELAYSHELF_TLS_TERMINATION_CONFIRMED` 或
+`RELAYSHELF_PROXY_CONFIG_CONFIRMED`。因此首管理员创建后、TOTP 尚未确认时，
+`security check` 仍应以“active administrator has not confirmed TOTP”失败；完成
+TOTP 且运维证明项真实满足后，才运行：
+
+```bash
+sudo podman exec relayshelf-app /relayshelf security check
+```
+
+若命令报告已有用户，禁止删除、修改或手工提升现有数据来重开 bootstrap；应按
+正常的已认证管理员流程处理账号，或停止操作并调查数据库来源。若报告 schema
+不兼容，应先使用既有升级/migration authority 修复版本关系，bootstrap 本身不会
+执行 migration。
+
 ## OpenWrt nginx
 
 将 `nginx/openwrt-relayshelf.conf` 复制到 OpenWrt nginx 配置中，并替换

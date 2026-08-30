@@ -118,6 +118,12 @@ func main() {
 		securityCheck()
 		return
 	}
+	if command == "admin" && len(os.Args) > 2 && os.Args[2] == "bootstrap" {
+		if code := adminBootstrap(context.Background(), os.Args[3:], os.Stdout, os.Stderr, newTerminalPasswordReader(os.Stdin, os.Stderr)); code != 0 {
+			os.Exit(code)
+		}
+		return
+	}
 	if command == "version" {
 		info := buildinfo.Current()
 		log.Printf("RelayShelf %s (commit %s, built %s)", info.Version, info.GitCommit, info.BuildTime)
@@ -318,7 +324,7 @@ func main() {
 			log.Printf("background shutdown deadline reached")
 		}
 	default:
-		log.Printf("unknown command %q (use serve, migrate, migrate status, storage check, config check, healthcheck, security check, or version)", command)
+		log.Printf("unknown command %q (use serve, migrate, migrate status, storage check, config check, healthcheck, security check, admin bootstrap, or version)", command)
 		os.Exit(2)
 	}
 }

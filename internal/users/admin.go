@@ -84,15 +84,8 @@ func (s *AdminService) List(ctx context.Context, filter ListFilter) (Page, error
 }
 
 func (s *AdminService) Create(ctx context.Context, actor audit.Actor, username, displayName, password string, isAdmin bool) (User, error) {
-	normalized, err := NormalizeUsername(username)
+	normalized, displayName, err := validateNewUser(username, displayName, password)
 	if err != nil {
-		return User{}, err
-	}
-	displayName = strings.TrimSpace(displayName)
-	if utf8.RuneCountInString(displayName) < 1 || utf8.RuneCountInString(displayName) > MaxDisplayNameRunes {
-		return User{}, ErrInvalidUsername
-	}
-	if err = ValidatePassword(password); err != nil {
 		return User{}, err
 	}
 	hash, err := s.hash.Hash(password)
@@ -122,6 +115,74 @@ func (s *AdminService) Create(ctx context.Context, actor audit.Actor, username, 
 	}
 	user.PasswordHash = ""
 	return user, nil
+}
+
+// BootstrapInitialAdmin creates the only user permitted by the unauthenticated
+// local bootstrap authority. The table lock and empty-table check occur in the
+// same transaction as the insert and audit record, so every user writer is
+// serialized across the zero-user boundary.
+func (s *AdminService) BootstrapInitialAdmin(ctx context.Context, username, displayName, password string) (User, error) {
+	normalized, displayName, err := validateNewUser(username, displayName, password)
+	if err != nil {
+		return User{}, err
+	}
+	hash, err := s.hash.Hash(password)
+	if err != nil {
+		return User{}, err
+	}
+	userID, err := s.ids.New()
+	if err != nil {
+		return User{}, err
+	}
+	now := s.clock.Now()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return User{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// SHARE ROW EXCLUSIVE conflicts with the ROW EXCLUSIVE lock taken by
+	// INSERT/UPDATE/DELETE and with itself. Once acquired, no user row can be
+	// inserted between the emptiness check and this transaction's commit.
+	if _, err = tx.Exec(ctx, `LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+		return User{}, err
+	}
+	var usersExist bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users)`).Scan(&usersExist); err != nil {
+		return User{}, err
+	}
+	if usersExist {
+		return User{}, ErrBootstrapUnavailable
+	}
+
+	var user User
+	err = tx.QueryRow(ctx, `INSERT INTO users(id,username,display_name,password_hash,is_admin,status,created_at,updated_at) VALUES($1,$2,$3,$4,true,'ACTIVE',$5,$5) RETURNING id,username,display_name,password_hash,is_admin,status,created_at,updated_at`, userID, normalized, displayName, hash, now).Scan(&user.ID, &user.Username, &user.DisplayName, &user.PasswordHash, &user.IsAdmin, &user.Status, &user.CreatedAt, &user.UpdatedAt)
+	if err != nil {
+		return User{}, adminTranslate(err)
+	}
+	if err = s.recorder.Record(ctx, tx, audit.InitialAdminBootstrapped(user.ID, user.Username)); err != nil {
+		return User{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return User{}, err
+	}
+	user.PasswordHash = ""
+	return user, nil
+}
+
+func validateNewUser(username, displayName, password string) (string, string, error) {
+	normalized, err := NormalizeUsername(username)
+	if err != nil {
+		return "", "", err
+	}
+	displayName = strings.TrimSpace(displayName)
+	if utf8.RuneCountInString(displayName) < 1 || utf8.RuneCountInString(displayName) > MaxDisplayNameRunes {
+		return "", "", ErrInvalidUsername
+	}
+	if err = ValidatePassword(password); err != nil {
+		return "", "", err
+	}
+	return normalized, displayName, nil
 }
 
 func (s *AdminService) Disable(ctx context.Context, actor audit.Actor, userID uuid.UUID) error {

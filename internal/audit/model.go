@@ -10,13 +10,14 @@ import (
 type EventType string
 
 const (
-	EventRuntimeSettingsUpdated  EventType = "RUNTIME_SETTINGS_UPDATED"
-	EventUserCreated             EventType = "USER_CREATED"
-	EventUserDisabled            EventType = "USER_DISABLED"
-	EventUserPasswordReset       EventType = "USER_PASSWORD_RESET"
-	EventUserDeleted             EventType = "USER_DELETED"
-	EventTOTPEnrollmentConfirmed EventType = "TOTP_ENROLLMENT_CONFIRMED"
-	EventTOTPDisabled            EventType = "TOTP_DISABLED"
+	EventRuntimeSettingsUpdated   EventType = "RUNTIME_SETTINGS_UPDATED"
+	EventUserCreated              EventType = "USER_CREATED"
+	EventUserDisabled             EventType = "USER_DISABLED"
+	EventUserPasswordReset        EventType = "USER_PASSWORD_RESET"
+	EventUserDeleted              EventType = "USER_DELETED"
+	EventTOTPEnrollmentConfirmed  EventType = "TOTP_ENROLLMENT_CONFIRMED"
+	EventTOTPDisabled             EventType = "TOTP_DISABLED"
+	EventInitialAdminBootstrapped EventType = "INITIAL_ADMIN_BOOTSTRAPPED"
 )
 
 type Actor struct {
@@ -42,6 +43,13 @@ func RuntimeSettingsUpdated(actor Actor, changedFields []string) Event {
 
 func UserCreated(actor Actor, target uuid.UUID, username string, isAdmin bool) Event {
 	return Event{Type: EventUserCreated, TargetType: "USER", TargetID: target, Actor: actor, metadata: map[string]any{"username": username, "isAdmin": isAdmin}}
+}
+
+// InitialAdminBootstrapped records the local operator bootstrap action. Its
+// empty Actor deliberately represents a system/bootstrap action: no
+// authenticated user, device, session, network address, or trace exists yet.
+func InitialAdminBootstrapped(target uuid.UUID, username string) Event {
+	return Event{Type: EventInitialAdminBootstrapped, TargetType: "USER", TargetID: target, metadata: map[string]any{"username": username, "isAdmin": true}}
 }
 
 func UserDisabled(actor Actor, target uuid.UUID) Event {
