@@ -1,0 +1,77 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate release version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG="${GITHUB_REF_NAME}"
+
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: $TAG" >&2
+            exit 1
+          fi
+
+          VERSION="${TAG#v}"
+          IMAGE="ghcr.io/zephyrleex/relayshelf:${VERSION}"
+          BUNDLE="relayshelf-deploy-${VERSION}.tar.gz"
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "bundle=${BUNDLE}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+
+      - name: Build authoritative release
+        run: |
+          ./deploy/scripts/build-release.sh \
+            "${{ steps.version.outputs.version }}" \
+            "${{ steps.version.outputs.image }}" \
+            "${{ steps.version.outputs.bundle }}"
+
+      - name: Verify production image
+        run: |
+          CONTAINER_RUNTIME=podman \
+            ./deploy/scripts/verify-image.sh \
+            "${{ steps.version.outputs.image }}"
+
+      - name: Login to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" |
+            podman login ghcr.io \
+              --username "${{ github.actor }}" \
+              --password-stdin
+
+      - name: Push production image
+        run: |
+          podman push "${{ steps.version.outputs.image }}"
+
+      - name: Upload deployment bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: relayshelf-deploy-${{ steps.version.outputs.version }}
+          path: ${{ steps.version.outputs.bundle }}
+          if-no-files-found: error
