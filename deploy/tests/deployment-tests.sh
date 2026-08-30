@@ -25,6 +25,8 @@ trap 'rm -f "$rendered"; rm -rf "$test_tmp_dir"' EXIT HUP INT TERM
 "$bundle_root/scripts/render-quadlet.sh" ghcr.io/example/relayshelf:0.12.0-test.1 192.0.2.10 "$rendered"
 grep -Fxq 'Image=ghcr.io/example/relayshelf:0.12.0-test.1' "$rendered" || fail "rendered image mismatch"
 grep -Fxq 'PublishPort=192.0.2.10:8080:8080' "$rendered" || fail "rendered LAN binding mismatch"
+grep -Fxq 'HealthCmd=["/relayshelf","healthcheck"]' "$rendered" || fail "rendered healthcheck is not shell-free exec form"
+! grep -Fq 'HealthCmd=/relayshelf healthcheck' "$rendered" || fail "rendered healthcheck regressed to shell form"
 ! grep -q '@@RELAYSHELF_IMAGE@@' "$rendered" || fail "render placeholder survived"
 expect_failure "$bundle_root/scripts/render-quadlet.sh" ghcr.io/example/relayshelf:0.12.0-test.1 0.0.0.0 "$rendered"
 
@@ -52,6 +54,8 @@ expect_failure "$bundle_root/libexec/relayshelf-host-storage-check" /tmp
 
 # Upgrade ordering and failure boundaries are release invariants.
 upgrade=$bundle_root/scripts/upgrade.sh
+grep -Fq '"$script_dir/render-quadlet.sh" "$image_ref" "$listen_address" "$rendered"' "$upgrade" ||
+  fail "upgrade does not render the candidate unit from the deployment authority"
 migrate_line=$(grep -n '"$image_ref" migrate;' "$upgrade" | cut -d: -f1)
 install_line=$(grep -n 'install -m 0644 "$rendered" /etc/containers/systemd/relayshelf-app.container' "$upgrade" | cut -d: -f1)
 [ -n "$migrate_line" ] && [ -n "$install_line" ] && [ "$migrate_line" -lt "$install_line" ] || fail "candidate unit can be installed before migration succeeds"

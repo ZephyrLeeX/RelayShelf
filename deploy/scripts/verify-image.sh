@@ -39,6 +39,9 @@ container_id=
 
 contents=$(tar -tf "$filesystem")
 echo "$contents" | grep -Eq '(^|/)relayshelf$' || die "RelayShelf binary missing from runtime image"
+if echo "$contents" | grep -Eq '^(\./)?bin/(ba)?sh$'; then
+  die "runtime image unexpectedly contains /bin/sh or /bin/bash"
+fi
 if echo "$contents" | grep -Eq '^(src|usr/local/go|go/bin|usr/bin/node|usr/bin/nodejs|usr/bin/pnpm|node_modules)(/|$)'; then
   die "runtime image contains a compiler, Node/pnpm, or source tree"
 fi

@@ -39,7 +39,7 @@ grep -Fxq 'NoNewPrivileges=true' "$app_template" || die "app container must prev
 grep -Fxq 'DropCapability=all' "$app_template" || die "app container must drop all capabilities"
 grep -Fxq 'Volume=/mnt/relayshelf:/storage:rw' "$app_template" || die "storage bind mount missing"
 grep -Fxq 'Volume=/var/lib/relayshelf/staging:/staging:rw' "$app_template" || die "staging bind mount missing"
-grep -Fxq 'HealthCmd=/relayshelf healthcheck' "$app_template" || die "app healthcheck missing"
+grep -Fxq 'HealthCmd=["/relayshelf","healthcheck"]' "$app_template" || die "app healthcheck must use shell-free exec form"
 grep -Fxq 'Notify=healthy' "$app_template" || die "app must notify systemd only after becoming healthy"
 grep -Fxq 'Notify=healthy' "$postgres_unit" || die "PostgreSQL must notify systemd only after becoming healthy"
 
@@ -82,6 +82,10 @@ QUADLET_UNIT_DIRS="$tmp_dir/quadlet" "$generator" --dryrun >"$generated"
 grep -Fq 'Requires=relayshelf-postgres.service' "$generated" || die "generated app unit does not require PostgreSQL service"
 grep -Fq -- '--network-alias relayshelf-postgres' "$generated" || die "generated PostgreSQL DNS alias missing"
 grep -Fq -- '--sdnotify=healthy' "$generated" || die "generated healthy startup notification missing"
+grep -Fq -- '--health-cmd "[\"/relayshelf\",\"healthcheck\"]"' "$generated" ||
+  die "generated app healthcheck is not the expected JSON exec form"
+! grep -Fq -- '--health-cmd "/relayshelf healthcheck"' "$generated" ||
+  die "generated app healthcheck would require /bin/sh -c"
 grep -Fq -- '--publish 192.0.2.10:8080:8080' "$generated" || die "generated app HTTP binding mismatch"
 ! grep -Fq -- '--publish 5432' "$generated" || die "generated PostgreSQL service publishes port 5432"
 echo "Quadlet generator verification: PASS"

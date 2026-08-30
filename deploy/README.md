@@ -30,6 +30,12 @@ sudo ./scripts/verify.sh
 `Notify=healthy` 还要求版本不低于 5.0.0。验证脚本会报告生成器版本；
 若不满足该版本契约，会在解析单元前直接失败。
 
+应用健康检查使用 JSON exec 形式 `HealthCmd=["/relayshelf","healthcheck"]`。
+Podman 会把普通字符串形式的多词健康检查交给 `/bin/sh -c`，而生产镜像是
+不含 shell 的 distroless 镜像。`Notify=healthy` 会等待上述 Podman 健康检查
+成功后才向 systemd 发出启动完成通知；验证脚本会检查 5.4.2 生成器最终产生的
+`--health-cmd` 参数仍是 JSON 数组，防止渲染或转义退化为 shell 形式。
+
 ## 目录布局与所有权
 
 ```text
