@@ -31,7 +31,7 @@ require_secure_file "$app_env"
 require_secure_file "$postgres_env"
 reject_placeholders "$app_env"
 reject_placeholders "$postgres_env"
-for command_name in podman systemctl findmnt install chown tar; do require_command "$command_name"; done
+for command_name in podman systemctl findmnt install chown tar curl; do require_command "$command_name"; done
 
 for target in \
   /etc/relayshelf/relayshelf.env \
@@ -72,5 +72,11 @@ podman run --rm --network relayshelf --env-file /etc/relayshelf/relayshelf.env "
 podman run --rm --user 65532:65532 --env STORAGE_ROOT=/storage --volume /mnt/relayshelf:/storage:rw "$image_ref" storage check
 systemctl start relayshelf-app.service
 podman exec --env RELAYSHELF_HEALTHCHECK_URL=http://127.0.0.1:8080/health/ready relayshelf-app /relayshelf healthcheck
+curl --fail --silent --show-error --max-time 10 "http://$listen_address:8080/health/live" >/dev/null ||
+  die "published HTTP endpoint $listen_address:8080 is unreachable after installation"
+curl --fail --silent --show-error --max-time 10 "http://$listen_address:8080/health/ready" >/dev/null ||
+  die "published HTTP endpoint $listen_address:8080 is not ready after installation"
+postgres_ports=$(podman port relayshelf-postgres)
+[ -z "$postgres_ports" ] || die "PostgreSQL unexpectedly publishes a host port: $postgres_ports"
 
 echo "RelayShelf installation complete. Configure OpenWrt and verify PUBLIC_ORIGIN before setting operator attestations."

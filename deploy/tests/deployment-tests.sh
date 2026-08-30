@@ -30,6 +30,20 @@ grep -Fxq 'HealthCmd=["/relayshelf","healthcheck"]' "$rendered" || fail "rendere
 ! grep -q '@@RELAYSHELF_IMAGE@@' "$rendered" || fail "render placeholder survived"
 expect_failure "$bundle_root/scripts/render-quadlet.sh" ghcr.io/example/relayshelf:0.12.0-test.1 0.0.0.0 "$rendered"
 
+# Rootful Podman cannot forward a published port through an internal network.
+# The deployment authority must therefore use one ordinary dedicated bridge,
+# publish only app TCP 8080, and publish no PostgreSQL port at all.
+network_unit=$bundle_root/quadlet/relayshelf.network
+postgres_unit=$bundle_root/quadlet/relayshelf-postgres.container
+grep -Fxq 'Driver=bridge' "$network_unit" || fail "network authority is not a bridge"
+! grep -Eq '^[[:space:]]*Internal[[:space:]]*=[[:space:]]*(true|yes|1)([[:space:]]|$)' "$network_unit" || fail "network authority still disables rootful port forwarding"
+[ "$(grep -c '^PublishPort=' "$bundle_root/quadlet/relayshelf-app.container.in")" -eq 1 ] || fail "app authority must have exactly one PublishPort"
+! grep -q '^PublishPort=' "$postgres_unit" || fail "PostgreSQL authority publishes a host port"
+bad_network=$test_tmp_dir/internal.network
+cp "$network_unit" "$bad_network"
+printf '%s\n' 'Internal=true' >>"$bad_network"
+expect_failure env RELAYSHELF_NETWORK_UNIT="$bad_network" "$bundle_root/scripts/verify.sh"
+
 # Fail before parsing units when CI accidentally supplies the old Ubuntu 24.04
 # generator that originally masked the Debian 13 production baseline.
 old_generator=$test_tmp_dir/podman-system-generator
@@ -56,10 +70,26 @@ expect_failure "$bundle_root/libexec/relayshelf-host-storage-check" /tmp
 upgrade=$bundle_root/scripts/upgrade.sh
 grep -Fq '"$script_dir/render-quadlet.sh" "$image_ref" "$listen_address" "$rendered"' "$upgrade" ||
   fail "upgrade does not render the candidate unit from the deployment authority"
+grep -Fq 'install -m 0644 "$bundle_root/quadlet/relayshelf.network" /etc/containers/systemd/relayshelf.network' "$upgrade" ||
+  fail "upgrade does not install the candidate network authority"
+grep -Fq 'podman network inspect --format '\''{{.Internal}}'\'' relayshelf' "$upgrade" ||
+  fail "upgrade does not inspect the existing network mode"
+stop_postgres_line=$(grep -n '^  systemctl stop relayshelf-postgres.service$' "$upgrade" | cut -d: -f1)
+remove_network_line=$(grep -n '^  if ! podman network rm relayshelf; then$' "$upgrade" | cut -d: -f1)
+start_network_line=$(grep -n '^  if ! systemctl start relayshelf-network.service; then$' "$upgrade" | cut -d: -f1)
+start_postgres_line=$(grep -n '^  if ! systemctl start relayshelf-postgres.service; then$' "$upgrade" | cut -d: -f1)
 migrate_line=$(grep -n '"$image_ref" migrate;' "$upgrade" | cut -d: -f1)
 install_line=$(grep -n 'install -m 0644 "$rendered" /etc/containers/systemd/relayshelf-app.container' "$upgrade" | cut -d: -f1)
+[ -n "$stop_postgres_line" ] && [ -n "$remove_network_line" ] && [ "$stop_postgres_line" -lt "$remove_network_line" ] || fail "upgrade can remove a network still used by PostgreSQL"
+[ -n "$start_network_line" ] && [ -n "$start_postgres_line" ] && [ "$remove_network_line" -lt "$start_network_line" ] && [ "$start_network_line" -lt "$start_postgres_line" ] || fail "replacement network startup order is unsafe"
+[ -n "$start_postgres_line" ] && [ -n "$migrate_line" ] && [ "$start_postgres_line" -lt "$migrate_line" ] || fail "migration can run before PostgreSQL is healthy on the replacement network"
 [ -n "$migrate_line" ] && [ -n "$install_line" ] && [ "$migrate_line" -lt "$install_line" ] || fail "candidate unit can be installed before migration succeeds"
 grep -Fq 'readiness failed' "$upgrade" || fail "readiness failure is not reported"
 grep -Fq 'previous.' "$upgrade" || fail "previous unit is not retained"
+grep -Fq 'backup_network_unit=' "$upgrade" || fail "previous network authority is not retained"
+grep -Fq 'restore_old_network' "$upgrade" || fail "pre-migration network failure has no rollback path"
+grep -Fq 'http://$listen_address:8080/health/live' "$upgrade" || fail "upgrade does not test the published endpoint"
+grep -Fq 'http://$listen_address:8080/health/ready' "$upgrade" || fail "upgrade does not test published readiness"
+grep -Fq 'podman port relayshelf-postgres' "$upgrade" || fail "upgrade does not check PostgreSQL host exposure"
 
 echo "RelayShelf deployment failure-policy tests: PASS"

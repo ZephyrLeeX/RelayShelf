@@ -9,7 +9,7 @@ OpenWrt nginx 负责外部 TLS 终止。Docker Compose 不是生产部署权威�
 
 - 具有固定 LAN 地址的 Debian 13 虚拟机，使用 cgroup v2、systemd、
   Podman/Quadlet >= 5.2.0（Debian 13 提供 5.4.2），并安装 `findmnt`、
-  NFS 客户端工具和 `openssl`；内存至少为 6 GiB。
+  NFS 客户端工具、`openssl` 和 `curl`；内存至少为 6 GiB。
 - 使用精确、完全限定且带 SemVer 标签的 RelayShelf 镜像，例如
   `<registry>/relayshelf:0.12.0`。拒绝 `latest` 和未限定的镜像名称。
 - 一个 NFSv4 导出，其 RelayShelf 目录允许 UID/GID 65532 写入。
@@ -36,6 +36,14 @@ Podman 会把普通字符串形式的多词健康检查交给 `/bin/sh -c`，而
 成功后才向 systemd 发出启动完成通知；验证脚本会检查 5.4.2 生成器最终产生的
 `--health-cmd` 参数仍是 JSON 数组，防止渲染或转义退化为 shell 形式。
 
+生产网络是 RelayShelf 专用的 rootful Podman managed bridge，但不是 Podman
+`--internal` 网络。Podman 5.4.2 的 rootful 端口转发不会为 internal 网络建立
+可工作的 published-port 数据路径，因此 `Internal=true` 与应用的
+`PublishPort=<debian-lan-ip>:8080:8080` 不兼容。网络隔离边界由专用 bridge、
+PostgreSQL 完全没有 `PublishPort`、应用只在 Debian LAN IP 发布 8080，以及
+宿主机防火墙只允许 OpenWrt/管理边界访问共同构成。不要把“专用 bridge”与
+Podman `--internal` 的禁止外部访问语义混为一谈。
+
 ## 目录布局与所有权
 
 ```text
@@ -57,7 +65,7 @@ UID/GID 65532 运行，并使用只读根文件系统。
 按实际环境填写的条目。请替换所有占位符：
 
 ```bash
-sudo apt-get install podman nfs-common util-linux openssl
+sudo apt-get install podman nfs-common util-linux openssl curl
 sudo install -d -m 0750 /mnt/relayshelf
 ```
 
@@ -124,8 +132,8 @@ sudo systemctl status relayshelf-postgres.service relayshelf-app.service
 sudo journalctl -u relayshelf-postgres.service -u relayshelf-app.service -f
 sudo podman exec relayshelf-app /relayshelf version
 sudo podman exec relayshelf-app /relayshelf healthcheck
-curl --fail http://127.0.0.1:8080/health/live
-curl --fail http://127.0.0.1:8080/health/ready
+curl --fail http://<debian-vm-ip>:8080/health/live
+curl --fail http://<debian-vm-ip>:8080/health/ready
 ```
 
 不要在这些命令中放入凭据。密钥只能从受保护的环境文件中读取。
@@ -162,13 +170,29 @@ sudo ./scripts/upgrade.sh \
 预检会检查 NFS 身份和能力、本地可用磁盘、精确的候选镜像及其元数据、
 完整配置、数据库可达性和迁移方向，以及明确的备份确认。只有所有检查
 通过后，脚本才会停止应用、运行候选二进制内嵌迁移、安装新镜像单元、
-重新启动并检查就绪状态。
+重新启动并检查就绪状态。若检测到 v0.1.1 的 `Internal=true` 网络，脚本还会：
+
+1. 备份 app 和 network Quadlet；
+2. 依次停止应用、PostgreSQL 和 network service；
+3. 安装新 network authority，删除没有容器占用的旧 Podman network，并重建
+   普通专用 bridge；
+4. 确认新网络 `Internal=false`，再启动 PostgreSQL 并等待其 healthy；
+5. 运行迁移、启动应用，并从宿主机请求已发布的 LAN 端口；
+6. 确认 `podman port relayshelf-postgres` 为空。
+
+Quadlet 不支持原地修改已有网络参数，所以仅执行 `daemon-reload` 不足以完成
+此次升级。网络重建要求 PostgreSQL 短暂停机，但不会删除或移动
+`/var/lib/relayshelf/postgres`，也不会触碰 `/mnt/relayshelf` 或环境文件。
+如果新网络在数据库迁移前创建失败，脚本会尝试恢复旧 network authority 和
+原服务；迁移失败后则保留已修复的网络、运行中的 PostgreSQL 和停止的旧应用，
+避免不受支持的数据库降级。
 
 迁移失败时，旧单元保持不变，应用保持停止。就绪检查失败会返回非零状态。
 旧镜像不会被删除，之前的应用单元会保留为：
 
 ```text
 /etc/containers/systemd/relayshelf-app.container.previous.<UTC timestamp>
+/etc/containers/systemd/relayshelf.network.previous.<UTC timestamp>
 ```
 
 ## 回滚
@@ -188,6 +212,10 @@ sudo podman exec --env RELAYSHELF_HEALTHCHECK_URL=http://127.0.0.1:8080/health/r
 ```
 
 故障响应期间，绝不能尝试手工执行 `psql` 模式补丁，也不能删除旧镜像。
+
+不要在正常回滚中恢复 v0.1.1 的 internal network：它会重新破坏宿主机端口
+转发。network 的 previous 副本只用于“新网络尚未建立、迁移尚未开始”时的
+故障恢复。
 
 ## 发布元数据与部署包创建
 
@@ -219,6 +247,34 @@ sudo podman exec --env RELAYSHELF_HEALTHCHECK_URL=http://127.0.0.1:8080/health/r
   `relayshelf storage check`；不要把空的本地挂载点当作业务存储。
 
 ## 参考环境资格验证
+
+GitHub Actions 的 deployment job 运行在非特权容器内，不能可靠执行 rootful
+Netavark/NAT 测试；Quadlet generator dry-run 也不等价于 runtime networking。
+仓库因此提供一个必须在 Debian 13 rootful Podman 参考机运行的最小 smoke test：
+
+```bash
+sudo ./tests/podman-network-smoke.sh
+```
+
+它创建临时普通 bridge 和 BusyBox HTTP 容器，把容器 8080 发布到宿主机
+`127.0.0.1:18080`，从宿主机请求并要求 HTTP 200，随后清理临时容器和网络。
+生产升级后还须执行：
+
+```bash
+sudo podman network inspect --format '{{.Internal}}' relayshelf
+curl --fail http://10.0.0.4:8080/health/live
+curl --fail http://10.0.0.4:8080/health/ready
+sudo podman exec relayshelf-app /relayshelf healthcheck
+sudo podman port relayshelf-postgres
+if sudo ss -ltnp | grep ':5432'; then
+  echo 'FAIL: PostgreSQL exposed'
+  exit 1
+fi
+```
+
+第一条必须输出 `false`，两个 curl 必须返回 HTTP 200，容器 healthcheck 必须
+PASS，`podman port relayshelf-postgres` 必须没有输出，`ss` 不得显示宿主机 5432
+监听。还要从 OpenWrt 对两个 LAN URL 重复 curl 验证。
 
 静态验证不能证明 Phase 12 退出门已通过。仍须在真实 Debian 13 虚拟机、
 rootful Podman/systemd Quadlet、PostgreSQL 17 本地持久化、NFSv4 NAS 和

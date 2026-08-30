@@ -18,18 +18,24 @@ version_at_least() {
   }'
 }
 
-for script in "$script_dir"/*.sh "$bundle_root/libexec/relayshelf-host-storage-check"; do
+for script in "$script_dir"/*.sh "$bundle_root/tests"/*.sh "$bundle_root/libexec/relayshelf-host-storage-check"; do
   sh -n "$script"
 done
 
 postgres_unit=$bundle_root/quadlet/relayshelf-postgres.container
 app_template=$bundle_root/quadlet/relayshelf-app.container.in
+network_unit=${RELAYSHELF_NETWORK_UNIT:-$bundle_root/quadlet/relayshelf.network}
 nginx_config=$bundle_root/nginx/openwrt-relayshelf.conf
 
 grep -Fxq 'Image=docker.io/library/postgres:17.11-bookworm' "$postgres_unit" || die "PostgreSQL image must use the approved exact tag"
 ! grep -Eq '(^|:)latest([[:space:]]|$)' "$bundle_root"/quadlet/* || die "latest tag found in Quadlet"
-! grep -q '^PublishPort=.*5432' "$postgres_unit" || die "PostgreSQL must not publish port 5432"
-grep -Fxq 'Internal=true' "$bundle_root/quadlet/relayshelf.network" || die "application network must be internal"
+! grep -q '^PublishPort=' "$postgres_unit" || die "PostgreSQL must not publish any host port"
+grep -Fxq 'Driver=bridge' "$network_unit" || die "application network must use the bridge driver"
+! grep -Eq '^[[:space:]]*Internal[[:space:]]*=[[:space:]]*(true|yes|1)([[:space:]]|$)' "$network_unit" ||
+  die "a rootful internal network cannot be combined with the app PublishPort"
+[ "$(grep -c '^PublishPort=' "$app_template")" -eq 1 ] || die "app must publish exactly one host port"
+grep -Fxq 'PublishPort=@@RELAYSHELF_LISTEN_ADDRESS@@:8080:8080' "$app_template" ||
+  die "app must publish only TCP 8080 on the configured LAN address"
 grep -Fxq 'RequiresMountsFor=/mnt/relayshelf /var/lib/relayshelf/staging' "$app_template" || die "app mount dependency missing"
 grep -Fq 'relayshelf-host-storage-check /mnt/relayshelf' "$app_template" || die "host NFS preflight missing"
 grep -Fxq 'User=65532' "$app_template" || die "app container must enforce its non-root UID"
@@ -56,7 +62,8 @@ done
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 mkdir "$tmp_dir/quadlet"
-cp "$bundle_root/quadlet/relayshelf.network" "$bundle_root/quadlet/relayshelf-postgres.container" "$tmp_dir/quadlet/"
+cp "$network_unit" "$tmp_dir/quadlet/relayshelf.network"
+cp "$bundle_root/quadlet/relayshelf-postgres.container" "$tmp_dir/quadlet/"
 "$script_dir/render-quadlet.sh" docker.io/example/relayshelf:0.0.0-verification 192.0.2.10 "$tmp_dir/quadlet/relayshelf-app.container"
 
 generator=${QUADLET_GENERATOR:-}
@@ -87,7 +94,12 @@ grep -Fq -- '--health-cmd "[\"/relayshelf\",\"healthcheck\"]"' "$generated" ||
 ! grep -Fq -- '--health-cmd "/relayshelf healthcheck"' "$generated" ||
   die "generated app healthcheck would require /bin/sh -c"
 grep -Fq -- '--publish 192.0.2.10:8080:8080' "$generated" || die "generated app HTTP binding mismatch"
-! grep -Fq -- '--publish 5432' "$generated" || die "generated PostgreSQL service publishes port 5432"
+grep -Fq 'podman network create --ignore --driver bridge relayshelf' "$generated" ||
+  die "generated network is not the expected managed bridge"
+! grep -Fq -- '--internal' "$generated" ||
+  die "generated network still disables rootful published-port forwarding"
+publish_count=$(grep -o -- '--publish ' "$generated" | wc -l | tr -d ' ')
+[ "$publish_count" -eq 1 ] || die "generated units must contain exactly one published port (found $publish_count)"
 echo "Quadlet generator verification: PASS"
 
 echo "RelayShelf deployment policy verification: PASS"
