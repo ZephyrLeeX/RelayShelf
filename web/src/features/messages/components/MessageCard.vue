@@ -1,19 +1,18 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
 import type { MessageSummary } from '@/api/generated'
+import { useDetailSelection } from '@/app/composables/useDetailSelection'
 import TagChip from '@/shared/ui/TagChip.vue'
 import { mutationErrorMessage, useMessageMutation } from '../mutations'
 import AttachmentList from './AttachmentList.vue'
 
 const props = defineProps<{ message: MessageSummary; trash?: boolean }>()
-const route = useRoute()
-const router = useRouter()
+const { openDetail: openSelectedDetail } = useDetailSelection()
 const mutation = useMessageMutation()
 const error = ref('')
 
 function openDetail() {
-  void router.push({ name: 'message-detail', params: { id: props.message.id }, query: { from: route.fullPath } })
+  openSelectedDetail(props.message.id)
 }
 async function copyBody() {
   if (props.message.sensitive || props.message.bodyTruncated) return openDetail()
