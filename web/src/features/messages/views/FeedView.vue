@@ -27,10 +27,12 @@ const filters = computed(() => {
         {{ description }}
       </p>
     </header>
-    <MessageComposer
+    <div
       v-if="kind === 'temporary' || kind === 'permanent'"
-      :default-lifecycle="kind === 'temporary' ? Lifecycle.TEMPORARY : Lifecycle.PERMANENT"
-    />
+      class="composer-shell"
+    >
+      <MessageComposer :default-lifecycle="kind === 'temporary' ? Lifecycle.TEMPORARY : Lifecycle.PERMANENT" />
+    </div>
     <MessageFeed
       :filters="filters"
       :empty-text="emptyText"
@@ -38,4 +40,8 @@ const filters = computed(() => {
   </section>
 </template>
 
-<style scoped>.page{display:grid;gap:1rem}.page>header h1,.page>header p{margin:.2rem 0}.page>header h1{font-size:1.65rem}</style>
+<style scoped>
+.page{display:grid;gap:1rem}.page>header h1,.page>header p{margin:.2rem 0}.page>header h1{font-size:1.65rem}
+.composer-shell{width:min(84%,760px);margin-inline:auto}
+@media(max-width:1179px){.composer-shell{width:min(100%,760px)}}
+</style>

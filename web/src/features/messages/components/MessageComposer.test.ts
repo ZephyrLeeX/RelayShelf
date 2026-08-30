@@ -51,6 +51,37 @@ describe('MessageComposer', () => {
     await flushPromises()
     expect(create).toHaveBeenLastCalledWith('key-b', expect.objectContaining({ body: 'line two' }))
   })
+  it('uses the direct-send contract for a valid recipient on Ctrl+Enter', async () => {
+    const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
+    const direct = vi.spyOn(DefaultService, 'directSendMessage').mockResolvedValue({
+      messageId: 'message-direct', createdAt: '2026-08-31T00:00:00Z', expiresAt: '2026-09-01T00:00:00Z',
+    })
+    const wrapper = mountComposer(Lifecycle.PERMANENT)
+    await wrapper.get('.direct-send input').setValue('11111111-1111-4111-8111-111111111111')
+    await wrapper.get('textarea').setValue('send once')
+    await wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await flushPromises()
+    expect(create).not.toHaveBeenCalled()
+    expect(direct).toHaveBeenCalledWith('key-a', {
+      recipientUserId: '11111111-1111-4111-8111-111111111111',
+      body: 'send once', bodyFormat: BodyFormat.TEXT, sensitive: false, uploadIds: [],
+    })
+    expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('')
+  })
+  it('selects pasted images through UploadManager without inserting clipboard text', async () => {
+    uploadState.items.push(uploadItem('client-paste', 'COMPLETED', uploadSession({ id: 'upload-paste', originalFilename: 'pasted.png' })))
+    const addFiles = vi.spyOn(uploadManager, 'addFiles').mockResolvedValue(['client-paste'])
+    const wrapper = mountComposer()
+    const pasted = new File(['image'], 'pasted.png', { type: 'image/png' })
+    const preventDefault = vi.fn()
+    wrapper.get('textarea').element.dispatchEvent(Object.assign(new Event('paste', { bubbles: true }), {
+      clipboardData: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => pasted }] },
+      preventDefault,
+    }))
+    await flushPromises()
+    expect(addFiles).toHaveBeenCalledWith([pasted])
+    expect(wrapper.text()).toContain('pasted.png')
+  })
   it('blocks empty and over-1MiB UTF-8 bodies', async () => {
     const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
     const wrapper = mountComposer()
