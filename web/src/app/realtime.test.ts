@@ -1,7 +1,7 @@
 import { QueryClient, QueryObserver } from '@tanstack/vue-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DefaultService } from '@/api/generated'
-import { hasRealtimeConnection, setEventSourceFactory, startRealtime, stopRealtime } from './realtime'
+import { hasRealtimeConnection, realtimeConnectionState, setEventSourceFactory, startRealtime, stopRealtime } from './realtime'
 
 class FakeEventSource {
   listeners = new Map<string, EventListener[]>()
@@ -26,7 +26,11 @@ describe('realtime singleton', () => {
   it('creates exactly one connection and closes it', () => {
     startRealtime(client, 'device-a', vi.fn()); startRealtime(client, 'device-a', vi.fn())
     expect(sources).toHaveLength(1); expect(hasRealtimeConnection()).toBe(true)
+    expect(realtimeConnectionState.value).toBe('connecting')
+    sources[0].emit('open'); expect(realtimeConnectionState.value).toBe('connected')
+    sources[0].emit('error'); expect(realtimeConnectionState.value).toBe('disconnected')
     stopRealtime(); expect(sources[0].close).toHaveBeenCalled()
+    expect(realtimeConnectionState.value).toBe('idle')
   })
   it('invalidates and refetches a second logical tab for an event from the same device', async () => {
     const invalidate = vi.spyOn(client, 'invalidateQueries')

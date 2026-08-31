@@ -1,4 +1,5 @@
 import type { QueryClient } from '@tanstack/vue-query'
+import { readonly, ref } from 'vue'
 import { queryKeys } from '@/shared/api/queryKeys'
 
 interface RealtimeEvent {
@@ -14,6 +15,9 @@ let factory: EventSourceFactory = (url, init) => new EventSource(url, init)
 let wasDisconnected = false
 let authCheckPending = false
 let visibilityHandler: (() => void) | undefined
+export type RealtimeConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnected'
+const connectionState = ref<RealtimeConnectionState>('idle')
+export const realtimeConnectionState = readonly(connectionState)
 
 export function setEventSourceFactory(next: EventSourceFactory) {
   factory = next
@@ -44,11 +48,13 @@ async function probeRealtimeAuth(onExpired: () => void) {
 
 export function startRealtime(client: QueryClient, _deviceId: string, onExpired: () => void) {
   if (source) return
+  connectionState.value = 'connecting'
   const next = factory('/api/v1/events', { withCredentials: true })
   source = next
   next.addEventListener('open', () => {
     if (wasDisconnected) invalidateServerTruth(client)
     wasDisconnected = false
+    connectionState.value = 'connected'
   })
   const eventTypes = ['message.created', 'message.updated', 'message.deleted', 'tag.created', 'tag.updated', 'tag.deleted']
   for (const eventType of eventTypes) {
@@ -69,6 +75,7 @@ export function startRealtime(client: QueryClient, _deviceId: string, onExpired:
   }
   next.addEventListener('error', () => {
     wasDisconnected = true
+    connectionState.value = 'disconnected'
     if (authCheckPending) return
     authCheckPending = true
     void probeRealtimeAuth(onExpired)
@@ -87,6 +94,7 @@ export function stopRealtime() {
   authCheckPending = false
   if (visibilityHandler) document.removeEventListener('visibilitychange', visibilityHandler)
   visibilityHandler = undefined
+  connectionState.value = 'idle'
 }
 
 export function hasRealtimeConnection() {

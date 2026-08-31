@@ -4,7 +4,7 @@ import MobileBottomNav from './MobileBottomNav.vue'
 
 describe('MobileBottomNav', () => {
   it('exposes the five planned destinations without owning domain state', async () => {
-    const wrapper = mount(MobileBottomNav, { global: { stubs: { RouterLink: { props: ['to'], template: '<a :href="to"><slot /></a>' } } } })
+    const wrapper = mount(MobileBottomNav, { props: { moreOpen: false }, global: { stubs: { RouterLink: { props: ['to'], template: '<a :href="to"><slot /></a>' } } } })
     expect(wrapper.findAll('a')).toHaveLength(3)
     expect(wrapper.findAll('button')).toHaveLength(2)
     expect(wrapper.text()).toContain('临时')
@@ -16,5 +16,7 @@ describe('MobileBottomNav', () => {
     await wrapper.findAll('button')[1].trigger('click')
     expect(wrapper.emitted('openUploads')).toHaveLength(1)
     expect(wrapper.emitted('openMore')).toHaveLength(1)
+    await wrapper.setProps({ moreOpen: true })
+    expect(wrapper.findAll('button')[1].attributes('aria-expanded')).toBe('true')
   })
 })

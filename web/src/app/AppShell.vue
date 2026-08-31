@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useQuery } from '@tanstack/vue-query'
+import { useRoute, useRouter } from 'vue-router'
+import { DefaultService } from '@/api/generated'
+import { queryKeys } from '@/shared/api/queryKeys'
 import { queryClient } from './queryClient'
-import { startRealtime } from './realtime'
+import { realtimeConnectionState, startRealtime } from './realtime'
 import { useUiStore } from './stores/ui'
 import AppSidebar from './shell/AppSidebar.vue'
 import AppTopbar from './shell/AppTopbar.vue'
@@ -19,8 +22,17 @@ import PWAUpdatePrompt from './PWAUpdatePrompt.vue'
 
 const auth = useAuthStore()
 const ui = useUiStore()
+const route = useRoute()
 const router = useRouter()
 const uploadCount = computed(() => visibleUploads.value.filter((item) => item.status !== 'COMPLETED').length)
+const shellMode = computed(() => route.meta.shell === 'full' ? 'full' : 'workspace')
+const devices = useQuery({ queryKey: queryKeys.sessions.devices(), queryFn: () => DefaultService.listDevices() })
+const adminStatus = useQuery({
+  queryKey: queryKeys.admin.status(),
+  queryFn: () => DefaultService.getAdminStatus(),
+  enabled: computed(() => auth.user?.isAdmin === true),
+  refetchInterval: 30_000,
+})
 
 if (auth.device) startRealtime(queryClient, auth.device.id, () => {
   const redirect = router.currentRoute.value.fullPath
@@ -52,7 +64,18 @@ async function logout() {
 }
 function openSessions() {
   ui.mobileMoreOpen = false
+  ui.uploadQueueOpen = false
   ui.sessionsOpen = true
+}
+function openUploads() {
+  ui.mobileMoreOpen = false
+  ui.sessionsOpen = false
+  ui.uploadQueueOpen = true
+}
+function openMobileMore() {
+  ui.sessionsOpen = false
+  ui.uploadQueueOpen = false
+  ui.mobileMoreOpen = true
 }
 </script>
 
@@ -61,7 +84,10 @@ function openSessions() {
     <AppSidebar
       :upload-count="uploadCount"
       :active-transfers="hasActiveTransfers"
-      @open-uploads="ui.uploadQueueOpen = true"
+      :device-count="devices.data.value?.length"
+      :realtime-state="realtimeConnectionState"
+      :storage="adminStatus.data.value?.storage"
+      @open-uploads="openUploads"
       @open-sessions="openSessions"
       @logout="logout"
     />
@@ -69,17 +95,21 @@ function openSessions() {
     <MobileHeader
       :upload-count="uploadCount"
       :active-transfers="hasActiveTransfers"
-      @open-uploads="ui.uploadQueueOpen = true"
+      @open-uploads="openUploads"
     />
-    <div class="workspace">
+    <div
+      class="workspace"
+      :class="shellMode"
+    >
       <main class="content">
         <RouterView />
       </main>
-      <MessageDetailSurface />
+      <MessageDetailSurface v-if="shellMode === 'workspace'" />
     </div>
     <MobileBottomNav
-      @open-uploads="ui.uploadQueueOpen = true"
-      @open-more="ui.mobileMoreOpen = true"
+      :more-open="ui.mobileMoreOpen"
+      @open-uploads="openUploads"
+      @open-more="openMobileMore"
     />
     <MobileMoreMenu
       v-if="ui.mobileMoreOpen"
@@ -101,6 +131,6 @@ function openSessions() {
 
 <style scoped>
 .app-shell{display:grid;grid-template-columns:220px minmax(560px,1fr) clamp(400px,31vw,480px);grid-template-rows:72px minmax(0,1fr);min-height:100vh;height:100vh;background:var(--surface-base);overflow:hidden}
-.workspace{grid-column:2/-1;display:grid;grid-template-columns:minmax(560px,1fr) clamp(400px,31vw,480px);min-height:0}.content{min-width:0;overflow:auto;padding:1.5rem clamp(1rem,3vw,2.5rem) 4rem}
+.workspace{grid-column:2/-1;display:grid;grid-template-columns:minmax(560px,1fr) clamp(400px,31vw,480px);min-height:0}.workspace.full{grid-template-columns:minmax(0,1fr)}.content{min-width:0;overflow:auto;padding:1.5rem clamp(1rem,3vw,2.5rem) 4rem}
 @media(max-width:1179px){.app-shell{display:block;height:auto;min-height:100vh;overflow:visible}.app-sidebar,.app-topbar{display:none}.workspace{display:block}.content{min-height:calc(100vh - 62px);padding:.9rem .75rem calc(5.5rem + env(safe-area-inset-bottom));overflow:visible}}
 </style>
