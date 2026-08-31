@@ -1,4 +1,4 @@
-import{n as t}from"./index-hhphbVax.js";/**
+import{n as t}from"./index-CKjnwpOE.js";/**
  * @license @lucide/vue v1.37.0 - ISC
  *
  * This source code is licensed under the ISC license.

@@ -1,8 +1,8 @@
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, DefaultService, Lifecycle } from '@/api/generated'
+import { ApiError, BodyFormat, DefaultService, Lifecycle } from '@/api/generated'
 import { messageFixture } from '@/test/fixtures'
 import MessageCard from './MessageCard.vue'
 
@@ -104,5 +104,54 @@ describe('MessageCard', () => {
     expect(router.currentRoute.value.query.detail).toBe('message-1')
     expect(router.currentRoute.value.path).toBe('/')
     expect(wrapper.classes()).toContain('selected')
+  })
+  it('renders markdown bodies through the safe renderer with a fence-language badge', async () => {
+    const { wrapper } = await render({ bodyFormat: BodyFormat.MARKDOWN, bodyPreview: '```python\nprint("x")\n```' })
+    await vi.waitFor(() => expect(wrapper.find('.feed-markdown pre code').exists()).toBe(true))
+    expect(wrapper.find('pre').text()).toContain('print("x")')
+    expect(wrapper.get('.type-badge').text()).toBe('PY')
+  })
+  it('shows the MD badge for ordinary markdown bodies', async () => {
+    const { wrapper } = await render({ bodyFormat: BodyFormat.MARKDOWN, bodyPreview: '# title' })
+    await flushPromises()
+    expect(wrapper.get('.type-badge').text()).toBe('MD')
+    expect(wrapper.find('pre.code').exists()).toBe(false)
+  })
+  it('keeps the legacy TEXT+detectedLanguage rendering and badge', async () => {
+    const { wrapper } = await render({ bodyFormat: BodyFormat.TEXT, detectedType: 'CODE', detectedLanguage: 'shell', bodyPreview: 'ls -la' })
+    expect(wrapper.get('pre.code').text()).toBe('ls -la')
+    expect(wrapper.get('.type-badge').text()).toBe('SHELL')
+  })
+  it('linkifies URLs in plain text with safe hrefs and no detail opening', async () => {
+    const { router, wrapper } = await render({ bodyPreview: '下载：https://example.com/file.zip 结束 javascript:no' })
+    const link = wrapper.get('a[href="https://example.com/file.zip"]')
+    expect(link.attributes('target')).toBe('_blank')
+    expect(link.attributes('rel')).toBe('noopener noreferrer')
+    expect(wrapper.findAll('a')).toHaveLength(1)
+
+    link.element.addEventListener('click', (event) => event.preventDefault())
+    await link.trigger('click')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(router.currentRoute.value.query.detail).toBeUndefined()
+  })
+  it('opens detail when clicking the body outside links', async () => {
+    const { router, wrapper } = await render({ bodyPreview: '见 https://example.com/a 说明' })
+    await wrapper.get('.body-button').trigger('click')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(router.currentRoute.value.query.detail).toBe('message-1')
+  })
+  it('copies the bare code for a body that is exactly one fenced block', async () => {
+    const { wrapper } = await render({ bodyFormat: BodyFormat.MARKDOWN, bodyPreview: '```bash\ndocker compose up -d\n```' })
+    await wrapper.get('[aria-label="复制正文"]').trigger('click')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(writeText).toHaveBeenCalledWith('docker compose up -d')
+  })
+  it('keeps full copy semantics for prose markdown with embedded fences', async () => {
+    const body = '# title\n\n```bash\ncmd\n```\n\noutro'
+    const { wrapper } = await render({ bodyFormat: BodyFormat.MARKDOWN, bodyPreview: body })
+    await flushPromises()
+    await wrapper.get('[aria-label="复制正文"]').trigger('click')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(writeText).toHaveBeenCalledWith(body)
   })
 })

@@ -50,6 +50,34 @@ test.describe('desktop UI integration', () => {
     await page.emulateMedia({ colorScheme: 'light' })
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
   })
+
+  test('sends shell content as fenced markdown, highlights it, and copies bare code', async ({ page }) => {
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+    const body = marker('shell-code')
+    await login(page, alice)
+    await composeAndSend(page, `docker compose ps # ${body}`, { contentType: 'Shell' })
+
+    const card = page.locator('.message-card', { hasText: body })
+    await expect(card.locator('.type-badge')).toHaveText('SH')
+    await expect(card.locator('.feed-markdown pre code')).toContainText('docker compose ps')
+
+    await card.getByRole('button', { name: '复制正文' }).click()
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(`docker compose ps # ${body}`)
+  })
+
+  test('linkifies plain-text URLs without opening the detail', async ({ page }) => {
+    const body = marker('linkify')
+    await login(page, alice)
+    await composeAndSend(page, `下载 https://example.com/${body} 完成`)
+
+    const card = page.locator('.message-card', { hasText: body })
+    const link = card.locator(`a[href="https://example.com/${body}"]`)
+    await expect(link).toBeVisible()
+    await expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+    await link.evaluate((element) => element.addEventListener('click', (event) => event.preventDefault()))
+    await link.click()
+    await expect(page).not.toHaveURL(/(?:\?|&)detail=/)
+  })
 })
 
 test.describe('wide desktop workspace', () => {
@@ -109,6 +137,31 @@ for (const viewport of [
       await expect(page.getByRole('button', { name: '设备与会话' })).toBeVisible()
       await page.keyboard.press('Escape')
       await expect(page.getByRole('dialog', { name: '我的' })).toHaveCount(0)
+    })
+  })
+}
+
+for (const viewport of [
+  { width: 1440, height: 900 },
+  { width: 390, height: 844 },
+]) {
+  test.describe(`return to composer at ${viewport.width}x${viewport.height}`, () => {
+    test.use({ viewport })
+
+    test('reveals the floating button only after the composer scrolls away', async ({ page }) => {
+      await login(page, alice)
+      for (let index = 0; index < 8; index += 1) {
+        await composeAndSend(page, marker(`return-${viewport.width}-${index}`))
+      }
+
+      const button = page.getByRole('button', { name: '回到发送框' })
+      await expect(button).toBeHidden()
+      await page.locator('.message-card').last().scrollIntoViewIfNeeded()
+      await expect(button).toBeVisible()
+
+      await button.click()
+      await expect(page.locator('.composer')).toBeVisible()
+      await expect(page.locator('#composer-body')).toBeFocused()
     })
   })
 }

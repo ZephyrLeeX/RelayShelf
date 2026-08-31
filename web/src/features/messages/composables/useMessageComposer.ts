@@ -1,11 +1,11 @@
 import { computed, ref, toValue, watch, type MaybeRefOrGetter } from 'vue'
 import { useMutation, useQueryClient } from '@tanstack/vue-query'
 import {
-  BodyFormat,
   DefaultService,
   type CreateMessageRequest,
   type DirectSendRequest,
   type Lifecycle,
+  type RecipientUser,
 } from '@/api/generated'
 import { displayError } from '@/shared/api/errors'
 import { queryKeys } from '@/shared/api/queryKeys'
@@ -13,8 +13,7 @@ import { useCreateTag, useTagsQuery } from '@/features/tags/queries'
 import { uploadManager } from '@/features/uploads/manager'
 import { visibleUploads } from '@/features/uploads/store'
 import type { UploadItem } from '@/features/uploads/types'
-
-export type ComposerMode = 'text' | 'markdown' | 'code'
+import { serializeContent, type ContentTypeId } from '../content/contentFormat'
 
 interface SendSnapshot {
   key: string
@@ -30,13 +29,9 @@ interface DirectSendSnapshot {
   payload: DirectSendRequest
 }
 
-function isUUID(value: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
-}
-
 export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>, onSent?: () => void) {
   const body = ref('')
-  const mode = ref<ComposerMode>('text')
+  const contentType = ref<ContentTypeId>('text')
   const lifecycle = ref(toValue(defaultLifecycle))
   let lifecycleOverridden = false
   let syncingLifecycle = false
@@ -58,13 +53,18 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
   const error = ref('')
   const newTagName = ref('')
   const newTagColor = ref('#3B8C6E')
-  const directRecipient = ref('')
+  // Direct send is derived from a picked RecipientPicker user, never from raw
+  // UUID text input: null sends to myself, a user id direct-sends.
+  const selectedRecipient = ref<RecipientUser | null>(null)
 
   const tags = useTagsQuery()
   const createTag = useCreateTag()
   const client = useQueryClient()
-  const directMode = computed(() => isUUID(directRecipient.value.trim()))
-  const byteLength = computed(() => new TextEncoder().encode(body.value).byteLength)
+  const directMode = computed(() => selectedRecipient.value !== null)
+  // Fences are produced at submit time only, so the size guard measures the
+  // payload the API will actually store.
+  const serializedBody = computed(() => serializeContent(body.value, contentType.value))
+  const byteLength = computed(() => new TextEncoder().encode(serializedBody.value.body).byteLength)
   const tooLarge = computed(() => byteLength.value > 1024 * 1024)
   const selectedUploads = computed<UploadItem[]>(() => selectedUploadClients.value.flatMap((id) => {
     const item = visibleUploads.value.find((upload) => upload.clientId === id)
@@ -74,7 +74,7 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
     item.status === 'COMPLETED' && item.serverUploadId ? [item.serverUploadId] : []))
   const attachmentsBlocking = computed(() => selectedUploads.value.some((item) => item.status !== 'COMPLETED'))
   const hasContent = computed(() => Boolean(body.value.trim()) || selectedUploadIds.value.length > 0)
-  const bodyFormat = computed(() => mode.value === 'markdown' ? BodyFormat.MARKDOWN : BodyFormat.TEXT)
+  const bodyFormat = computed(() => serializedBody.value.bodyFormat)
   // Restored completed uploads remain globally owned until this draft selects
   // and successfully consumes them.
   const restorableUploads = computed(() => visibleUploads.value.filter((item) =>
@@ -85,11 +85,11 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
   // while a changed selection always does.
   const draftFields = () => [
     body.value,
-    mode.value,
+    contentType.value,
     directMode.value ? 'DIRECT' : lifecycle.value,
     sensitive.value,
     directMode.value ? 'direct' : [...selectedTags.value].sort().join(','),
-    directMode.value ? directRecipient.value.trim() : '',
+    directMode.value ? selectedRecipient.value?.id ?? '' : '',
   ]
   const requestFingerprint = computed(() => JSON.stringify({ draft: draftFields(), uploadIds: selectedUploadIds.value }))
   const draftIdentity = computed(() => JSON.stringify({ draft: draftFields(), selection: [...selectedUploadClients.value] }))
@@ -148,7 +148,7 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
         selectedTags.value = []
         selectedUploadClients.value = []
         sensitive.value = false
-        directRecipient.value = ''
+        selectedRecipient.value = null
       }
       activeKey.value = ''
       attemptedIdentity = ''
@@ -193,7 +193,7 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
       fingerprint: requestFingerprint.value,
       identity: attemptedIdentity,
       payload: {
-        body: body.value.trim() ? body.value : null,
+        body: body.value.trim() ? serializedBody.value.body : null,
         bodyFormat: bodyFormat.value,
         lifecycle: lifecycle.value,
         sensitive: sensitive.value,
@@ -204,7 +204,7 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
   }
 
   function submitDirect() {
-    if (sending.value || !validate()) return
+    if (sending.value || !validate() || !selectedRecipient.value) return
     if (!activeKey.value) activeKey.value = crypto.randomUUID()
     attemptedIdentity = draftIdentity.value
     attemptedFingerprint = requestFingerprint.value
@@ -213,8 +213,8 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
       fingerprint: attemptedFingerprint,
       identity: attemptedIdentity,
       payload: {
-        recipientUserId: directRecipient.value.trim(),
-        body: body.value.trim() ? body.value : null,
+        recipientUserId: selectedRecipient.value.id,
+        body: body.value.trim() ? serializedBody.value.body : null,
         bodyFormat: bodyFormat.value,
         sensitive: sensitive.value,
         uploadIds: [...selectedUploadIds.value],
@@ -278,8 +278,8 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
   }
 
   return {
-    body, mode, lifecycle, sensitive, selectedTags, selectedUploadClients, selectedUploads,
-    selectedUploadIds, restorableUploads, directRecipient, directMode, byteLength, tooLarge,
+    body, contentType, lifecycle, sensitive, selectedTags, selectedUploadClients, selectedUploads,
+    selectedUploadIds, restorableUploads, selectedRecipient, directMode, byteLength, tooLarge,
     attachmentsBlocking, hasContent, dragging, error, failed, sending, tags, newTagName,
     newTagColor, selectFiles, removeSelected, pasteFiles, dropFiles, addTag, addRestored,
     submit, submitDirect, onKeydown,

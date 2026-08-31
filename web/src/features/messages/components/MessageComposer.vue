@@ -1,49 +1,55 @@
 <script setup lang="ts">
-import { MoreHorizontal, Paperclip, Tags } from '@lucide/vue'
-import { ref } from 'vue'
+import { LockKeyhole, LockOpen, Paperclip, RotateCcw, Send, Tags } from '@lucide/vue'
+import { computed, ref } from 'vue'
 import { Lifecycle } from '@/api/generated'
 import { formatBytes } from '@/shared/utils/bytes'
-import { useMessageComposer, type ComposerMode } from '../composables/useMessageComposer'
+import { isCodeContentType } from '../content/contentFormat'
+import { useMessageComposer } from '../composables/useMessageComposer'
 import ComposerEditor from './composer/ComposerEditor.vue'
 import ComposerAttachments from './composer/ComposerAttachments.vue'
+import ContentTypePicker from './ContentTypePicker.vue'
+import RecipientPicker from './RecipientPicker.vue'
 
 const props = defineProps<{ defaultLifecycle: Lifecycle }>()
 const emit = defineEmits<{ sent: [] }>()
 const fileInput = ref<HTMLInputElement>()
 const composer = useMessageComposer(() => props.defaultLifecycle, () => emit('sent'))
+const isCode = computed(() => isCodeContentType(composer.contentType.value))
 
 function filesChanged(event: Event) {
   const input = event.target as HTMLInputElement
   if (input.files) void composer.selectFiles(input.files)
   input.value = ''
 }
-
-function setMode(mode: ComposerMode) {
-  composer.mode.value = mode
-}
 </script>
 
 <template>
   <section
     class="composer panel"
-    aria-labelledby="composer-title"
+    aria-label="新内容"
   >
-    <header class="composer-heading">
-      <div>
-        <span
-          class="route-mark"
-          aria-hidden="true"
-        />
-        <h2 id="composer-title">
-          新内容
-        </h2>
+    <div class="composer-top">
+      <ContentTypePicker v-model="composer.contentType.value" />
+      <div class="composer-top-right">
+        <RecipientPicker v-model="composer.selectedRecipient.value" />
+        <button
+          class="icon-tool"
+          :class="{ on: composer.sensitive.value }"
+          type="button"
+          :aria-pressed="composer.sensitive.value"
+          aria-label="敏感内容"
+          title="敏感内容（详情中揭示后可见）"
+          @click="composer.sensitive.value = !composer.sensitive.value"
+        >
+          <LockKeyhole v-if="composer.sensitive.value" />
+          <LockOpen v-else />
+        </button>
       </div>
-      <span class="shortcut">Ctrl/⌘ + Enter</span>
-    </header>
+    </div>
 
     <ComposerEditor
       v-model="composer.body.value"
-      :mode="composer.mode.value"
+      :code="isCode"
       :dragging="composer.dragging.value"
       @dragstart="composer.dragging.value = true"
       @dragend="composer.dragging.value = false"
@@ -67,16 +73,58 @@ function setMode(mode: ComposerMode) {
         @change="filesChanged"
       >
       <button
-        class="tool-button attach"
+        class="tool-button"
         type="button"
+        aria-label="附件"
+        title="添加附件"
         @click="fileInput?.click()"
       >
-        <Paperclip aria-hidden="true" />文件
+        <Paperclip aria-hidden="true" /><span class="tool-label">附件</span>
       </button>
 
-      <details class="popover tag-picker">
-        <summary class="tool-button">
-          <Tags aria-hidden="true" />标签<span
+      <details
+        v-if="composer.restorableUploads.value.length"
+        class="popover restored-menu"
+      >
+        <summary
+          class="tool-button"
+          aria-label="已完成的上传"
+          title="选用已完成的上传"
+        >
+          <RotateCcw aria-hidden="true" /><span class="count">{{ composer.restorableUploads.value.length }}</span>
+        </summary>
+        <div class="popover-panel">
+          <h3 class="panel-title">
+            已完成的上传
+          </h3>
+          <ul>
+            <li
+              v-for="item in composer.restorableUploads.value"
+              :key="item.clientId"
+            >
+              <span>{{ item.filename }} · {{ formatBytes(item.size) }}</span>
+              <button
+                class="button"
+                type="button"
+                @click="composer.addRestored(item.clientId)"
+              >
+                选用
+              </button>
+            </li>
+          </ul>
+        </div>
+      </details>
+
+      <details
+        class="popover tag-picker"
+        :class="{ disabled: composer.directMode.value }"
+      >
+        <summary
+          class="tool-button"
+          aria-label="标签"
+          title="标签"
+        >
+          <Tags aria-hidden="true" /><span class="tool-label">标签</span><span
             v-if="composer.selectedTags.value.length"
             class="count"
           >{{ composer.selectedTags.value.length }}</span>
@@ -86,19 +134,42 @@ function setMode(mode: ComposerMode) {
             v-if="!composer.tags.data.value?.length"
             class="empty-note"
           >
-            暂无标签，可在高级选项中创建。
+            暂无标签，可在下方创建。
           </p>
           <label
             v-for="tag in composer.tags.data.value"
             :key="tag.id"
+            :class="{ disabled: composer.directMode.value }"
           >
             <input
               v-model="composer.selectedTags.value"
               type="checkbox"
               :value="tag.id"
+              :disabled="composer.directMode.value"
             >
             <i :style="{ backgroundColor: tag.color }" />{{ tag.name }}
           </label>
+          <div class="new-tag">
+            <input
+              v-model="composer.newTagName.value"
+              class="input"
+              maxlength="64"
+              placeholder="新建标签"
+              aria-label="新建标签名称"
+            >
+            <input
+              v-model="composer.newTagColor.value"
+              type="color"
+              aria-label="标签颜色"
+            >
+            <button
+              class="button"
+              type="button"
+              @click="composer.addTag"
+            >
+              添加
+            </button>
+          </div>
         </div>
       </details>
 
@@ -107,125 +178,25 @@ function setMode(mode: ComposerMode) {
         <select
           v-model="composer.lifecycle.value"
           :disabled="composer.directMode.value"
+          title="保存位置"
         >
           <option :value="Lifecycle.TEMPORARY">临时</option>
           <option :value="Lifecycle.PERMANENT">长期</option>
         </select>
       </label>
 
-      <details class="popover advanced-menu">
-        <summary
-          class="tool-button"
-          aria-label="高级选项"
-        >
-          <MoreHorizontal aria-hidden="true" />
-        </summary>
-        <div class="popover-panel advanced-panel">
-          <section>
-            <h3>正文格式</h3>
-            <div
-              class="modes"
-              role="group"
-              aria-label="正文格式"
-            >
-              <button
-                v-for="item in (['text','markdown','code'] as const)"
-                :key="item"
-                type="button"
-                :class="{ active: composer.mode.value === item }"
-                @click="setMode(item)"
-              >
-                {{ item === 'text' ? '纯文本' : item === 'markdown' ? 'Markdown' : 'Code' }}
-              </button>
-            </div>
-          </section>
-
-          <label class="toggle">
-            <input
-              v-model="composer.sensitive.value"
-              type="checkbox"
-            >
-            <span><strong>敏感内容</strong><small>正文需在详情中显式揭示</small></span>
-          </label>
-
-          <label class="field direct-send">
-            <span>直接发送给其他用户</span>
-            <input
-              v-model="composer.directRecipient.value"
-              class="input"
-              placeholder="接收者用户 ID（UUID）"
-              maxlength="64"
-            >
-          </label>
-          <p
-            v-if="composer.directMode.value"
-            class="muted direct-note"
-          >
-            直发会创建独立临时副本，不保留你的副本，也不带标签。
-          </p>
-
-          <section class="new-tag-section">
-            <h3>创建标签</h3>
-            <div class="new-tag">
-              <input
-                v-model="composer.newTagName.value"
-                class="input"
-                maxlength="64"
-                placeholder="标签名称"
-              >
-              <input
-                v-model="composer.newTagColor.value"
-                type="color"
-                aria-label="标签颜色"
-              >
-              <button
-                class="button"
-                type="button"
-                @click="composer.addTag"
-              >
-                添加
-              </button>
-            </div>
-          </section>
-
-          <section
-            v-if="composer.restorableUploads.value.length"
-            class="restored"
-            aria-label="已完成的上传"
-          >
-            <h3>已完成的上传</h3>
-            <ul>
-              <li
-                v-for="item in composer.restorableUploads.value"
-                :key="item.clientId"
-              >
-                <span>{{ item.filename }} · {{ formatBytes(item.size) }}</span>
-                <button
-                  class="button"
-                  type="button"
-                  @click="composer.addRestored(item.clientId)"
-                >
-                  添加到本条
-                </button>
-              </li>
-            </ul>
-          </section>
-        </div>
-      </details>
-
       <span
         class="bytes"
         :class="{ error: composer.tooLarge.value }"
-      >
-        {{ formatBytes(composer.byteLength.value) }} / 1 MB
-      </span>
+        title="正文上限 1 MB"
+      >{{ formatBytes(composer.byteLength.value) }}</span>
       <button
         class="button primary send-button"
         type="button"
         :disabled="composer.sending.value || !composer.hasContent.value || composer.attachmentsBlocking.value || composer.tooLarge.value"
         @click="composer.directMode.value ? composer.submitDirect() : composer.submit()"
       >
-        {{ composer.directMode.value ? (composer.sending.value ? '直发中…' : '直接发送') : composer.sending.value ? '发送中…' : composer.failed.value ? '重试发送' : '发送' }}
+        <Send aria-hidden="true" />{{ composer.directMode.value ? (composer.sending.value ? '直发中…' : '直接发送') : composer.sending.value ? '发送中…' : composer.failed.value ? '重试发送' : '发送' }}
       </button>
     </div>
 
@@ -233,6 +204,12 @@ function setMode(mode: ComposerMode) {
       class="composer-feedback"
       aria-live="polite"
     >
+      <p
+        v-if="composer.directMode.value"
+        class="muted direct-hint"
+      >
+        直发为独立临时副本，不带标签。
+      </p>
       <p
         v-if="composer.lifecycle.value === Lifecycle.PERMANENT && !composer.selectedTags.value.length && !composer.directMode.value"
         class="warning"
@@ -258,8 +235,24 @@ function setMode(mode: ComposerMode) {
 </template>
 
 <style scoped>
-.composer{position:relative;display:grid;border-radius:var(--radius-lg);box-shadow:var(--shadow-md);overflow:visible}.composer-heading{display:flex;align-items:center;justify-content:space-between;padding:.7rem 1rem .55rem}.composer-heading>div{display:flex;align-items:center;gap:.5rem}.route-mark{width:9px;height:9px;border-radius:50%;background:var(--accent-secondary);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent-secondary) 13%,transparent)}h2{margin:0;font-size:.88rem;letter-spacing:.01em}.shortcut{color:var(--text-tertiary);font-family:var(--font-mono);font-size:.67rem}
-.composer-toolbar{display:flex;align-items:center;gap:.35rem;padding:.7rem .8rem}.tool-button,.lifecycle-control select{display:inline-flex;align-items:center;justify-content:center;gap:.35rem;min-height:36px;border:0;border-radius:.55rem;padding:.4rem .62rem;background:transparent;color:var(--text-secondary);font-size:.8rem;font-weight:620}.tool-button>svg{width:1rem;height:1rem}.tool-button:hover,.lifecycle-control select:hover{background:var(--surface-soft);color:var(--text-primary)}.attach{color:var(--accent-secondary)}.count{display:grid;place-items:center;min-width:18px;height:18px;border-radius:999px;background:var(--accent-primary-soft);color:var(--accent-primary);font-size:.66rem}.lifecycle-control select{appearance:auto;cursor:pointer}.lifecycle-control select:disabled{cursor:not-allowed;opacity:.55}.popover{position:relative}.popover>summary{list-style:none;cursor:pointer}.popover>summary::-webkit-details-marker{display:none}.popover[open]>summary{background:var(--surface-soft);color:var(--text-primary)}.popover-panel{position:absolute;z-index:20;bottom:calc(100% + .55rem);left:0;width:max-content;min-width:210px;max-width:min(360px,calc(100vw - 2rem));padding:.65rem;border:1px solid var(--border-default);border-radius:var(--radius);background:var(--surface-raised);box-shadow:var(--shadow-floating)}.tag-options{display:grid;gap:.25rem}.tag-options label{display:flex;align-items:center;gap:.45rem;padding:.35rem;border-radius:.4rem;font-size:.82rem}.tag-options label:hover{background:var(--surface-soft)}.tag-options i{width:.55rem;height:.55rem;border-radius:50%}.empty-note{margin:.2rem;color:var(--text-secondary);font-size:.78rem}.advanced-menu{margin-right:auto}.advanced-panel{left:auto;right:0;width:min(340px,calc(100vw - 2rem));display:grid;gap:.8rem}.advanced-panel section>h3,.restored h3{margin:0 0 .45rem;font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--text-tertiary)}.modes{display:grid;grid-template-columns:repeat(3,1fr);padding:.2rem;border-radius:.65rem;background:var(--surface-soft)}.modes button{border:0;border-radius:.5rem;padding:.42rem;background:transparent;font-size:.77rem}.modes .active{background:var(--surface-raised);box-shadow:var(--shadow-sm);color:var(--accent-primary)}.toggle{display:flex;align-items:flex-start;gap:.55rem}.toggle span{display:grid}.toggle strong{font-size:.82rem}.toggle small{color:var(--text-secondary);font-size:.71rem}.direct-send{font-size:.76rem}.direct-note{margin:-.4rem 0 0;font-size:.72rem}.new-tag{display:grid;grid-template-columns:1fr 38px auto;gap:.4rem}.new-tag input[type=color]{width:38px;height:38px;padding:.1rem;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:transparent}.new-tag .button{min-height:38px;padding:.35rem .65rem}.restored ul{list-style:none;margin:0;padding:0;display:grid;gap:.35rem}.restored li{display:flex;align-items:center;justify-content:space-between;gap:.6rem;font-size:.76rem}.restored li span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.restored .button{min-height:32px;padding:.25rem .5rem;font-size:.7rem;white-space:nowrap}.bytes{color:var(--text-tertiary);font-family:var(--font-mono);font-size:.65rem;white-space:nowrap}.send-button{min-height:38px;padding:.45rem 1rem;border-radius:.65rem}.composer-feedback{display:grid;gap:.2rem;padding:0 .9rem}.composer-feedback:empty{display:none}.composer-feedback p{margin:0 0 .65rem;font-size:.76rem}.warning{color:var(--state-warning)}
-@media(max-width:700px){.composer-heading{padding:.65rem .85rem .45rem}.shortcut{display:none}.composer-toolbar{flex-wrap:wrap;padding:.6rem}.advanced-menu{margin-right:0}.bytes{order:5;margin-left:auto}.send-button{order:6}.popover-panel{position:fixed;left:1rem;right:1rem;bottom:calc(72px + env(safe-area-inset-bottom));width:auto;max-width:none}.advanced-panel{width:auto}.composer-feedback{padding:0 .7rem}}
-@media(max-width:420px){.bytes{display:none}.send-button{margin-left:auto}.lifecycle-control select,.tool-button{padding-inline:.5rem}}
+.composer{position:relative;display:grid;border-radius:var(--radius-lg);box-shadow:var(--shadow-md);overflow:visible}
+.composer-top{display:flex;align-items:center;justify-content:space-between;gap:.5rem;padding:.65rem .8rem 0}
+.composer-top-right{display:flex;align-items:center;gap:.4rem}
+.icon-tool{display:inline-grid;place-items:center;width:34px;height:34px;border:1px solid var(--border-default);border-radius:.6rem;background:var(--surface-raised);color:var(--text-secondary);cursor:pointer}.icon-tool svg{width:.95rem;height:.95rem}.icon-tool:hover{border-color:var(--border-strong);background:var(--surface-soft);color:var(--text-primary)}.icon-tool:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px}.icon-tool.on{border-color:var(--state-warning);color:var(--state-warning);background:color-mix(in srgb,var(--state-warning) 12%,var(--surface-raised))}
+.composer-toolbar{display:flex;align-items:center;gap:.3rem;padding:.65rem .8rem}
+.tool-button{display:inline-flex;align-items:center;justify-content:center;gap:.35rem;min-height:36px;border:0;border-radius:.55rem;padding:.4rem .55rem;background:transparent;color:var(--text-secondary);font-size:.8rem;font-weight:620;cursor:pointer}.tool-button>svg{width:1rem;height:1rem}.tool-button:hover{background:var(--surface-soft);color:var(--text-primary)}.tool-button:focus-visible{outline:2px solid var(--focus-ring);outline-offset:-2px}
+.lifecycle-control select{min-height:36px;border:0;border-radius:.55rem;padding:.4rem .45rem;background:transparent;color:var(--text-secondary);font-size:.8rem;font-weight:620;appearance:auto;cursor:pointer}.lifecycle-control select:hover{background:var(--surface-soft);color:var(--text-primary)}.lifecycle-control select:disabled{cursor:not-allowed;opacity:.55}
+.count{display:grid;place-items:center;min-width:18px;height:18px;border-radius:999px;background:var(--accent-primary-soft);color:var(--accent-primary);font-size:.66rem}
+.popover{position:relative}.popover>summary{list-style:none;cursor:pointer}.popover>summary::-webkit-details-marker{display:none}.popover[open]>summary{background:var(--surface-soft);color:var(--text-primary)}
+.popover.disabled{pointer-events:none;opacity:.55}
+.popover-panel{position:absolute;z-index:20;bottom:calc(100% + .55rem);left:0;width:max-content;min-width:210px;max-width:min(360px,calc(100vw - 2rem));padding:.65rem;border:1px solid var(--border-default);border-radius:var(--radius);background:var(--surface-raised);box-shadow:var(--shadow-floating)}
+.panel-title{margin:0 0 .45rem;font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--text-tertiary)}
+.tag-options{display:grid;gap:.25rem}.tag-options label{display:flex;align-items:center;gap:.45rem;padding:.35rem;border-radius:.4rem;font-size:.82rem}.tag-options label:hover{background:var(--surface-soft)}.tag-options label.disabled{opacity:.55}.tag-options i{width:.55rem;height:.55rem;border-radius:50%}.empty-note{margin:.2rem;color:var(--text-secondary);font-size:.78rem}
+.new-tag{display:grid;grid-template-columns:minmax(0,1fr) 38px auto;gap:.4rem;margin-top:.45rem;padding-top:.5rem;border-top:1px solid var(--border-default)}.new-tag input[type=color]{width:38px;height:38px;padding:.1rem;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:transparent}.new-tag .button{min-height:38px;padding:.35rem .65rem}
+.restored-menu ul{list-style:none;margin:0;padding:0;display:grid;gap:.35rem}.restored-menu li{display:flex;align-items:center;justify-content:space-between;gap:.6rem;font-size:.76rem}.restored-menu li span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.restored-menu .button{min-height:32px;padding:.25rem .5rem;font-size:.7rem;white-space:nowrap}
+.bytes{margin-left:auto;color:var(--text-tertiary);font-family:var(--font-mono);font-size:.65rem;white-space:nowrap}.bytes.error{color:var(--state-danger)}
+.send-button{display:inline-flex;align-items:center;gap:.35rem;min-height:38px;padding:.45rem .9rem;border-radius:.65rem}.send-button svg{width:.9rem;height:.9rem}
+.composer-feedback{display:grid;gap:.2rem;padding:0 .9rem}.composer-feedback:empty{display:none}.composer-feedback p{margin:0 0 .65rem;font-size:.76rem}.warning{color:var(--state-warning)}.direct-hint{color:var(--text-tertiary)}
+@media(max-width:700px){.composer-top{padding:.55rem .6rem 0}.composer-toolbar{flex-wrap:wrap;padding:.55rem .6rem}.tool-label{display:none}.tool-button,.lifecycle-control select{padding-inline:.55rem}.bytes{order:5;margin-left:auto}.send-button{order:6;padding-inline:.8rem}.popover-panel{position:fixed;left:1rem;right:1rem;bottom:calc(72px + env(safe-area-inset-bottom));width:auto;min-width:0;max-width:none}.new-tag{grid-template-columns:minmax(0,1fr) 38px auto}}
+@media(max-width:420px){.bytes{display:none}.send-button{margin-left:auto}}
 </style>

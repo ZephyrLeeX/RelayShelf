@@ -1,12 +1,12 @@
 import { computed, onUnmounted, ref, toValue, watch, type MaybeRefOrGetter } from 'vue'
-import { useQuery, useQueryClient } from '@tanstack/vue-query'
+import { useQueryClient } from '@tanstack/vue-query'
 import { useRoute, useRouter } from 'vue-router'
-import { BodyFormat, DefaultService } from '@/api/generated'
+import { DefaultService, type RecipientUser } from '@/api/generated'
 import { displayError } from '@/shared/api/errors'
-import { queryKeys } from '@/shared/api/queryKeys'
 import { useTagsQuery } from '@/features/tags/queries'
 import { uploadManager } from '@/features/uploads/manager'
 import { visibleUploads } from '@/features/uploads/store'
+import { parseStoredContent, serializeContent, unwrapSingleFencedCode, type ContentTypeId } from '../content/contentFormat'
 import { invalidateMessageTruth, mutationErrorMessage, useMessageMutation } from '../mutations'
 import { useMessageDetail } from '../queries'
 
@@ -28,17 +28,11 @@ export function useMessageDetailController(messageId: MaybeRefOrGetter<string>) 
   let revealRequest = 0
   const editing = ref(false)
   const editBody = ref('')
-  const editFormat = ref(BodyFormat.TEXT)
+  const editContentType = ref<ContentTypeId>('text')
   const selectedTags = ref<string[]>([])
   const error = ref('')
-  const forwardRecipient = ref('')
-  const forwardSearch = ref('')
+  const forwardRecipient = ref<RecipientUser | null>(null)
   const forwardOpen = ref(false)
-  const recipientUsers = useQuery({
-    queryKey: computed(() => queryKeys.recipients.list(forwardSearch.value.trim())),
-    queryFn: ({ queryKey }) => DefaultService.listRecipientUsers(queryKey[1] || undefined),
-    enabled: forwardOpen,
-  })
   const notice = ref('')
   const attachmentInput = ref<HTMLInputElement>()
   const detailUploadClients = ref<string[]>([])
@@ -70,8 +64,13 @@ export function useMessageDetailController(messageId: MaybeRefOrGetter<string>) 
 
   watch(message, (value) => {
     if (!value) return
-    editBody.value = value.body ?? ''
-    editFormat.value = value.bodyFormat
+    // Editing state derives from stored content: a Markdown body that is one
+    // recognized fenced block edits as that code language with the fence
+    // stripped; plain TEXT always edits as 纯文本 (detectedLanguage is a
+    // display hint only and never rewrites history).
+    const parsed = parseStoredContent(value.body, value.bodyFormat)
+    editBody.value = parsed.text
+    editContentType.value = parsed.typeId
     selectedTags.value = value.tags.map((tag) => tag.id)
   }, { immediate: true })
   watch(
@@ -111,8 +110,13 @@ export function useMessageDetailController(messageId: MaybeRefOrGetter<string>) 
   async function copy() {
     if (!message.value) return
     if (message.value.sensitive && currentSensitiveBody.value === null) await reveal()
-    const value = message.value.sensitive ? currentSensitiveBody.value : message.value.body
-    if (value !== null) await navigator.clipboard.writeText(value ?? '')
+    if (message.value.sensitive) {
+      if (currentSensitiveBody.value !== null) await navigator.clipboard.writeText(currentSensitiveBody.value)
+      return
+    }
+    // A body that is exactly one fenced code block copies as bare code.
+    const body = unwrapSingleFencedCode(message.value.body) ?? message.value.body
+    if (body !== null) await navigator.clipboard.writeText(body)
   }
 
   function run(command: Parameters<typeof mutation.mutate>[0], success?: () => void) {
@@ -124,11 +128,11 @@ export function useMessageDetailController(messageId: MaybeRefOrGetter<string>) 
   }
 
   function forward() {
-    if (!message.value) return
+    if (!message.value || !forwardRecipient.value) return
     error.value = ''
     notice.value = ''
-    mutation.mutate({ type: 'forward', message: message.value, recipientUserId: forwardRecipient.value.trim() }, {
-      onSuccess: () => { notice.value = '已转发'; forwardRecipient.value = ''; forwardSearch.value = ''; forwardOpen.value = false },
+    mutation.mutate({ type: 'forward', message: message.value, recipientUserId: forwardRecipient.value.id }, {
+      onSuccess: () => { notice.value = '已转发'; forwardRecipient.value = null; forwardOpen.value = false },
       onError: (cause) => { error.value = mutationErrorMessage(cause) },
     })
   }
@@ -140,7 +144,9 @@ export function useMessageDetailController(messageId: MaybeRefOrGetter<string>) 
       if (currentSensitiveBody.value === null) return
       editBody.value = currentSensitiveBody.value
     } else {
-      editBody.value = message.value.body ?? ''
+      const parsed = parseStoredContent(message.value.body, message.value.bodyFormat)
+      editBody.value = parsed.text
+      editContentType.value = parsed.typeId
     }
     editing.value = true
   }
@@ -152,9 +158,15 @@ export function useMessageDetailController(messageId: MaybeRefOrGetter<string>) 
       error.value = '内容版本已更新，请重新显示正文后再编辑。'
       return
     }
+    // Sensitive edits keep their existing format contract (body only);
+    // ordinary edits serialize through the shared content-format bridge so
+    // picking Shell/Python/Java stores a Markdown fenced block.
     const command = message.value.sensitive
       ? { type: 'editSensitive' as const, message: message.value, body: editBody.value }
-      : { type: 'edit' as const, message: message.value, body: editBody.value, bodyFormat: editFormat.value }
+      : (() => {
+          const serialized = serializeContent(editBody.value, editContentType.value)
+          return { type: 'edit' as const, message: message.value!, body: serialized.body, bodyFormat: serialized.bodyFormat }
+        })()
     run(command, () => { editing.value = false })
   }
 
@@ -215,8 +227,8 @@ export function useMessageDetailController(messageId: MaybeRefOrGetter<string>) 
   }
 
   return {
-    detail, mutation, tags, message, revealPending, editing, editBody, editFormat, selectedTags,
-    error, forwardRecipient, forwardSearch, forwardOpen, recipientUsers, notice, attachmentInput, detailUploads, detailUploadsReady,
+    detail, mutation, tags, message, revealPending, editing, editBody, editContentType, selectedTags,
+    error, forwardRecipient, forwardOpen, notice, attachmentInput, detailUploads, detailUploadsReady,
     restorableUploads, attachmentMutationPending, viewerId, currentSensitiveBody,
     clearRevealedBody, reveal, copy, run, forward, startEdit, saveBody, removeForever,
     openViewer, closeViewer, selectViewer, chooseDetailFiles, addAttachments, addRestored,

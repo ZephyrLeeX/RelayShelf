@@ -109,9 +109,9 @@ test.describe('upload resume journey', () => {
 
     // Bind the finished upload to a message from the composer.
     await page.getByRole('button', { name: '关闭上传任务' }).click()
-    await page.getByLabel('高级选项').click()
-    await expect(page.getByRole('button', { name: '添加到本条' })).toBeVisible()
-    await page.getByRole('button', { name: '添加到本条' }).click()
+    await page.getByLabel('已完成的上传').click()
+    await expect(page.getByRole('button', { name: '选用' })).toBeVisible()
+    await page.getByRole('button', { name: '选用' }).click()
     await expect(page.locator('.selected-files li', { hasText: name })).toBeVisible()
     await page.getByRole('button', { name: '发送', exact: true }).click()
     await expect(page.locator('.message-card', { hasText: name })).toBeVisible()

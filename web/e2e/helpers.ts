@@ -21,11 +21,14 @@ export async function logout(page: Page) {
   await expect(page).toHaveURL(/\/login/)
 }
 
-export async function composeAndSend(page: Page, body: string, options: { sensitive?: boolean; lifecycle?: 'TEMPORARY' | 'PERMANENT' } = {}) {
+export async function composeAndSend(page: Page, body: string, options: { sensitive?: boolean; lifecycle?: 'TEMPORARY' | 'PERMANENT'; contentType?: string } = {}) {
   await page.locator('#composer-body').fill(body)
+  if (options.contentType) {
+    await page.getByRole('button', { name: '内容类型' }).click()
+    await page.getByRole('option', { name: options.contentType, exact: true }).click()
+  }
   if (options.sensitive) {
-    await page.getByLabel('高级选项').click()
-    await page.getByLabel('敏感内容').check()
+    await page.getByRole('button', { name: '敏感内容', exact: true }).click()
   }
   if (options.lifecycle === 'PERMANENT') await page.getByLabel('保存位置').selectOption('PERMANENT')
   await page.getByRole('button', { name: '发送', exact: true }).click()
@@ -33,7 +36,7 @@ export async function composeAndSend(page: Page, body: string, options: { sensit
 
 export async function selectComposerFiles(page: Page, paths: string | string[]) {
   const chooser = page.waitForEvent('filechooser')
-  await page.getByRole('button', { name: '文件', exact: true }).click()
+  await page.getByRole('button', { name: '附件', exact: true }).click()
   await (await chooser).setFiles(paths)
 }
 

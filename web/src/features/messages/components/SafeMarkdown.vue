@@ -10,10 +10,25 @@ const rendered = ref('')
 let generation = 0
 const languageLoaders: Record<string, () => Promise<{ default: Parameters<typeof hljs.registerLanguage>[1] }>> = {
   shell: () => import('highlight.js/lib/languages/shell'), bash: () => import('highlight.js/lib/languages/bash'),
+  sh: () => import('highlight.js/lib/languages/bash'), zsh: () => import('highlight.js/lib/languages/bash'),
+  console: () => import('highlight.js/lib/languages/shell'),
   json: () => import('highlight.js/lib/languages/json'), yaml: () => import('highlight.js/lib/languages/yaml'),
-  javascript: () => import('highlight.js/lib/languages/javascript'), typescript: () => import('highlight.js/lib/languages/typescript'),
-  python: () => import('highlight.js/lib/languages/python'), sql: () => import('highlight.js/lib/languages/sql'),
-  markdown: () => import('highlight.js/lib/languages/markdown'),
+  yml: () => import('highlight.js/lib/languages/yaml'),
+  javascript: () => import('highlight.js/lib/languages/javascript'), js: () => import('highlight.js/lib/languages/javascript'),
+  typescript: () => import('highlight.js/lib/languages/typescript'), ts: () => import('highlight.js/lib/languages/typescript'),
+  python: () => import('highlight.js/lib/languages/python'), py: () => import('highlight.js/lib/languages/python'),
+  sql: () => import('highlight.js/lib/languages/sql'),
+  markdown: () => import('highlight.js/lib/languages/markdown'), md: () => import('highlight.js/lib/languages/markdown'),
+  java: () => import('highlight.js/lib/languages/java'),
+  go: () => import('highlight.js/lib/languages/go'), golang: () => import('highlight.js/lib/languages/go'),
+  rust: () => import('highlight.js/lib/languages/rust'), rs: () => import('highlight.js/lib/languages/rust'),
+  c: () => import('highlight.js/lib/languages/c'),
+  cpp: () => import('highlight.js/lib/languages/cpp'), cxx: () => import('highlight.js/lib/languages/cpp'),
+  csharp: () => import('highlight.js/lib/languages/csharp'), cs: () => import('highlight.js/lib/languages/csharp'),
+  powershell: () => import('highlight.js/lib/languages/powershell'), ps1: () => import('highlight.js/lib/languages/powershell'),
+  dockerfile: () => import('highlight.js/lib/languages/dockerfile'), docker: () => import('highlight.js/lib/languages/dockerfile'),
+  html: () => import('highlight.js/lib/languages/xml'), xml: () => import('highlight.js/lib/languages/xml'),
+  css: () => import('highlight.js/lib/languages/css'),
 }
 const loaded = new Set<string>()
 

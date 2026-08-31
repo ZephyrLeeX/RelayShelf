@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { alice, bob, composeAndSend, currentUserId, login, logout, marker } from './helpers'
+import { alice, bob, composeAndSend, login, logout, marker } from './helpers'
 
 test.describe('login journey', () => {
   test('login, survive reload, and logout', async ({ page }) => {
@@ -41,7 +41,7 @@ test.describe('send text journey', () => {
     await card.getByRole('button', { name: new RegExp(`打开内容`) }).click()
     const detail = page.getByRole('dialog', { name: '内容详情' })
     await expect(detail).toBeVisible()
-    await expect(detail.locator('pre')).toContainText(body)
+    await expect(detail.locator('.body-section')).toContainText(body)
   })
 })
 
@@ -141,14 +141,18 @@ test.describe('direct send and forward journey', () => {
     try {
       await login(alicePage, alice)
       await login(bobPage, bob)
-      const bobId = await currentUserId(bobPage)
 
       await alicePage.locator('#composer-body').fill(body)
-      await alicePage.getByLabel('高级选项').click()
-      await alicePage.getByPlaceholder('接收者用户 ID（UUID）').fill(bobId)
-      await expect(alicePage.getByText('直发会创建独立临时副本，不保留你的副本，也不带标签。')).toBeVisible()
+      // Recipients are picked by user search — no UUID input anywhere.
+      await expect(alicePage.getByPlaceholder(/UUID/)).toHaveCount(0)
+      await alicePage.getByLabel('接收人').click()
+      await alicePage.getByPlaceholder('搜索用户…').fill(bob.username)
+      await alicePage.getByRole('option', { name: `选择 ${bob.username} @${bob.username}` }).click()
+      await expect(alicePage.getByText('直发为独立临时副本，不带标签。')).toBeVisible()
       await alicePage.getByRole('button', { name: '直接发送' }).click()
       await expect(alicePage.locator('#composer-body')).toHaveValue('')
+      // The composer falls back to "send to myself" after the direct send.
+      await expect(alicePage.getByRole('button', { name: /接收人/ })).toContainText('自己')
 
       // Receiver sees the copy without reloading.
       await expect(bobPage.locator('.message-card', { hasText: body })).toBeVisible({ timeout: 20_000 })
@@ -177,6 +181,7 @@ test.describe('direct send and forward journey', () => {
       const detail = alicePage.getByRole('dialog', { name: '内容详情' })
       await expect(detail.getByPlaceholder('接收者用户 ID（UUID）')).toHaveCount(0)
       await detail.getByRole('button', { name: '转发', exact: true }).click()
+      await detail.getByLabel('接收人').click()
       await detail.getByPlaceholder('搜索用户…').fill(bob.username)
       await detail.getByRole('option', { name: `选择 ${bob.username} @${bob.username}` }).click()
       await detail.locator('.forward-submit').click()

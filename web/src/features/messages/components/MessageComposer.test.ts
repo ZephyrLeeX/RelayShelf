@@ -1,5 +1,5 @@
 import { VueQueryPlugin, QueryClient } from '@tanstack/vue-query'
-import { mount, flushPromises } from '@vue/test-utils'
+import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { BodyFormat, DefaultService, Lifecycle, UploadStatus, type UploadSession } from '@/api/generated'
@@ -10,6 +10,9 @@ import { uploadManager } from '@/features/uploads/manager'
 import { ResumeLedger } from '@/features/uploads/resumeLedger'
 import { uploadState } from '@/features/uploads/store'
 import type { UploadItem } from '@/features/uploads/types'
+
+const bob = { id: '11111111-1111-4111-8111-111111111111', username: 'bob', displayName: 'Bob' }
+const carol = { id: '22222222-2222-4222-8222-222222222222', username: 'carol', displayName: 'Carol' }
 
 function uploadSession(overrides: Partial<UploadSession> = {}): UploadSession {
   return { id: 'upload-a', originalFilename: 'photo.png', expectedSize: 4, clientMime: 'image/png', chunkSize: 4, partCount: 1, status: UploadStatus.COMPLETED, expiresAt: '2026-09-01T00:00:00Z', completedParts: [0], createdAt: '2026-08-28T00:00:00Z', updatedAt: '2026-08-28T00:00:00Z', ...overrides }
@@ -30,10 +33,39 @@ function mountComposer(lifecycle = Lifecycle.TEMPORARY) {
   return mount(MessageComposer, { props: { defaultLifecycle: lifecycle }, global: { plugins: [createPinia(), [VueQueryPlugin, { queryClient: client }]] } })
 }
 
+async function pickContentType(wrapper: VueWrapper, label: string) {
+  await wrapper.get('button[aria-label="内容类型"]').trigger('click')
+  const option = wrapper.findAll('[role="option"]').find((candidate) => candidate.attributes('aria-label') === label)
+  expect(option, `content type option ${label}`).toBeTruthy()
+  await option!.trigger('click')
+}
+
+async function pickRecipient(wrapper: VueWrapper, username: string) {
+  await wrapper.get('button[aria-label="接收人"]').trigger('click')
+  await flushPromises()
+  const option = wrapper.findAll('[role="option"]').find((candidate) => candidate.text().includes(`@${username}`))
+  expect(option, `recipient option @${username}`).toBeTruthy()
+  await option!.trigger('click')
+}
+
+async function pickSelf(wrapper: VueWrapper) {
+  await wrapper.get('button[aria-label="接收人"]').trigger('click')
+  const option = wrapper.findAll('[role="option"]').find((candidate) => candidate.text().includes('自己'))
+  expect(option).toBeTruthy()
+  await option!.trigger('click')
+}
+
+function sendByKeyboard(wrapper: VueWrapper) {
+  return wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
+}
+
 describe('MessageComposer', () => {
   beforeEach(() => {
     uploadState.items = []
     vi.spyOn(DefaultService, 'listTags').mockResolvedValue([])
+    vi.spyOn(DefaultService, 'listRecipientUsers').mockImplementation((query?: string) => Promise.resolve({
+      items: [bob, carol].filter((user) => !query || user.username.includes(query) || user.displayName.toLowerCase().includes(query.toLowerCase())),
+    }) as never)
     vi.stubGlobal('crypto', { randomUUID: vi.fn().mockReturnValueOnce('key-a').mockReturnValueOnce('key-b') })
   })
   it('keeps Enter as a newline and sends on Ctrl/Cmd+Enter', async () => {
@@ -51,22 +83,99 @@ describe('MessageComposer', () => {
     await flushPromises()
     expect(create).toHaveBeenLastCalledWith('key-b', expect.objectContaining({ body: 'line two' }))
   })
-  it('uses the direct-send contract for a valid recipient on Ctrl+Enter', async () => {
+  it('exposes no UUID input and no More menu anywhere in the composer', () => {
+    const wrapper = mountComposer()
+    expect(wrapper.html()).not.toContain('UUID')
+    expect(wrapper.html()).not.toContain('接收者用户 ID')
+    expect(wrapper.find('summary[aria-label="高级选项"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Ctrl/⌘')
+    expect(wrapper.text()).toContain('自己')
+  })
+  it('serializes content types onto the TEXT/MARKDOWN contract', async () => {
+    let sequence = 0
+    vi.stubGlobal('crypto', { randomUUID: () => `key-${sequence++}` })
+    const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
+    const wrapper = mountComposer(Lifecycle.PERMANENT)
+    expect(wrapper.text()).toContain('长期内容尚未添加标签')
+
+    await wrapper.get('textarea').setValue('# heading')
+    await pickContentType(wrapper, 'Markdown')
+    await sendByKeyboard(wrapper)
+    await flushPromises()
+    expect(create).toHaveBeenLastCalledWith(`key-${sequence - 1}`, expect.objectContaining({ body: '# heading', bodyFormat: BodyFormat.MARKDOWN, lifecycle: Lifecycle.PERMANENT }))
+
+    await wrapper.get('textarea').setValue('docker compose ps')
+    await pickContentType(wrapper, 'Shell')
+    expect(wrapper.get('button[aria-label="内容类型"]').text()).toContain('Shell')
+    await sendByKeyboard(wrapper)
+    await flushPromises()
+    expect(create).toHaveBeenLastCalledWith(`key-${sequence - 1}`, expect.objectContaining({ body: '```bash\ndocker compose ps\n```', bodyFormat: BodyFormat.MARKDOWN }))
+
+    await wrapper.get('textarea').setValue('print("x")')
+    await pickContentType(wrapper, 'Python')
+    await sendByKeyboard(wrapper)
+    await flushPromises()
+    expect(create).toHaveBeenLastCalledWith(`key-${sequence - 1}`, expect.objectContaining({ body: '```python\nprint("x")\n```', bodyFormat: BodyFormat.MARKDOWN }))
+
+    await wrapper.get('textarea').setValue('class A {}')
+    await pickContentType(wrapper, 'Java')
+    // The textarea itself never shows the fence.
+    expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('class A {}')
+    await sendByKeyboard(wrapper)
+    await flushPromises()
+    expect(create).toHaveBeenLastCalledWith(`key-${sequence - 1}`, expect.objectContaining({ body: '```java\nclass A {}\n```', bodyFormat: BodyFormat.MARKDOWN }))
+  })
+  it('uses the direct-send contract for a picked recipient on Ctrl+Enter', async () => {
     const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
     const direct = vi.spyOn(DefaultService, 'directSendMessage').mockResolvedValue({
       messageId: 'message-direct', createdAt: '2026-08-31T00:00:00Z', expiresAt: '2026-09-01T00:00:00Z',
     })
     const wrapper = mountComposer(Lifecycle.PERMANENT)
-    await wrapper.get('.direct-send input').setValue('11111111-1111-4111-8111-111111111111')
+    await pickRecipient(wrapper, 'bob')
+    expect(wrapper.get('button[aria-label="接收人"]').text()).toContain('@bob')
     await wrapper.get('textarea').setValue('send once')
-    await wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await sendByKeyboard(wrapper)
     await flushPromises()
     expect(create).not.toHaveBeenCalled()
     expect(direct).toHaveBeenCalledWith('key-a', {
-      recipientUserId: '11111111-1111-4111-8111-111111111111',
+      recipientUserId: bob.id,
       body: 'send once', bodyFormat: BodyFormat.TEXT, sensitive: false, uploadIds: [],
     })
     expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('')
+    // A successful direct send falls back to sending to myself.
+    expect(wrapper.get('button[aria-label="接收人"]').text()).toContain('自己')
+  })
+  it('lists recipient users through the shared picker endpoint', async () => {
+    const wrapper = mountComposer()
+    await pickRecipient(wrapper, 'carol')
+    expect(wrapper.get('button[aria-label="接收人"]').text()).toContain('@carol')
+
+    await wrapper.get('button[aria-label="接收人"]').trigger('click')
+    await flushPromises()
+    expect(DefaultService.listRecipientUsers).toHaveBeenCalledWith(undefined, 8)
+  })
+  it('restores send-to-myself and a normal createMessage payload', async () => {
+    const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
+    const direct = vi.spyOn(DefaultService, 'directSendMessage')
+    const wrapper = mountComposer()
+    await pickRecipient(wrapper, 'bob')
+    await pickSelf(wrapper)
+    expect(wrapper.get('button[aria-label="接收人"]').text()).toContain('自己')
+    await wrapper.get('textarea').setValue('normal again')
+    await sendByKeyboard(wrapper)
+    await flushPromises()
+    expect(direct).not.toHaveBeenCalled()
+    expect(create).toHaveBeenCalledWith('key-a', expect.objectContaining({ body: 'normal again', bodyFormat: BodyFormat.TEXT, lifecycle: Lifecycle.TEMPORARY }))
+  })
+  it('disables lifecycle and tags while a direct recipient is selected', async () => {
+    const wrapper = mountComposer()
+    expect(wrapper.get('.lifecycle-control select').attributes('disabled')).toBeUndefined()
+    await pickRecipient(wrapper, 'bob')
+    expect(wrapper.get('.lifecycle-control select').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('.tag-picker').classes()).toContain('disabled')
+    expect(wrapper.text()).toContain('直发为独立临时副本')
+    await pickSelf(wrapper)
+    expect(wrapper.get('.lifecycle-control select').attributes('disabled')).toBeUndefined()
   })
   it('reuses the direct-send idempotency key after a network failure and rotates it when the recipient changes', async () => {
     const direct = vi.spyOn(DefaultService, 'directSendMessage')
@@ -74,8 +183,7 @@ describe('MessageComposer', () => {
       .mockRejectedValueOnce(new TypeError('still offline'))
       .mockResolvedValueOnce({ messageId: 'message-b', createdAt: '2026-08-31T00:00:00Z', expiresAt: '2026-09-01T00:00:00Z' })
     const wrapper = mountComposer()
-    const recipient = wrapper.get('.direct-send input')
-    await recipient.setValue('11111111-1111-4111-8111-111111111111')
+    await pickRecipient(wrapper, 'bob')
     await wrapper.get('textarea').setValue('uncertain direct send')
     await wrapper.get('button.primary').trigger('click')
     await flushPromises()
@@ -86,7 +194,7 @@ describe('MessageComposer', () => {
     expect(direct.mock.calls[1][0]).toBe('key-a')
 
     await wrapper.get('textarea').setValue('second direct send')
-    await recipient.setValue('22222222-2222-4222-8222-222222222222')
+    await pickRecipient(wrapper, 'carol')
     await wrapper.get('button.primary').trigger('click')
     await flushPromises()
     expect(direct.mock.calls[2][0]).toBe('key-b')
@@ -96,19 +204,18 @@ describe('MessageComposer', () => {
     const pending = new Promise<{ messageId: string; createdAt: string; expiresAt: string }>((resolve) => { resolveFirst = resolve })
     const direct = vi.spyOn(DefaultService, 'directSendMessage').mockReturnValueOnce(pending as never)
     const wrapper = mountComposer()
-    const recipient = wrapper.get<HTMLInputElement>('.direct-send input')
-    await recipient.setValue('11111111-1111-4111-8111-111111111111')
+    await pickRecipient(wrapper, 'bob')
     await wrapper.get('textarea').setValue('keep this draft')
     await wrapper.get('button.primary').trigger('click')
     expect(direct).toHaveBeenCalledWith('key-a', expect.objectContaining({
-      recipientUserId: '11111111-1111-4111-8111-111111111111',
+      recipientUserId: bob.id,
     }))
 
-    await recipient.setValue('22222222-2222-4222-8222-222222222222')
+    await pickRecipient(wrapper, 'carol')
     resolveFirst({ messageId: 'message-a', createdAt: '2026-08-31T00:00:00Z', expiresAt: '2026-09-01T00:00:00Z' })
     await flushPromises()
 
-    expect(recipient.element.value).toBe('22222222-2222-4222-8222-222222222222')
+    expect(wrapper.get('button[aria-label="接收人"]').text()).toContain('@carol')
     expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('keep this draft')
   })
   it('blocks normal and direct sends from running concurrently in either direction', async () => {
@@ -120,18 +227,18 @@ describe('MessageComposer', () => {
     const normalFirst = mountComposer()
     await normalFirst.get('textarea').setValue('normal first')
     await normalFirst.get('button.primary').trigger('click')
-    await normalFirst.get('.direct-send input').setValue('11111111-1111-4111-8111-111111111111')
+    await pickRecipient(normalFirst, 'bob')
     expect(normalFirst.get('button.primary').attributes('disabled')).toBeDefined()
-    await normalFirst.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await sendByKeyboard(normalFirst)
     expect(direct).not.toHaveBeenCalled()
 
     const directFirst = mountComposer()
     await directFirst.get('textarea').setValue('direct first')
-    await directFirst.get('.direct-send input').setValue('22222222-2222-4222-8222-222222222222')
+    await pickRecipient(directFirst, 'bob')
     await directFirst.get('button.primary').trigger('click')
-    await directFirst.get('.direct-send input').setValue('')
+    await pickSelf(directFirst)
     expect(directFirst.get('button.primary').attributes('disabled')).toBeDefined()
-    await directFirst.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await sendByKeyboard(directFirst)
     expect(create).toHaveBeenCalledTimes(1)
   })
   it('selects pasted images through UploadManager without inserting clipboard text', async () => {
@@ -175,21 +282,6 @@ describe('MessageComposer', () => {
     await wrapper.get('button.primary').trigger('click')
     await flushPromises()
     expect(create).toHaveBeenCalledWith('key-a', expect.objectContaining({ body: null, uploadIds: ['upload-1'] }))
-  })
-  it('maps Markdown and Code UI to contract formats and allows untagged permanent content', async () => {
-    const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
-    const wrapper = mountComposer(Lifecycle.PERMANENT)
-    expect(wrapper.text()).toContain('长期内容尚未添加标签')
-    await wrapper.get('textarea').setValue('# heading')
-    await wrapper.findAll('.modes button')[1].trigger('click')
-    await wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
-    await flushPromises()
-    expect(create).toHaveBeenLastCalledWith('key-a', expect.objectContaining({ bodyFormat: BodyFormat.MARKDOWN, lifecycle: Lifecycle.PERMANENT }))
-    await wrapper.get('textarea').setValue('echo ok')
-    await wrapper.findAll('.modes button')[2].trigger('click')
-    await wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
-    await flushPromises()
-    expect(create).toHaveBeenLastCalledWith('key-b', expect.objectContaining({ bodyFormat: BodyFormat.TEXT }))
   })
   it('uses PERMANENT for a new send after navigating from temporary to permanent', async () => {
     const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
@@ -236,14 +328,14 @@ describe('MessageComposer', () => {
     const create = vi.spyOn(DefaultService, 'createMessage').mockRejectedValueOnce(new TypeError('offline')).mockResolvedValueOnce(messageFixture()).mockResolvedValueOnce(messageFixture())
     const wrapper = mountComposer()
     await wrapper.get('textarea').setValue('uncertain send')
-    await wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await sendByKeyboard(wrapper)
     await flushPromises()
     expect(create.mock.calls[0][0]).toBe('key-a')
     await wrapper.get('button.primary').trigger('click')
     await flushPromises()
     expect(create.mock.calls[1][0]).toBe('key-a')
     await wrapper.get('textarea').setValue('changed payload')
-    await wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await sendByKeyboard(wrapper)
     await flushPromises()
     expect(create.mock.calls[2][0]).toBe('key-b')
   })
@@ -253,7 +345,7 @@ describe('MessageComposer', () => {
     const create = vi.spyOn(DefaultService, 'createMessage').mockReturnValueOnce(pending as never).mockResolvedValueOnce(messageFixture())
     const wrapper = mountComposer()
     await wrapper.get('textarea').setValue('F1')
-    await wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await sendByKeyboard(wrapper)
     await wrapper.get('textarea').setValue('F2')
     expect(create).toHaveBeenNthCalledWith(1, 'key-a', expect.objectContaining({ body:'F1' }))
     rejectFirst(new TypeError('offline'))
@@ -288,18 +380,21 @@ describe('MessageComposer', () => {
     const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
     const wrapper = mountComposer()
     await wrapper.get('textarea').setValue('F1')
-    await wrapper.get('.toggle input').setValue(true)
-    await wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await wrapper.get('button[aria-label="敏感内容"]').trigger('click')
+    expect(wrapper.get('button[aria-label="敏感内容"]').attributes('aria-pressed')).toBe('true')
+    await sendByKeyboard(wrapper)
     await flushPromises()
     expect(create).toHaveBeenCalledWith('key-a', expect.objectContaining({ body: 'F1', sensitive: true }))
     expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('')
-    expect(wrapper.get<HTMLInputElement>('.toggle input').element.checked).toBe(false)
+    expect(wrapper.get('button[aria-label="敏感内容"]').attributes('aria-pressed')).toBe('false')
   })
   it('preserves a changed draft after the pending request succeeds and uses a new key for it', async () => {
     vi.mocked(DefaultService.listTags).mockResolvedValue([{
       id: 'tag-f2', name: 'F2 tag', color: '#3B8C6E',
       createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
     }])
+    let sequence = 0
+    vi.stubGlobal('crypto', { randomUUID: () => `key-${sequence++}` })
     let resolveFirst!: (value: ReturnType<typeof messageFixture>) => void
     const pending = new Promise<ReturnType<typeof messageFixture>>((resolve) => { resolveFirst = resolve })
     const create = vi.spyOn(DefaultService, 'createMessage').mockReturnValueOnce(pending as never).mockResolvedValueOnce(messageFixture())
@@ -308,34 +403,34 @@ describe('MessageComposer', () => {
     await flushPromises()
 
     await wrapper.get('textarea').setValue('F1')
-    await wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
-    expect(create).toHaveBeenNthCalledWith(1, 'key-a', expect.objectContaining({
+    await sendByKeyboard(wrapper)
+    expect(create).toHaveBeenNthCalledWith(1, 'key-0', expect.objectContaining({
       body: 'F1', bodyFormat: BodyFormat.TEXT, lifecycle: Lifecycle.TEMPORARY,
       sensitive: false, tagIds: [],
     }))
 
     await wrapper.get('textarea').setValue('F2')
-    await wrapper.findAll('.modes button')[1].trigger('click')
+    await pickContentType(wrapper, 'Markdown')
     await wrapper.get('select').setValue(Lifecycle.PERMANENT)
-    await wrapper.get('.toggle input').setValue(true)
+    await wrapper.get('button[aria-label="敏感内容"]').trigger('click')
     await wrapper.get('.tag-options input').setValue(true)
-    await wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await sendByKeyboard(wrapper)
     expect(create).toHaveBeenCalledTimes(1)
-    expect(create).not.toHaveBeenCalledWith('key-a', expect.objectContaining({ body: 'F2' }))
+    expect(create).not.toHaveBeenCalledWith('key-0', expect.objectContaining({ body: 'F2' }))
     resolveFirst(messageFixture())
     await flushPromises()
 
     expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('F2')
-    expect(wrapper.findAll('.modes button')[1].classes()).toContain('active')
+    expect(wrapper.get('button[aria-label="内容类型"]').text()).toContain('Markdown')
     expect(wrapper.get<HTMLSelectElement>('select').element.value).toBe(Lifecycle.PERMANENT)
-    expect(wrapper.get<HTMLInputElement>('.toggle input').element.checked).toBe(true)
+    expect(wrapper.get('button[aria-label="敏感内容"]').attributes('aria-pressed')).toBe('true')
     expect(wrapper.get<HTMLInputElement>('.tag-options input').element.checked).toBe(true)
     expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.messages.root() })
     expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.search.root() })
 
-    await wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await sendByKeyboard(wrapper)
     await flushPromises()
-    expect(create).toHaveBeenNthCalledWith(2, 'key-b', expect.objectContaining({
+    expect(create).toHaveBeenNthCalledWith(2, 'key-1', expect.objectContaining({
       body: 'F2', bodyFormat: BodyFormat.MARKDOWN, lifecycle: Lifecycle.PERMANENT,
       sensitive: true, tagIds: ['tag-f2'],
     }))
@@ -345,8 +440,8 @@ describe('MessageComposer', () => {
     const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
     const wrapper = mountComposer()
     await wrapper.get('textarea').setValue('secret')
-    await wrapper.get('.toggle input').setValue(true)
-    await wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await wrapper.get('button[aria-label="敏感内容"]').trigger('click')
+    await sendByKeyboard(wrapper)
     await flushPromises()
     expect(create).toHaveBeenCalledWith('key-a', expect.objectContaining({ sensitive: true }))
   })
@@ -394,7 +489,7 @@ describe('MessageComposer', () => {
     const wrapper = mountComposer()
     await flushPromises()
     expect(wrapper.text()).toContain('已完成的上传')
-    await wrapper.get('.restored li button').trigger('click')
+    await wrapper.get('.restored-menu li button').trigger('click')
     await wrapper.get('button.primary').trigger('click')
     await flushPromises()
     expect(create).toHaveBeenCalledWith('fixed-key', expect.objectContaining({ body: null, uploadIds: ['upload-done'] }))
@@ -410,12 +505,12 @@ describe('MessageComposer', () => {
     vi.spyOn(DefaultService, 'createMessage').mockRejectedValue(new TypeError('offline'))
     const wrapper = mountComposer()
     await flushPromises()
-    await wrapper.get('.restored li button').trigger('click')
+    await wrapper.get('.restored-menu li button').trigger('click')
     await wrapper.get('button.primary').trigger('click')
     await flushPromises()
     expect(uploadState.items).toHaveLength(1)
     expect(new ResumeLedger().read('user-1')).toHaveLength(1)
-    expect(wrapper.find('.restored li').exists()).toBe(false)
+    expect(wrapper.find('.restored-menu li').exists()).toBe(false)
     expect(wrapper.text()).toContain('photo.png')
   })
 
@@ -428,7 +523,7 @@ describe('MessageComposer', () => {
     Object.defineProperty(input.element, 'files', { configurable: true, value: [new File(['data'], 'photo.png')] })
     await input.trigger('change')
     await wrapper.get('textarea').setValue('F1')
-    await wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await sendByKeyboard(wrapper)
     await flushPromises()
     expect(create).toHaveBeenCalledWith('key-a', expect.objectContaining({ body: 'F1', uploadIds: ['upload-a'] }))
     expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('')
@@ -450,7 +545,7 @@ describe('MessageComposer', () => {
     Object.defineProperty(input.element, 'files', { configurable: true, value: [new File(['data'], 'photo.png')] })
     await input.trigger('change')
     await wrapper.get('textarea').setValue('F1')
-    await wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await sendByKeyboard(wrapper)
     expect(create).toHaveBeenNthCalledWith(1, 'key-a', expect.objectContaining({ body: 'F1', uploadIds: ['upload-a'] }))
 
     const second = wrapper.get<HTMLInputElement>('input[type="file"]')
@@ -466,7 +561,7 @@ describe('MessageComposer', () => {
 
     uploadState.items[0] = uploadItem('client-b', 'COMPLETED', uploadSession({ id: 'upload-b', originalFilename: 'second.png' }))
     await flushPromises()
-    await wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await sendByKeyboard(wrapper)
     await flushPromises()
     expect(create).toHaveBeenNthCalledWith(2, 'key-b', expect.objectContaining({ body: 'F2', uploadIds: ['upload-b'] }))
   })
@@ -480,7 +575,7 @@ describe('MessageComposer', () => {
     Object.defineProperty(input.element, 'files', { configurable: true, value: [new File(['data'], 'photo.png')] })
     await input.trigger('change')
     await wrapper.get('textarea').setValue('F1')
-    await wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await sendByKeyboard(wrapper)
     await flushPromises()
     expect(create).toHaveBeenNthCalledWith(1, 'key-a', expect.objectContaining({ body: 'F1', uploadIds: ['upload-a'] }))
     // Removing A through the GLOBAL Upload Queue keeps the Composer selection
@@ -500,7 +595,7 @@ describe('MessageComposer', () => {
     const create = vi.spyOn(DefaultService, 'createMessage').mockRejectedValueOnce(new TypeError('offline')).mockResolvedValueOnce(messageFixture())
     const wrapper = mountComposer()
     await wrapper.get('textarea').setValue('F1')
-    await wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await sendByKeyboard(wrapper)
     await flushPromises()
     expect(create.mock.calls[0][0]).toBe('key-a')
     const input = wrapper.get<HTMLInputElement>('input[type="file"]')
