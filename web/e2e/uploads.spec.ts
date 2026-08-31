@@ -3,7 +3,7 @@ import * as crypto from 'node:crypto'
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { alice, login, marker } from './helpers'
+import { alice, login, marker, selectComposerFiles } from './helpers'
 
 /** A deterministic multi-chunk payload spanning three 8 MiB server chunks. */
 function threeChunkFile(name: string): string {
@@ -24,7 +24,7 @@ test.describe('upload journey', () => {
     const digest = crypto.createHash('sha256').update(readFileSync(path)).digest('hex')
     await login(page, alice)
 
-    await page.locator('.drop-zone input[type=file]').setInputFiles(path)
+    await selectComposerFiles(page, path)
     await expect(page.locator('.selected-files li', { hasText: name })).toBeVisible()
     await expect(page.locator('.selected-files li', { hasText: name })).toContainText('COMPLETED', { timeout: 60_000 })
 
@@ -38,7 +38,7 @@ test.describe('upload journey', () => {
     // The attachment downloads back byte-identical content through the
     // viewer's real download link.
     await card.getByRole('button', { name: /打开内容/ }).click()
-    const detail = page.locator('.detail')
+    const detail = page.getByRole('dialog', { name: '内容详情' })
     await expect(detail).toBeVisible()
     await detail.locator('.attachment', { hasText: name }).click()
     const viewer = page.locator('.viewer')
@@ -75,7 +75,7 @@ test.describe('upload resume journey', () => {
       && response.request().method() === 'POST'
       && response.status() === 201,
     )
-    await page.locator('.drop-zone input[type=file]').setInputFiles(path)
+    await selectComposerFiles(page, path)
     const uploadId = (await (await created).json()) as { id: string }
 
     // Part 0 really reached the server.
@@ -94,7 +94,7 @@ test.describe('upload resume journey', () => {
 
     // The interrupted session is restored from the resume ledger; open the
     // transfer shelf to see it waiting for the original file.
-    await page.getByRole('button', { name: /打开上传任务/ }).click()
+    await page.getByRole('button', { name: /上传任务/ }).click()
     const queueItem = page.locator('.upload-item', { hasText: name })
     await expect(queueItem).toBeVisible({ timeout: 20_000 })
     await expect(page.getByText(/个上传等待重新选择原文件/)).toBeVisible()
@@ -102,11 +102,14 @@ test.describe('upload resume journey', () => {
 
     // Routes are gone after reload; reselecting the same file continues from
     // the server-confirmed part 0.
-    await queueItem.locator('input[type=file]').setInputFiles(path)
+    const chooser = page.waitForEvent('filechooser')
+    await queueItem.getByRole('button', { name: '选择原文件' }).click()
+    await (await chooser).setFiles(path)
     await expect(queueItem.getByText('COMPLETED')).toBeVisible({ timeout: 120_000 })
 
     // Bind the finished upload to a message from the composer.
     await page.getByRole('button', { name: '关闭上传任务' }).click()
+    await page.getByLabel('高级选项').click()
     await expect(page.getByRole('button', { name: '添加到本条' })).toBeVisible()
     await page.getByRole('button', { name: '添加到本条' }).click()
     await expect(page.locator('.selected-files li', { hasText: name })).toBeVisible()
@@ -120,8 +123,8 @@ test.describe('TOTP journey', () => {
     await login(page, alice)
 
     // Open the account drawer and enroll.
-    await page.locator('button.account').click()
-    const drawer = page.locator('.drawer')
+    await page.getByRole('button', { name: alice.username, exact: true }).click()
+    const drawer = page.getByRole('dialog', { name: '设备与会话' })
     await expect(drawer).toBeVisible()
     await drawer.getByLabel('当前密码').last().fill(alice.password)
     await drawer.getByRole('button', { name: '开始启用' }).click()
@@ -153,8 +156,8 @@ test.describe('TOTP journey', () => {
     await expect(page).toHaveURL(/\/temporary$/)
 
     // Leave alice without TOTP so the remaining journeys stay password-only.
-    await page.locator('button.account').click()
-    const cleanup = page.locator('.drawer')
+    await page.getByRole('button', { name: alice.username, exact: true }).click()
+    const cleanup = page.getByRole('dialog', { name: '设备与会话' })
     await expect(cleanup).toBeVisible()
     await waitForNextStep()
     await cleanup.getByLabel('验证码').fill(totpCode(secret))

@@ -68,6 +68,72 @@ describe('MessageComposer', () => {
     })
     expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('')
   })
+  it('reuses the direct-send idempotency key after a network failure and rotates it when the recipient changes', async () => {
+    const direct = vi.spyOn(DefaultService, 'directSendMessage')
+      .mockRejectedValueOnce(new TypeError('offline'))
+      .mockRejectedValueOnce(new TypeError('still offline'))
+      .mockResolvedValueOnce({ messageId: 'message-b', createdAt: '2026-08-31T00:00:00Z', expiresAt: '2026-09-01T00:00:00Z' })
+    const wrapper = mountComposer()
+    const recipient = wrapper.get('.direct-send input')
+    await recipient.setValue('11111111-1111-4111-8111-111111111111')
+    await wrapper.get('textarea').setValue('uncertain direct send')
+    await wrapper.get('button.primary').trigger('click')
+    await flushPromises()
+    expect(direct.mock.calls[0][0]).toBe('key-a')
+
+    await wrapper.get('button.primary').trigger('click')
+    await flushPromises()
+    expect(direct.mock.calls[1][0]).toBe('key-a')
+
+    await wrapper.get('textarea').setValue('second direct send')
+    await recipient.setValue('22222222-2222-4222-8222-222222222222')
+    await wrapper.get('button.primary').trigger('click')
+    await flushPromises()
+    expect(direct.mock.calls[2][0]).toBe('key-b')
+  })
+  it('preserves a new recipient draft when the pending direct send succeeds', async () => {
+    let resolveFirst!: (value: { messageId: string; createdAt: string; expiresAt: string }) => void
+    const pending = new Promise<{ messageId: string; createdAt: string; expiresAt: string }>((resolve) => { resolveFirst = resolve })
+    const direct = vi.spyOn(DefaultService, 'directSendMessage').mockReturnValueOnce(pending as never)
+    const wrapper = mountComposer()
+    const recipient = wrapper.get<HTMLInputElement>('.direct-send input')
+    await recipient.setValue('11111111-1111-4111-8111-111111111111')
+    await wrapper.get('textarea').setValue('keep this draft')
+    await wrapper.get('button.primary').trigger('click')
+    expect(direct).toHaveBeenCalledWith('key-a', expect.objectContaining({
+      recipientUserId: '11111111-1111-4111-8111-111111111111',
+    }))
+
+    await recipient.setValue('22222222-2222-4222-8222-222222222222')
+    resolveFirst({ messageId: 'message-a', createdAt: '2026-08-31T00:00:00Z', expiresAt: '2026-09-01T00:00:00Z' })
+    await flushPromises()
+
+    expect(recipient.element.value).toBe('22222222-2222-4222-8222-222222222222')
+    expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('keep this draft')
+  })
+  it('blocks normal and direct sends from running concurrently in either direction', async () => {
+    const pendingMessage = new Promise<ReturnType<typeof messageFixture>>(() => {})
+    const pendingDirect = new Promise<{ messageId: string; createdAt: string; expiresAt: string }>(() => {})
+    const create = vi.spyOn(DefaultService, 'createMessage').mockReturnValue(pendingMessage as never)
+    const direct = vi.spyOn(DefaultService, 'directSendMessage').mockReturnValue(pendingDirect as never)
+
+    const normalFirst = mountComposer()
+    await normalFirst.get('textarea').setValue('normal first')
+    await normalFirst.get('button.primary').trigger('click')
+    await normalFirst.get('.direct-send input').setValue('11111111-1111-4111-8111-111111111111')
+    expect(normalFirst.get('button.primary').attributes('disabled')).toBeDefined()
+    await normalFirst.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
+    expect(direct).not.toHaveBeenCalled()
+
+    const directFirst = mountComposer()
+    await directFirst.get('textarea').setValue('direct first')
+    await directFirst.get('.direct-send input').setValue('22222222-2222-4222-8222-222222222222')
+    await directFirst.get('button.primary').trigger('click')
+    await directFirst.get('.direct-send input').setValue('')
+    expect(directFirst.get('button.primary').attributes('disabled')).toBeDefined()
+    await directFirst.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
+    expect(create).toHaveBeenCalledTimes(1)
+  })
   it('selects pasted images through UploadManager without inserting clipboard text', async () => {
     uploadState.items.push(uploadItem('client-paste', 'COMPLETED', uploadSession({ id: 'upload-paste', originalFilename: 'pasted.png' })))
     const addFiles = vi.spyOn(uploadManager, 'addFiles').mockResolvedValue(['client-paste'])

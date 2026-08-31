@@ -39,7 +39,7 @@ test.describe('send text journey', () => {
     await expect(page.locator('.message-card', { hasText: body })).toBeVisible()
 
     await card.getByRole('button', { name: new RegExp(`打开内容`) }).click()
-    const detail = page.locator('.detail')
+    const detail = page.getByRole('dialog', { name: '内容详情' })
     await expect(detail).toBeVisible()
     await expect(detail.locator('pre')).toContainText(body)
   })
@@ -110,7 +110,7 @@ test.describe('search journey', () => {
     await composeAndSend(page, `prefix ${needle} suffix`)
 
     await page.getByLabel('搜索内容').fill(needle)
-    await page.getByRole('button', { name: '搜索', exact: true }).click()
+    await page.getByLabel('搜索内容').press('Enter')
     await expect(page.locator('.message-card', { hasText: needle })).toBeVisible()
     await expect(page.locator('.message-card', { hasText: needle }).first()).toBeVisible()
 
@@ -121,7 +121,7 @@ test.describe('search journey', () => {
       await login(bobPage, bob)
       await bobPage.getByLabel('搜索内容').fill(needle)
       const settled = bobPage.waitForResponse((response) => response.url().includes('/api/v1/search') && response.request().method() === 'GET' && response.ok())
-      await bobPage.getByRole('button', { name: '搜索', exact: true }).click()
+      await bobPage.getByLabel('搜索内容').press('Enter')
       await settled
       await expect(bobPage.locator('.message-card', { hasText: needle })).toHaveCount(0)
       await expect(bobPage.locator('.feed[aria-busy="false"] .empty')).toBeVisible()
@@ -144,8 +144,9 @@ test.describe('direct send and forward journey', () => {
       const bobId = await currentUserId(bobPage)
 
       await alicePage.locator('#composer-body').fill(body)
-      await alicePage.getByPlaceholder('接收者用户 ID（UUID），留空则保存到自己的内容流').fill(bobId)
-      await expect(alicePage.getByText('直发内容会作为独立临时副本发送给接收者')).toBeVisible()
+      await alicePage.getByLabel('高级选项').click()
+      await alicePage.getByPlaceholder('接收者用户 ID（UUID）').fill(bobId)
+      await expect(alicePage.getByText('直发会创建独立临时副本，不保留你的副本，也不带标签。')).toBeVisible()
       await alicePage.getByRole('button', { name: '直接发送' }).click()
       await expect(alicePage.locator('#composer-body')).toHaveValue('')
 
@@ -174,7 +175,7 @@ test.describe('direct send and forward journey', () => {
       await composeAndSend(alicePage, body)
       const card = alicePage.locator('.message-card', { hasText: body })
       await card.getByRole('button', { name: /打开内容/ }).click()
-      const detail = alicePage.locator('.detail')
+      const detail = alicePage.getByRole('dialog', { name: '内容详情' })
       await detail.getByPlaceholder('接收者用户 ID（UUID）').fill(bobId)
       await detail.getByRole('button', { name: '转发副本' }).click()
       await expect(detail.getByText('已转发；接收者会看到一条独立副本。')).toBeVisible()
@@ -223,7 +224,7 @@ test.describe('sensitive reveal and copy journey', () => {
     await expect(page.locator('.message-card pre', { hasText: secret })).toHaveCount(0)
 
     await card.getByRole('button', { name: /打开内容/ }).click()
-    const detail = page.locator('.detail')
+    const detail = page.getByRole('dialog', { name: '内容详情' })
     await expect(detail).toBeVisible()
     // Not revealed yet.
     await expect(detail.locator('pre')).toHaveCount(0)

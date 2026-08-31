@@ -24,6 +24,13 @@ interface SendSnapshot {
   payload: CreateMessageRequest
 }
 
+interface DirectSendSnapshot {
+  key: string
+  fingerprint: string
+  identity: string
+  payload: DirectSendRequest
+}
+
 function isUUID(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
 }
@@ -72,6 +79,7 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
     directMode.value ? 'DIRECT' : lifecycle.value,
     sensitive.value,
     directMode.value ? 'direct' : [...selectedTags.value].sort().join(','),
+    directMode.value ? directRecipient.value.trim() : '',
   ]
   const requestFingerprint = computed(() => JSON.stringify({ draft: draftFields(), uploadIds: selectedUploadIds.value }))
   const draftIdentity = computed(() => JSON.stringify({ draft: draftFields(), selection: [...selectedUploadClients.value] }))
@@ -115,7 +123,7 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
 
   const direct = useMutation({
     retry: false,
-    mutationFn: (snapshot: { key: string; identity: string; payload: DirectSendRequest }) =>
+    mutationFn: (snapshot: DirectSendSnapshot) =>
       DefaultService.directSendMessage(snapshot.key, snapshot.payload),
     onSuccess: (_result, snapshot) => {
       const unchanged = draftIdentity.value === snapshot.identity
@@ -133,18 +141,21 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
         directRecipient.value = ''
       }
       activeKey.value = ''
+      attemptedIdentity = ''
+      attemptedFingerprint = ''
       failed.value = false
       error.value = ''
       void client.invalidateQueries({ queryKey: queryKeys.messages.root() })
       onSent?.()
     },
-    onError: (cause) => {
+    onError: (cause, snapshot) => {
       failed.value = true
       error.value = displayError(cause)
+      if (requestFingerprint.value !== snapshot.fingerprint || draftIdentity.value !== snapshot.identity) activeKey.value = ''
     },
   })
 
-  const sending = computed(() => directMode.value ? direct.isPending.value : send.isPending.value)
+  const sending = computed(() => send.isPending.value || direct.isPending.value)
 
   watch([requestFingerprint, draftIdentity], ([fingerprint, identity]) => {
     if (failed.value && (fingerprint !== attemptedFingerprint || identity !== attemptedIdentity)) {
@@ -163,7 +174,7 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
   }
 
   function submit() {
-    if (send.isPending.value || !validate()) return
+    if (sending.value || !validate()) return
     if (!activeKey.value) activeKey.value = crypto.randomUUID()
     attemptedIdentity = draftIdentity.value
     attemptedFingerprint = requestFingerprint.value
@@ -183,10 +194,14 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
   }
 
   function submitDirect() {
-    if (direct.isPending.value || !validate()) return
+    if (sending.value || !validate()) return
+    if (!activeKey.value) activeKey.value = crypto.randomUUID()
+    attemptedIdentity = draftIdentity.value
+    attemptedFingerprint = requestFingerprint.value
     direct.mutate({
-      key: activeKey.value || crypto.randomUUID(),
-      identity: draftIdentity.value,
+      key: activeKey.value,
+      fingerprint: attemptedFingerprint,
+      identity: attemptedIdentity,
       payload: {
         recipientUserId: directRecipient.value.trim(),
         body: body.value.trim() ? body.value : null,

@@ -23,9 +23,18 @@ export async function logout(page: Page) {
 
 export async function composeAndSend(page: Page, body: string, options: { sensitive?: boolean; lifecycle?: 'TEMPORARY' | 'PERMANENT' } = {}) {
   await page.locator('#composer-body').fill(body)
-  if (options.sensitive) await page.getByLabel('Sensitive').check()
+  if (options.sensitive) {
+    await page.getByLabel('高级选项').click()
+    await page.getByLabel('Sensitive').check()
+  }
   if (options.lifecycle === 'PERMANENT') await page.getByLabel('保存位置').selectOption('PERMANENT')
   await page.getByRole('button', { name: '发送', exact: true }).click()
+}
+
+export async function selectComposerFiles(page: Page, paths: string | string[]) {
+  const chooser = page.waitForEvent('filechooser')
+  await page.getByRole('button', { name: '文件', exact: true }).click()
+  await (await chooser).setFiles(paths)
 }
 
 /** Fetch the current user's ID from the authenticated bootstrap endpoint. */
