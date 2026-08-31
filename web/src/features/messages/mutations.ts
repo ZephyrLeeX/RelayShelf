@@ -5,6 +5,7 @@ import { queryKeys } from '@/shared/api/queryKeys'
 
 export type MessageCommand =
   | { type: 'permanent'; message: Message }
+  | { type: 'extend'; message: Message; days: 1 | 3 | 7 }
   | { type: 'favorite'; message: Message; favorite: boolean }
   | { type: 'trash'; message: Message }
   | { type: 'restore'; message: Message }
@@ -19,6 +20,7 @@ async function execute(command: MessageCommand) {
   const { message } = command
   switch (command.type) {
     case 'permanent': return DefaultService.makeMessagePermanent(message.id, { expectedVersion: message.version })
+    case 'extend': return DefaultService.extendMessageExpiry(message.id, { expectedVersion: message.version, days: command.days })
     case 'favorite': return DefaultService.setMessageFavorite(message.id, { expectedVersion: message.version, favorite: command.favorite })
     case 'trash': return DefaultService.trashMessage(message.id, { expectedVersion: message.version })
     case 'restore': return DefaultService.restoreMessage(message.id, { expectedVersion: message.version })

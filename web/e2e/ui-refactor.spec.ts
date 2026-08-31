@@ -52,6 +52,26 @@ test.describe('desktop UI integration', () => {
   })
 })
 
+test.describe('wide desktop workspace', () => {
+  test.use({ viewport: { width: 2048, height: 1152 } })
+
+  test('bounds the content frame, composer, and inspector without horizontal overflow', async ({ page }) => {
+    await login(page, alice)
+
+    const frame = await page.locator('.content-frame.constrained').boundingBox()
+    const composer = await page.locator('.composer-shell').boundingBox()
+    const inspector = await page.locator('.detail-surface').boundingBox()
+    expect(frame).not.toBeNull()
+    expect(composer).not.toBeNull()
+    expect(inspector).not.toBeNull()
+    expect(frame!.width).toBeLessThanOrEqual(1041)
+    expect(composer!.width).toBeLessThanOrEqual(761)
+    expect(inspector!.width).toBeGreaterThanOrEqual(360)
+    expect(inspector!.width).toBeLessThanOrEqual(401)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
+  })
+})
+
 for (const viewport of [
   { width: 390, height: 844 },
   { width: 393, height: 852 },

@@ -2,7 +2,7 @@ import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { DefaultService, UploadStatus, type RecipientUser, type UploadSession } from '@/api/generated'
+import { DefaultService, Lifecycle, UploadStatus, type RecipientUser, type UploadSession } from '@/api/generated'
 import { queryKeys } from '@/shared/api/queryKeys'
 import { messageFixture } from '@/test/fixtures'
 import { uploadManager } from '@/features/uploads/manager'
@@ -37,12 +37,17 @@ describe('forward recipient selection', () => {
     })
     const { wrapper, recipientDirectory } = await mountDetail(() => messageFixture(), 'message-1', users)
 
+    expect(recipientDirectory).not.toHaveBeenCalled()
+    expect(wrapper.find('.forward').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('接收者会得到一条独立的临时副本')
+    await wrapper.get('.compact-action').trigger('click')
+    await flushPromises()
     expect(recipientDirectory).toHaveBeenCalledWith(undefined)
     expect(wrapper.text()).toContain('Alice Chen')
     expect(wrapper.text()).toContain('@bob')
     expect(wrapper.find('input[placeholder*="用户 ID"]').exists()).toBe(false)
 
-    await wrapper.get('input[placeholder="用户名或显示名称"]').setValue('bob')
+    await wrapper.get('input[placeholder="搜索用户…"]').setValue('bob')
     await flushPromises()
     expect(recipientDirectory).toHaveBeenCalledWith('bob')
 
@@ -60,6 +65,52 @@ describe('forward recipient selection', () => {
   })
 })
 
+describe('temporary expiry actions', () => {
+  beforeEach(() => vi.restoreAllMocks())
+
+  it('offers extension only for active temporary messages and sends the selected day increment', async () => {
+    const extend = vi.spyOn(DefaultService, 'extendMessageExpiry').mockResolvedValue(messageFixture({
+      version: 2,
+      expiresAt: '2026-01-05T00:00:00Z',
+    }) as never)
+    const { wrapper, client } = await mountDetail(() => messageFixture({ expiresAt: '2026-01-02T00:00:00Z' }))
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
+
+    await wrapper.get('button[title="延长有效期"]').trigger('click')
+    await wrapper.get('.extend-menu button:nth-child(2)').trigger('click')
+    await flushPromises()
+
+    expect(extend).toHaveBeenCalledWith('message-1', { expectedVersion: 1, days: 3 })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.messages.lists() })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.messages.detail('message-1') })
+    wrapper.unmount()
+  })
+
+  it('does not offer extension for permanent or trashed messages', async () => {
+    const permanent = await mountDetail(() => messageFixture({ lifecycle: Lifecycle.PERMANENT }))
+    expect(permanent.wrapper.find('button[title="延长有效期"]').exists()).toBe(false)
+    permanent.wrapper.unmount()
+
+    const trashed = await mountDetail(() => messageFixture({ trashedAt: '2026-01-02T00:00:00Z' }))
+    expect(trashed.wrapper.find('button[title="延长有效期"]').exists()).toBe(false)
+    trashed.wrapper.unmount()
+  })
+})
+
+describe('compact detail inspector', () => {
+  it('keeps low-frequency controls collapsed and gives icon buttons accessible names', async () => {
+    const { wrapper } = await mountDetail(() => messageFixture())
+
+    expect(wrapper.find('.add-files').exists()).toBe(false)
+    expect(wrapper.find('.forward').exists()).toBe(false)
+    expect(wrapper.get('button[aria-label="关闭详情"]').attributes('title')).toBe('关闭详情')
+    expect(wrapper.get('button[aria-label="编辑标签"]').attributes('title')).toBe('编辑标签')
+    expect(wrapper.get('button[aria-label="添加附件"]').attributes('title')).toBe('添加附件')
+    expect(wrapper.get('button[aria-label="更多操作"]').attributes('title')).toBe('更多操作')
+    wrapper.unmount()
+  })
+})
+
 describe('sensitive detail', () => {
   it('reveals only on explicit click and never puts plaintext in query cache', async () => {
     const reveal = vi.spyOn(DefaultService, 'revealSensitiveBody').mockResolvedValue({ body:'local-only-secret', version:1 })
@@ -67,7 +118,7 @@ describe('sensitive detail', () => {
     expect(reveal).not.toHaveBeenCalled(); expect(wrapper.text()).not.toContain('local-only-secret')
     await wrapper.get('.sensitive .button.primary').trigger('click'); await flushPromises()
     expect(wrapper.text()).toContain('local-only-secret')
-    expect(client.getQueryCache().getAll().some((query) => JSON.stringify(query.state.data).includes('local-only-secret'))).toBe(false)
+    expect(client.getQueryCache().getAll().some((query) => (JSON.stringify(query.state.data) ?? '').includes('local-only-secret'))).toBe(false)
     wrapper.unmount()
   })
   it('discards a pending reveal after switching messages', async () => {
@@ -163,7 +214,8 @@ describe('attachment reconciliation', () => {
     await flushPromises()
 
     expect(uploadState.items.map((item) => item.serverUploadId)).toEqual(['upload-b'])
-    expect(wrapper.text()).toContain('1 个文件')
+    expect(wrapper.text()).toContain('second.png')
+    expect(wrapper.text()).toContain('已就绪')
     await wrapper.get('.add-files .button.primary').trigger('click')
     await flushPromises()
     expect(add).toHaveBeenLastCalledWith('message-1', { expectedVersion: 1, uploadIds: ['upload-b'] })

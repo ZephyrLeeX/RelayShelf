@@ -31,6 +31,9 @@ func TestRecipientDirectoryUsesRecentActivityAndSearchesAllActiveUsers(t *testin
 		{uuid.Must(uuid.NewV7()), "bob", "Bob Stone", "ACTIVE", base.Add(4 * time.Hour)},
 		{uuid.Must(uuid.NewV7()), "carol", "Carol", "DISABLED", base.Add(8 * time.Hour)},
 		{uuid.Must(uuid.NewV7()), "needle", "Archived Match", "ACTIVE", base.Add(time.Hour)},
+		{uuid.Must(uuid.NewV7()), "dave", "Dave", "ACTIVE", base.Add(5 * time.Hour)},
+		{uuid.Must(uuid.NewV7()), "eve", "Eve", "ACTIVE", base.Add(6 * time.Hour)},
+		{uuid.Must(uuid.NewV7()), "frank", "Frank", "ACTIVE", base.Add(7 * time.Hour)},
 	}
 	for index, row := range rows {
 		if _, err := db.Exec(ctx, `INSERT INTO users(id,username,display_name,password_hash,status,created_at,updated_at)VALUES($1,$2,$3,'hash',$4,$5,$5)`, row.id, row.username, row.displayName, row.status, base.Add(time.Duration(index)*time.Minute)); err != nil {
@@ -51,7 +54,7 @@ func TestRecipientDirectoryUsesRecentActivityAndSearchesAllActiveUsers(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(defaultItems) != 3 || defaultItems[0].Username != "bob" || defaultItems[1].Username != "alice" || defaultItems[2].Username != "needle" {
+	if len(defaultItems) != users.DefaultRecipientLimit || defaultItems[0].Username != "frank" || defaultItems[1].Username != "eve" || defaultItems[2].Username != "dave" || defaultItems[3].Username != "bob" || defaultItems[4].Username != "alice" {
 		t.Fatalf("default recipients=%+v", defaultItems)
 	}
 	searched, err := service.ListRecipients(ctx, requester, "archived", 5)

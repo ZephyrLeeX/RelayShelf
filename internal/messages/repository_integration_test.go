@@ -518,6 +518,77 @@ func TestLifecycleTrashRestoreDeleteAuditAndTTLSnapshots(t *testing.T) {
 	}
 }
 
+func TestExtendTemporaryExpiryContract(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	temporary := f.create(t, f.alice, f.aliceDevice, "extend", "body", messages.Temporary, false)
+	originalExpiry := *temporary.ExpiresAt
+	f.clock.now = f.clock.now.Add(2 * time.Hour)
+
+	current := temporary
+	for _, days := range []int{1, 3, 7} {
+		previousExpiry := *current.ExpiresAt
+		previousVersion := current.Version
+		var err error
+		current, err = f.service.ExtendExpiry(ctx, f.alice, current.ID, current.Version, days)
+		if err != nil {
+			t.Fatalf("extend %d days: %v", days, err)
+		}
+		if current.ExpiresAt == nil || !current.ExpiresAt.Equal(previousExpiry.Add(time.Duration(days)*24*time.Hour)) || current.Version != previousVersion+1 || !current.UpdatedAt.Equal(f.clock.now) {
+			t.Fatalf("extend %d days result=%+v", days, current)
+		}
+	}
+	if want := originalExpiry.Add(11 * 24 * time.Hour); current.ExpiresAt == nil || !current.ExpiresAt.Equal(want) {
+		t.Fatalf("expiry=%v want=%v", current.ExpiresAt, want)
+	}
+	if _, err := f.service.ExtendExpiry(ctx, f.alice, current.ID, current.Version-1, 1); !errors.Is(err, messages.ErrVersionConflict) {
+		t.Fatalf("stale version=%v", err)
+	}
+	if _, err := f.service.ExtendExpiry(ctx, f.bob, current.ID, current.Version, 1); !errors.Is(err, messages.ErrNotFound) {
+		t.Fatalf("cross owner=%v", err)
+	}
+	if _, err := f.service.ExtendExpiry(ctx, f.alice, current.ID, current.Version, 2); !errors.Is(err, messages.ErrValidation) {
+		t.Fatalf("invalid days=%v", err)
+	}
+
+	permanent := f.create(t, f.alice, f.aliceDevice, "extend-permanent", "body", messages.Permanent, false)
+	if _, err := f.service.ExtendExpiry(ctx, f.alice, permanent.ID, permanent.Version, 1); !errors.Is(err, messages.ErrNotTemporary) {
+		t.Fatalf("permanent=%v", err)
+	}
+	trashed, err := f.service.Trash(ctx, f.alice, current.ID, current.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.service.ExtendExpiry(ctx, f.alice, trashed.ID, trashed.Version, 1); !errors.Is(err, messages.ErrTrashed) {
+		t.Fatalf("trashed=%v", err)
+	}
+}
+
+func TestExtendTemporaryExpiryHTTPPublishesCommittedVersion(t *testing.T) {
+	f := newFixture(t)
+	message := f.create(t, f.alice, f.aliceDevice, "extend-http", "body", messages.Temporary, false)
+	publisher := &eventRecorder{}
+	handler := messages.NewHandler(f.service)
+	handler.SetPublisher(publisher, id.UUIDv7{}, f.clock)
+	payload := []byte(`{"expectedVersion":1,"days":3}`)
+	recorder := httptest.NewRecorder()
+	handler.ExtendMessageExpiry(recorder, f.authenticatedRequest(http.MethodPost, "/api/v1/messages/"+message.ID.String()+"/extend", payload), httpapi.MessageId(message.ID))
+	if recorder.Code != http.StatusOK || publisher.count(f.alice) != 1 {
+		t.Fatalf("extend status=%d events=%d body=%s", recorder.Code, publisher.count(f.alice), recorder.Body.String())
+	}
+	publisher.mu.Lock()
+	event := publisher.events[f.alice][0]
+	publisher.mu.Unlock()
+	if event.Type != realtime.MessageUpdated || event.Version == nil || *event.Version != 2 || event.OriginDeviceID == nil || *event.OriginDeviceID != f.aliceDevice {
+		t.Fatalf("event=%+v", event)
+	}
+	recorder = httptest.NewRecorder()
+	handler.ExtendMessageExpiry(recorder, f.authenticatedRequest(http.MethodPost, "/api/v1/messages/"+message.ID.String()+"/extend", payload), httpapi.MessageId(message.ID))
+	if recorder.Code != http.StatusConflict || publisher.count(f.alice) != 1 {
+		t.Fatalf("stale status=%d events=%d", recorder.Code, publisher.count(f.alice))
+	}
+}
+
 func TestDirectSendForwardSensitiveAndIdempotency(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()

@@ -352,6 +352,23 @@ func (s *Service) MakePermanent(ctx context.Context, ownerID, messageID uuid.UUI
 	})
 }
 
+func (s *Service) ExtendExpiry(ctx context.Context, ownerID, messageID uuid.UUID, expected int64, days int) (Message, error) {
+	if days != 1 && days != 3 && days != 7 {
+		return Message{}, ErrValidation
+	}
+	return s.mutate(ctx, ownerID, messageID, expected, func(m *Message) (bool, error) {
+		if m.TrashedAt != nil {
+			return false, ErrTrashed
+		}
+		if m.Lifecycle != Temporary || m.ExpiresAt == nil {
+			return false, ErrNotTemporary
+		}
+		expiresAt := m.ExpiresAt.Add(time.Duration(days) * 24 * time.Hour)
+		m.ExpiresAt = &expiresAt
+		return true, nil
+	})
+}
+
 func (s *Service) SetFavorite(ctx context.Context, ownerID, messageID uuid.UUID, expected int64, favorite bool) (Message, error) {
 	return s.mutate(ctx, ownerID, messageID, expected, func(m *Message) (bool, error) {
 		if m.TrashedAt != nil {

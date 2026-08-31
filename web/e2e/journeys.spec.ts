@@ -176,10 +176,11 @@ test.describe('direct send and forward journey', () => {
       await card.getByRole('button', { name: /打开内容/ }).click()
       const detail = alicePage.getByRole('dialog', { name: '内容详情' })
       await expect(detail.getByPlaceholder('接收者用户 ID（UUID）')).toHaveCount(0)
-      await detail.getByPlaceholder('用户名或显示名称').fill(bob.username)
+      await detail.getByRole('button', { name: '转发', exact: true }).click()
+      await detail.getByPlaceholder('搜索用户…').fill(bob.username)
       await detail.getByRole('option', { name: `选择 ${bob.username} @${bob.username}` }).click()
-      await detail.getByRole('button', { name: '转发副本' }).click()
-      await expect(detail.getByText('已转发；接收者会看到一条独立副本。')).toBeVisible()
+      await detail.locator('.forward-submit').click()
+      await expect(detail.getByText('已转发', { exact: true })).toBeVisible()
 
       await expect(bobPage.locator('.message-card', { hasText: body })).toBeVisible({ timeout: 20_000 })
       // Sender keeps the original: close the detail route and return to the feed.

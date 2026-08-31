@@ -67,6 +67,8 @@ func mapError(w http.ResponseWriter, r *http.Request, err error) {
 		auth.WriteError(w, r, http.StatusConflict, "MESSAGE_VERSION_CONFLICT", "message version conflict")
 	case errors.Is(err, ErrFavoriteRequiresPermanent):
 		auth.WriteError(w, r, http.StatusUnprocessableEntity, "MESSAGE_FAVORITE_REQUIRES_PERMANENT", "favorite requires a permanent message")
+	case errors.Is(err, ErrNotTemporary):
+		auth.WriteError(w, r, http.StatusConflict, "MESSAGE_NOT_TEMPORARY", "message is not an active temporary message")
 	case errors.Is(err, ErrNotSensitive):
 		auth.WriteError(w, r, http.StatusConflict, "MESSAGE_NOT_SENSITIVE", "message is not sensitive")
 	case errors.Is(err, ErrTrashed):
@@ -290,6 +292,14 @@ func (h *Handler) MakeMessagePermanent(w http.ResponseWriter, r *http.Request, m
 		return
 	}
 	m, err := h.service.MakePermanent(r.Context(), actor(r).User.ID, uuid.UUID(messageID), body.ExpectedVersion)
+	h.respondMessage(w, r, m, body.ExpectedVersion, err)
+}
+func (h *Handler) ExtendMessageExpiry(w http.ResponseWriter, r *http.Request, messageID httpapi.MessageId) {
+	var body httpapi.ExtendMessageExpiryRequest
+	if !decode(w, r, &body) {
+		return
+	}
+	m, err := h.service.ExtendExpiry(r.Context(), actor(r).User.ID, uuid.UUID(messageID), body.ExpectedVersion, int(body.Days))
 	h.respondMessage(w, r, m, body.ExpectedVersion, err)
 }
 func (h *Handler) SetMessageFavorite(w http.ResponseWriter, r *http.Request, messageID httpapi.MessageId) {

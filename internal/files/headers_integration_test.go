@@ -91,8 +91,11 @@ func TestAttachmentResponseSecurityHeaders(t *testing.T) {
 			t.Fatalf("%s cache=%q", name, got)
 		}
 	}
-	if got := download.Header().Get("Content-Type"); got != "application/pdf" {
+	if got := download.Header().Get("Content-Type"); got != "application/octet-stream" {
 		t.Fatalf("download type=%q", got)
+	}
+	if got := preview.Header().Get("Content-Type"); got != "application/pdf" {
+		t.Fatalf("preview type=%q", got)
 	}
 	if disposition := download.Header().Get("Content-Disposition"); disposition == "" || !containsAttachment(disposition) {
 		t.Fatalf("download disposition=%q", disposition)

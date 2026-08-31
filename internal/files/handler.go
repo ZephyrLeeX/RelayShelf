@@ -49,7 +49,7 @@ func (h *Handler) DownloadAttachment(w http.ResponseWriter, r *http.Request, att
 		h.writeError(w, r, err)
 		return
 	}
-	h.serveAttachment(w, r, d, contentDisposition("attachment", d.Filename))
+	h.serveAttachment(w, r, d, "application/octet-stream", contentDisposition("attachment", d.Filename))
 }
 
 func (h *Handler) PreviewAttachment(w http.ResponseWriter, r *http.Request, attachmentID httpapi.AttachmentId) {
@@ -59,13 +59,13 @@ func (h *Handler) PreviewAttachment(w http.ResponseWriter, r *http.Request, atta
 		h.writeError(w, r, err)
 		return
 	}
-	h.serveAttachment(w, r, d, contentDisposition("inline", d.Filename))
+	h.serveAttachment(w, r, d, d.MIME, contentDisposition("inline", d.Filename))
 }
 
-func (h *Handler) serveAttachment(w http.ResponseWriter, r *http.Request, d Download, disposition string) {
+func (h *Handler) serveAttachment(w http.ResponseWriter, r *http.Request, d Download, contentType, disposition string) {
 	etag := ETag(d)
 	w.Header().Set("Accept-Ranges", "bytes")
-	w.Header().Set("Content-Type", d.MIME)
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", disposition)
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Last-Modified", d.Modified.UTC().Format(http.TimeFormat))

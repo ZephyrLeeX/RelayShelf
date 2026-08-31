@@ -102,7 +102,12 @@ function openMobileMore() {
       :class="shellMode"
     >
       <main class="content">
-        <RouterView />
+        <div
+          class="content-frame"
+          :class="{ constrained: shellMode === 'workspace' }"
+        >
+          <RouterView />
+        </div>
       </main>
       <MessageDetailSurface v-if="shellMode === 'workspace'" />
     </div>
@@ -130,7 +135,7 @@ function openMobileMore() {
 </template>
 
 <style scoped>
-.app-shell{display:grid;grid-template-columns:220px minmax(560px,1fr) clamp(400px,31vw,480px);grid-template-rows:72px minmax(0,1fr);min-height:100vh;height:100vh;background:var(--surface-base);overflow:hidden}
-.workspace{grid-column:2/-1;display:grid;grid-template-columns:minmax(560px,1fr) clamp(400px,31vw,480px);min-height:0}.workspace.full{grid-template-columns:minmax(0,1fr)}.content{min-width:0;overflow:auto;padding:1.5rem clamp(1rem,3vw,2.5rem) 4rem}
+.app-shell{display:grid;grid-template-columns:220px minmax(0,1fr);grid-template-rows:72px minmax(0,1fr);min-height:100vh;height:100vh;background:var(--surface-base);overflow:hidden}
+.workspace{grid-column:2;display:grid;grid-template-columns:minmax(560px,1fr) minmax(360px,400px);min-height:0}.workspace.full{grid-template-columns:minmax(0,1fr)}.content{min-width:0;overflow:auto;padding:1.5rem clamp(1rem,3vw,2.5rem) 4rem}.content-frame{width:100%;margin-inline:auto}.content-frame.constrained{max-width:1040px}
 @media(max-width:1179px){.app-shell{display:block;height:auto;min-height:100vh;overflow:visible}.app-sidebar,.app-topbar{display:none}.workspace{display:block}.content{min-height:calc(100vh - 62px);padding:.9rem .75rem calc(5.5rem + env(safe-area-inset-bottom));overflow:visible}}
 </style>

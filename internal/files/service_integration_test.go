@@ -185,7 +185,7 @@ func TestDownloadHTTPRegressionMatrixAndIntegrityContract(t *testing.T) {
 	data := []byte("0123456789")
 	fileID := writeObject(t, ctx, adapter, data)
 	hash := sha256.Sum256(data)
-	if _, err = db.Exec(ctx, `INSERT INTO file_objects(id,sha256,size_bytes,detected_mime,storage_backend,storage_key,status,created_at,updated_at,ready_at) VALUES($1,$2,$3,'application/pdf','filesystem',$4,'READY',$5,$5,$5)`, fileID, hash[:], len(data), storage.ObjectKey(fileID).String(), now); err != nil {
+	if _, err = db.Exec(ctx, `INSERT INTO file_objects(id,sha256,size_bytes,detected_mime,storage_backend,storage_key,status,created_at,updated_at,ready_at) VALUES($1,$2,$3,'application/zip','filesystem',$4,'READY',$5,$5,$5)`, fileID, hash[:], len(data), storage.ObjectKey(fileID).String(), now); err != nil {
 		t.Fatal(err)
 	}
 	attachments := make([]uuid.UUID, 2)
@@ -197,7 +197,7 @@ func TestDownloadHTTPRegressionMatrixAndIntegrityContract(t *testing.T) {
 		if _, err = db.Exec(ctx, `INSERT INTO messages(id,owner_id,body_plaintext,body_format,sensitive,lifecycle,expires_at,created_at,updated_at) VALUES($1,$2,'x','TEXT',false,'TEMPORARY',$3,$4,$4)`, messageID, owner, now.Add(time.Hour), now); err != nil {
 			t.Fatal(err)
 		}
-		if _, err = db.Exec(ctx, `INSERT INTO message_attachments(id,message_id,file_object_id,original_filename,display_order) VALUES($1,$2,$3,$4,0)`, attachments[i], messageID, fileID, "安全 文件.txt"); err != nil {
+		if _, err = db.Exec(ctx, `INSERT INTO message_attachments(id,message_id,file_object_id,original_filename,display_order) VALUES($1,$2,$3,$4,0)`, attachments[i], messageID, fileID, "MicYou-Android-2.0.1.apk"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -214,8 +214,16 @@ func TestDownloadHTTPRegressionMatrixAndIntegrityContract(t *testing.T) {
 		return w
 	}
 	full := request(alice, false, attachments[0], "", "", "")
-	if full.Code != http.StatusOK || full.Body.String() != string(data) || full.Header().Get("Content-Length") != "10" || full.Header().Get("Content-Disposition") == "" {
+	if full.Code != http.StatusOK || full.Body.String() != string(data) || full.Header().Get("Content-Length") != "10" || full.Header().Get("Content-Type") != "application/octet-stream" || !strings.Contains(full.Header().Get("Content-Disposition"), "MicYou-Android-2.0.1.apk") || full.Header().Get("X-Content-Type-Options") != "nosniff" {
 		t.Fatalf("full status=%d body=%q headers=%v", full.Code, full.Body.String(), full.Header())
+	}
+	zipAttachment := uuid.Must(uuid.NewV7())
+	if _, err = db.Exec(ctx, `INSERT INTO message_attachments(id,message_id,file_object_id,original_filename,display_order) VALUES($1,$2,$3,'backup.zip',1)`, zipAttachment, messages[0], fileID); err != nil {
+		t.Fatal(err)
+	}
+	zipDownload := request(alice, false, zipAttachment, "", "", "")
+	if zipDownload.Code != http.StatusOK || zipDownload.Body.String() != string(data) || zipDownload.Header().Get("Content-Type") != "application/octet-stream" || !strings.Contains(zipDownload.Header().Get("Content-Disposition"), "backup.zip") {
+		t.Fatalf("zip status=%d body=%q headers=%v", zipDownload.Code, zipDownload.Body.String(), zipDownload.Header())
 	}
 	etag := full.Header().Get("ETag")
 	cases := []struct {
@@ -231,7 +239,7 @@ func TestDownloadHTTPRegressionMatrixAndIntegrityContract(t *testing.T) {
 	}
 	for _, tt := range cases {
 		w := request(alice, false, attachments[0], tt.rangeValue, "", tt.ifRange)
-		if w.Code != tt.status || w.Body.String() != tt.body || w.Header().Get("Content-Range") != tt.contentRange || w.Header().Get("Content-Length") != fmt.Sprint(len(tt.body)) {
+		if w.Code != tt.status || w.Body.String() != tt.body || w.Header().Get("Content-Range") != tt.contentRange || w.Header().Get("Content-Length") != fmt.Sprint(len(tt.body)) || w.Header().Get("Content-Type") != "application/octet-stream" || !strings.Contains(w.Header().Get("Content-Disposition"), "MicYou-Android-2.0.1.apk") {
 			t.Errorf("%s status=%d body=%q range=%q length=%q", tt.name, w.Code, w.Body.String(), w.Header().Get("Content-Range"), w.Header().Get("Content-Length"))
 		}
 	}
@@ -260,6 +268,9 @@ func TestDownloadHTTPRegressionMatrixAndIntegrityContract(t *testing.T) {
 		w := httptest.NewRecorder()
 		handler.PreviewAttachment(w, r, httpapi.AttachmentId(attachment))
 		return w
+	}
+	if _, err = db.Exec(ctx, `UPDATE file_objects SET detected_mime='application/pdf' WHERE id=$1`, fileID); err != nil {
+		t.Fatal(err)
 	}
 	if w := preview(alice, false, attachments[0], "bytes=2-5"); w.Code != http.StatusPartialContent || w.Body.String() != "2345" || !strings.HasPrefix(w.Header().Get("Content-Disposition"), "inline;") || w.Header().Get("Content-Type") != "application/pdf" {
 		t.Fatalf("preview range status=%d body=%q headers=%v", w.Code, w.Body.String(), w.Header())

@@ -50,6 +50,27 @@ func (e BodyFormat) Valid() bool {
 	}
 }
 
+// Defines values for ExtendMessageExpiryRequestDays.
+const (
+	N1 ExtendMessageExpiryRequestDays = 1
+	N3 ExtendMessageExpiryRequestDays = 3
+	N7 ExtendMessageExpiryRequestDays = 7
+)
+
+// Valid indicates whether the value is a known member of the ExtendMessageExpiryRequestDays enum.
+func (e ExtendMessageExpiryRequestDays) Valid() bool {
+	switch e {
+	case N1:
+		return true
+	case N3:
+		return true
+	case N7:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthState.
 const (
 	DEGRADED    HealthState = "DEGRADED"
@@ -363,6 +384,15 @@ type Error struct {
 	Message string      `json:"message"`
 	TraceId string      `json:"traceId"`
 }
+
+// ExtendMessageExpiryRequest defines model for ExtendMessageExpiryRequest.
+type ExtendMessageExpiryRequest struct {
+	Days            ExtendMessageExpiryRequestDays `json:"days"`
+	ExpectedVersion int64                          `json:"expectedVersion"`
+}
+
+// ExtendMessageExpiryRequestDays defines model for ExtendMessageExpiryRequest.Days.
+type ExtendMessageExpiryRequestDays int
 
 // FailedJob defines model for FailedJob.
 type FailedJob struct {
@@ -800,6 +830,9 @@ type AddMessageAttachmentsJSONRequestBody = AddAttachmentsRequest
 // RemoveMessageAttachmentJSONRequestBody defines body for RemoveMessageAttachment for application/json ContentType.
 type RemoveMessageAttachmentJSONRequestBody = VersionRequest
 
+// ExtendMessageExpiryJSONRequestBody defines body for ExtendMessageExpiry for application/json ContentType.
+type ExtendMessageExpiryJSONRequestBody = ExtendMessageExpiryRequest
+
 // SetMessageFavoriteJSONRequestBody defines body for SetMessageFavorite for application/json ContentType.
 type SetMessageFavoriteJSONRequestBody = FavoriteRequest
 
@@ -928,6 +961,9 @@ type ServerInterface interface {
 
 	// (DELETE /messages/{messageId}/attachments/{attachmentId})
 	RemoveMessageAttachment(w http.ResponseWriter, r *http.Request, messageId MessageId, attachmentId AttachmentId)
+
+	// (POST /messages/{messageId}/extend)
+	ExtendMessageExpiry(w http.ResponseWriter, r *http.Request, messageId MessageId)
 
 	// (POST /messages/{messageId}/favorite)
 	SetMessageFavorite(w http.ResponseWriter, r *http.Request, messageId MessageId)
@@ -1155,6 +1191,11 @@ func (_ Unimplemented) AddMessageAttachments(w http.ResponseWriter, r *http.Requ
 
 // (DELETE /messages/{messageId}/attachments/{attachmentId})
 func (_ Unimplemented) RemoveMessageAttachment(w http.ResponseWriter, r *http.Request, messageId MessageId, attachmentId AttachmentId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /messages/{messageId}/extend)
+func (_ Unimplemented) ExtendMessageExpiry(w http.ResponseWriter, r *http.Request, messageId MessageId) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -2013,6 +2054,32 @@ func (siw *ServerInterfaceWrapper) RemoveMessageAttachment(w http.ResponseWriter
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RemoveMessageAttachment(w, r, messageId, attachmentId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ExtendMessageExpiry operation middleware
+func (siw *ServerInterfaceWrapper) ExtendMessageExpiry(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "messageId" -------------
+	var messageId MessageId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "messageId", chi.URLParam(r, "messageId"), &messageId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "messageId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ExtendMessageExpiry(w, r, messageId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2965,6 +3032,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/messages/{messageId}/make-permanent", wrapper.MakeMessagePermanent)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/messages/{messageId}/extend", wrapper.ExtendMessageExpiry)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/messages/{messageId}/favorite", wrapper.SetMessageFavorite)

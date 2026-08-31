@@ -19,6 +19,12 @@ defineEmits<{ view: [id: string]; remove: [id: string] }>()
         :interactive="interactive"
         @view="$emit('view', $event)"
       />
+      <a
+        class="button download"
+        :href="`/api/v1/attachments/${encodeURIComponent(file.id)}/download`"
+        :download="file.originalFilename"
+        :aria-label="`下载 ${file.originalFilename}`"
+      >下载</a>
       <button
         v-if="removable"
         class="button danger remove"
@@ -37,4 +43,4 @@ defineEmits<{ view: [id: string]; remove: [id: string] }>()
   </div>
 </template>
 
-<style scoped>.attachment-list{display:grid;gap:.4rem}.row{display:flex;align-items:center;gap:.45rem}.row>:first-child{flex:1;min-width:0}.remove{min-height:38px}.more{margin:.15rem .45rem;color:var(--muted);font-size:.78rem}</style>
+<style scoped>.attachment-list{display:grid;gap:.4rem}.row{display:flex;align-items:center;gap:.35rem}.row>:first-child{flex:1;min-width:0}.download,.remove{min-height:34px;padding:.3rem .45rem;font-size:.72rem;text-decoration:none}.more{margin:.15rem .45rem;color:var(--muted);font-size:.78rem}</style>

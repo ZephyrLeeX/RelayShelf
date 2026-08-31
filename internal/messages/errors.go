@@ -7,6 +7,7 @@ var (
 	ErrValidation                = errors.New("validation error")
 	ErrVersionConflict           = errors.New("message version conflict")
 	ErrFavoriteRequiresPermanent = errors.New("favorite requires permanent message")
+	ErrNotTemporary              = errors.New("message is not an active temporary message")
 	ErrNotSensitive              = errors.New("message is not sensitive")
 	ErrTrashed                   = errors.New("message is trashed")
 	ErrNotTrashed                = errors.New("message is not trashed")

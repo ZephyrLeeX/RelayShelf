@@ -27,6 +27,7 @@ export type { DirectSendRequest } from './models/DirectSendRequest';
 export type { EditMessageRequest } from './models/EditMessageRequest';
 export type { EditSensitiveBodyRequest } from './models/EditSensitiveBodyRequest';
 export type { Error } from './models/Error';
+export { ExtendMessageExpiryRequest } from './models/ExtendMessageExpiryRequest';
 export type { FailedJob } from './models/FailedJob';
 export type { FavoriteRequest } from './models/FavoriteRequest';
 export type { ForwardRequest } from './models/ForwardRequest';

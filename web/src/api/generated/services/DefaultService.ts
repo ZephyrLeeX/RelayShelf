@@ -14,6 +14,7 @@ import type { Device } from '../models/Device';
 import type { DirectSendRequest } from '../models/DirectSendRequest';
 import type { EditMessageRequest } from '../models/EditMessageRequest';
 import type { EditSensitiveBodyRequest } from '../models/EditSensitiveBodyRequest';
+import type { ExtendMessageExpiryRequest } from '../models/ExtendMessageExpiryRequest';
 import type { FavoriteRequest } from '../models/FavoriteRequest';
 import type { ForwardRequest } from '../models/ForwardRequest';
 import type { Lifecycle } from '../models/Lifecycle';
@@ -728,6 +729,31 @@ export class DefaultService {
             errors: {
                 404: `API error`,
                 409: `API error`,
+            },
+        });
+    }
+    /**
+     * @param messageId
+     * @param requestBody
+     * @returns Message Temporary message with extended expiry
+     * @throws ApiError
+     */
+    public static extendMessageExpiry(
+        messageId: string,
+        requestBody: ExtendMessageExpiryRequest,
+    ): CancelablePromise<Message> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/messages/{messageId}/extend',
+            path: {
+                'messageId': messageId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                404: `API error`,
+                409: `API error`,
+                422: `API error`,
             },
         });
     }
