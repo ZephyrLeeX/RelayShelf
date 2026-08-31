@@ -1,8 +1,9 @@
 import { computed, onUnmounted, ref, toValue, watch, type MaybeRefOrGetter } from 'vue'
-import { useQueryClient } from '@tanstack/vue-query'
+import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { useRoute, useRouter } from 'vue-router'
 import { BodyFormat, DefaultService } from '@/api/generated'
 import { displayError } from '@/shared/api/errors'
+import { queryKeys } from '@/shared/api/queryKeys'
 import { useTagsQuery } from '@/features/tags/queries'
 import { uploadManager } from '@/features/uploads/manager'
 import { visibleUploads } from '@/features/uploads/store'
@@ -31,6 +32,11 @@ export function useMessageDetailController(messageId: MaybeRefOrGetter<string>) 
   const selectedTags = ref<string[]>([])
   const error = ref('')
   const forwardRecipient = ref('')
+  const forwardSearch = ref('')
+  const recipientUsers = useQuery({
+    queryKey: computed(() => queryKeys.recipients.list(forwardSearch.value.trim())),
+    queryFn: ({ queryKey }) => DefaultService.listRecipientUsers(queryKey[1] || undefined),
+  })
   const notice = ref('')
   const attachmentInput = ref<HTMLInputElement>()
   const detailUploadClients = ref<string[]>([])
@@ -120,7 +126,7 @@ export function useMessageDetailController(messageId: MaybeRefOrGetter<string>) 
     error.value = ''
     notice.value = ''
     mutation.mutate({ type: 'forward', message: message.value, recipientUserId: forwardRecipient.value.trim() }, {
-      onSuccess: () => { notice.value = '已转发；接收者会看到一条独立副本。'; forwardRecipient.value = '' },
+      onSuccess: () => { notice.value = '已转发；接收者会看到一条独立副本。'; forwardRecipient.value = ''; forwardSearch.value = '' },
       onError: (cause) => { error.value = mutationErrorMessage(cause) },
     })
   }
@@ -208,7 +214,7 @@ export function useMessageDetailController(messageId: MaybeRefOrGetter<string>) 
 
   return {
     detail, mutation, tags, message, revealPending, editing, editBody, editFormat, selectedTags,
-    error, forwardRecipient, notice, attachmentInput, detailUploads, detailUploadsReady,
+    error, forwardRecipient, forwardSearch, recipientUsers, notice, attachmentInput, detailUploads, detailUploadsReady,
     restorableUploads, attachmentMutationPending, viewerId, currentSensitiveBody,
     clearRevealedBody, reveal, copy, run, forward, startEdit, saveBody, removeForever,
     openViewer, closeViewer, selectViewer, chooseDetailFiles, addAttachments, addRestored,

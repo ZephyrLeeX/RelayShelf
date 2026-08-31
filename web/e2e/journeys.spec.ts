@@ -170,13 +170,14 @@ test.describe('direct send and forward journey', () => {
     try {
       await login(alicePage, alice)
       await login(bobPage, bob)
-      const bobId = await currentUserId(bobPage)
 
       await composeAndSend(alicePage, body)
       const card = alicePage.locator('.message-card', { hasText: body })
       await card.getByRole('button', { name: /打开内容/ }).click()
       const detail = alicePage.getByRole('dialog', { name: '内容详情' })
-      await detail.getByPlaceholder('接收者用户 ID（UUID）').fill(bobId)
+      await expect(detail.getByPlaceholder('接收者用户 ID（UUID）')).toHaveCount(0)
+      await detail.getByPlaceholder('用户名或显示名称').fill(bob.username)
+      await detail.getByRole('option', { name: `选择 ${bob.username} @${bob.username}` }).click()
       await detail.getByRole('button', { name: '转发副本' }).click()
       await expect(detail.getByText('已转发；接收者会看到一条独立副本。')).toBeVisible()
 

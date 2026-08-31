@@ -43,6 +43,8 @@ export type { MessageSummary } from './models/MessageSummary';
 export type { MigrationStatus } from './models/MigrationStatus';
 export type { PartNumber } from './models/PartNumber';
 export type { PasswordChangeRequest } from './models/PasswordChangeRequest';
+export type { RecipientUser } from './models/RecipientUser';
+export type { RecipientUserList } from './models/RecipientUserList';
 export type { RenameDeviceRequest } from './models/RenameDeviceRequest';
 export type { ReplaceMessageTagsRequest } from './models/ReplaceMessageTagsRequest';
 export type { ResetAdminUserPasswordRequest } from './models/ResetAdminUserPasswordRequest';

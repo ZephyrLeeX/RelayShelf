@@ -29,6 +29,7 @@ import (
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/id"
 	"github.com/ZephyrLeeX/RelayShelf/internal/platform/staging"
 	"github.com/ZephyrLeeX/RelayShelf/internal/realtime"
+	"github.com/ZephyrLeeX/RelayShelf/internal/recipients"
 	"github.com/ZephyrLeeX/RelayShelf/internal/search"
 	"github.com/ZephyrLeeX/RelayShelf/internal/settings"
 	"github.com/ZephyrLeeX/RelayShelf/internal/storage"
@@ -53,6 +54,7 @@ type searchEndpoints struct{ *search.Handler }
 type realtimeEndpoints struct{ *realtime.Handler }
 type settingsEndpoints struct{ *settings.Handler }
 type adminEndpoints struct{ *admin.Handler }
+type userEndpoints struct{ *recipients.Handler }
 type apiHandler struct {
 	*authEndpoints
 	*messageEndpoints
@@ -63,6 +65,7 @@ type apiHandler struct {
 	*realtimeEndpoints
 	*settingsEndpoints
 	*adminEndpoints
+	*userEndpoints
 }
 
 var _ httpapi.ServerInterface = (*apiHandler)(nil)
@@ -222,6 +225,7 @@ func main() {
 		settingsService := settings.NewService(db, auditRecorder, now)
 		settingsHandler := settings.NewHandler(settingsService)
 		userAdminService := users.NewAdminService(db, hasher, id.UUIDv7{}, now, auditRecorder)
+		userDirectoryHandler := recipients.NewHandler(users.NewDirectoryService(db))
 		bodyCipher, cipherErr := messages.NewAESGCMCipher(cfg.AppEncryptionKey.Bytes())
 		if cipherErr != nil {
 			log.Printf("message encryption unavailable")
@@ -297,7 +301,7 @@ func main() {
 		scheduler := jobs.NewScheduler(db, jobRepo, uploadService, fileService, hub, id.UUIDv7{}, now, jobWake)
 		background.Add(1)
 		go func() { defer background.Done(); scheduler.Run(serveCtx) }()
-		handler := &apiHandler{authEndpoints: &authEndpoints{authHandler}, messageEndpoints: &messageEndpoints{messageHandler}, tagEndpoints: &tagEndpoints{tagHandler}, uploadEndpoints: &uploadEndpoints{uploadHandler}, fileEndpoints: &fileEndpoints{fileHandler}, searchEndpoints: &searchEndpoints{searchHandler}, realtimeEndpoints: &realtimeEndpoints{realtimeHandler}, settingsEndpoints: &settingsEndpoints{settingsHandler}, adminEndpoints: &adminEndpoints{adminHandler}}
+		handler := &apiHandler{authEndpoints: &authEndpoints{authHandler}, messageEndpoints: &messageEndpoints{messageHandler}, tagEndpoints: &tagEndpoints{tagHandler}, uploadEndpoints: &uploadEndpoints{uploadHandler}, fileEndpoints: &fileEndpoints{fileHandler}, searchEndpoints: &searchEndpoints{searchHandler}, realtimeEndpoints: &realtimeEndpoints{realtimeHandler}, settingsEndpoints: &settingsEndpoints{settingsHandler}, adminEndpoints: &adminEndpoints{adminHandler}, userEndpoints: &userEndpoints{userDirectoryHandler}}
 		router := newHTTPRouter(authMiddleware.Host, auth.Router(handler, authMiddleware), health(http.StatusOK), ready(db))
 
 		address := os.Getenv("LISTEN_ADDR")

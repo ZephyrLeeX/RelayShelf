@@ -67,6 +67,18 @@ describe('MessageCard', () => {
     expect(cards[1].get('img').attributes('src')).toContain('/api/v1/attachments/safe/thumbnail')
     expect(cards[1].get('img').attributes('loading')).toBe('lazy')
   })
+  it('downloads feed attachments through the authenticated path without opening detail', async () => {
+    const attachment = { id:'file/id', originalFilename:'report.pdf', clientMime:'application/pdf', detectedMime:'application/pdf', sizeBytes:24, displayOrder:0 }
+    const { router, wrapper } = await render({ attachments:[attachment], attachmentCount:1 })
+    const download = wrapper.get<HTMLAnchorElement>('[aria-label="下载 report.pdf"]')
+
+    expect(download.attributes('href')).toBe('/api/v1/attachments/file%2Fid/download')
+    download.element.addEventListener('click', (event) => event.preventDefault())
+    await download.trigger('click')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(router.currentRoute.value.query.detail).toBeUndefined()
+  })
   it('uses restore and permanent delete semantics in trash', async () => {
     const { wrapper } = await render({ trashedAt: '2026-01-02T00:00:00Z' }, true)
     expect(wrapper.text()).toContain('恢复')

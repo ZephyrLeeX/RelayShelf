@@ -473,6 +473,18 @@ type PasswordChangeRequest struct {
 	NewPassword     string `json:"newPassword"`
 }
 
+// RecipientUser defines model for RecipientUser.
+type RecipientUser struct {
+	DisplayName string             `json:"displayName"`
+	Id          openapi_types.UUID `json:"id"`
+	Username    string             `json:"username"`
+}
+
+// RecipientUserList defines model for RecipientUserList.
+type RecipientUserList struct {
+	Items []RecipientUser `json:"items"`
+}
+
 // RenameDeviceRequest defines model for RenameDeviceRequest.
 type RenameDeviceRequest struct {
 	Name string `json:"name"`
@@ -737,6 +749,12 @@ type ListTrashParams struct {
 	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// ListRecipientUsersParams defines parameters for ListRecipientUsers.
+type ListRecipientUsersParams struct {
+	Query *string `form:"query,omitempty" json:"query,omitempty"`
+	Limit *int    `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // UpdateRuntimeSettingsJSONRequestBody defines body for UpdateRuntimeSettings for application/json ContentType.
 type UpdateRuntimeSettingsJSONRequestBody = UpdateRuntimeSettingsRequest
 
@@ -976,6 +994,9 @@ type ServerInterface interface {
 
 	// (PUT /uploads/{uploadId}/parts/{partNumber})
 	PutUploadPart(w http.ResponseWriter, r *http.Request, uploadId UploadId, partNumber PartNumber)
+
+	// (GET /users/recipients)
+	ListRecipientUsers(w http.ResponseWriter, r *http.Request, params ListRecipientUsersParams)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
@@ -1244,6 +1265,11 @@ func (_ Unimplemented) CompleteUpload(w http.ResponseWriter, r *http.Request, up
 
 // (PUT /uploads/{uploadId}/parts/{partNumber})
 func (_ Unimplemented) PutUploadPart(w http.ResponseWriter, r *http.Request, uploadId UploadId, partNumber PartNumber) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /users/recipients)
+func (_ Unimplemented) ListRecipientUsers(w http.ResponseWriter, r *http.Request, params ListRecipientUsersParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -2688,6 +2714,52 @@ func (siw *ServerInterfaceWrapper) PutUploadPart(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// ListRecipientUsers operation middleware
+func (siw *ServerInterfaceWrapper) ListRecipientUsers(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListRecipientUsersParams
+
+	// ------------- Optional query parameter "query" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "query", r.URL.Query(), &params.Query, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "query"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "query", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListRecipientUsers(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 type UnescapedCookieParamError struct {
 	ParamName string
 	Err       error
@@ -2959,6 +3031,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Delete(options.BaseURL+"/admin/users/{userId}", wrapper.DeleteAdminUser)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/users/recipients", wrapper.ListRecipientUsers)
 	})
 
 	return r

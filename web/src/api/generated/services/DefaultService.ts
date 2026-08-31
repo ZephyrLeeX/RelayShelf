@@ -22,6 +22,7 @@ import type { Message } from '../models/Message';
 import type { MessageDeliveryReceipt } from '../models/MessageDeliveryReceipt';
 import type { MessageList } from '../models/MessageList';
 import type { PasswordChangeRequest } from '../models/PasswordChangeRequest';
+import type { RecipientUserList } from '../models/RecipientUserList';
 import type { RenameDeviceRequest } from '../models/RenameDeviceRequest';
 import type { ReplaceMessageTagsRequest } from '../models/ReplaceMessageTagsRequest';
 import type { ResetAdminUserPasswordRequest } from '../models/ResetAdminUserPasswordRequest';
@@ -1188,6 +1189,29 @@ export class DefaultService {
                 401: `API error`,
                 403: `API error`,
                 404: `API error`,
+            },
+        });
+    }
+    /**
+     * @param query
+     * @param limit
+     * @returns RecipientUserList Active recipient directory ordered by recent activity
+     * @throws ApiError
+     */
+    public static listRecipientUsers(
+        query?: string,
+        limit: number = 5,
+    ): CancelablePromise<RecipientUserList> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/users/recipients',
+            query: {
+                'query': query,
+                'limit': limit,
+            },
+            errors: {
+                401: `API error`,
+                422: `API error`,
             },
         });
     }

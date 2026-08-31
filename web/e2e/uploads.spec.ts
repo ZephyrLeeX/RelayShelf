@@ -131,6 +131,7 @@ test.describe('TOTP journey', () => {
 
     const secretElement = drawer.locator('.secret')
     await expect(secretElement).toBeVisible()
+    await expect(drawer.getByRole('img', { name: 'TOTP enrollment 二维码' })).toBeVisible()
     const secret = (await secretElement.textContent())?.trim() ?? ''
     expect(secret).toMatch(/^[A-Z2-7]{32}$/)
 

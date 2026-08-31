@@ -5,6 +5,7 @@ import { DefaultService, type TOTPEnrollmentPending } from '@/api/generated'
 import { queryKeys } from '@/shared/api/queryKeys'
 import { apiCodes, displayError, toApiError } from '@/shared/api/errors'
 import { useAuthStore } from '@/features/auth/store'
+import TotpEnrollmentQr from './TotpEnrollmentQr.vue'
 
 const emit = defineEmits<{ close: [] }>()
 const auth = useAuthStore()
@@ -170,7 +171,11 @@ onUnmounted(() => {
           <h3>两步验证（TOTP）</h3>
           <template v-if="pendingEnrollment">
             <p class="muted">
-              在验证器应用中添加以下密钥，然后输入当前 6 位代码完成启用。
+              使用验证器应用扫描二维码，然后输入当前 6 位代码完成启用。
+            </p>
+            <TotpEnrollmentQr :uri="pendingEnrollment.otpauthUrl" />
+            <p class="muted">
+              无法扫码时，可手动输入以下密钥：
             </p>
             <p class="secret">
               {{ pendingEnrollment.secret }}

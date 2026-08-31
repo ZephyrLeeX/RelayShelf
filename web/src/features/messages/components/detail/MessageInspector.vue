@@ -12,7 +12,7 @@ const props = defineProps<{ id: string }>()
 const emit = defineEmits<{ close: [] }>()
 const {
   detail, mutation, tags, message, revealPending, editing, editBody, editFormat, selectedTags,
-  error, forwardRecipient, notice, attachmentInput, detailUploads, detailUploadsReady,
+  error, forwardRecipient, forwardSearch, recipientUsers, notice, attachmentInput, detailUploads, detailUploadsReady,
   restorableUploads, attachmentMutationPending, viewerId, currentSensitiveBody,
   clearRevealedBody, reveal, copy, run, forward, startEdit, saveBody, removeForever,
   openViewer, closeViewer, selectViewer, chooseDetailFiles, addAttachments, addRestored,
@@ -226,22 +226,59 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
         class="forward panel"
       >
         <strong>转发给其他用户</strong>
-        <div class="forward-row">
-          <input
-            v-model="forwardRecipient"
-            class="input"
-            placeholder="接收者用户 ID（UUID）"
-            maxlength="64"
-          >
+        <label class="field forward-search">搜索接收人<input
+          v-model="forwardSearch"
+          class="input"
+          maxlength="100"
+          placeholder="用户名或显示名称"
+          autocomplete="off"
+        ></label>
+        <p
+          v-if="recipientUsers.isPending.value"
+          class="muted"
+        >
+          正在加载用户…
+        </p>
+        <p
+          v-else-if="recipientUsers.isError.value"
+          class="error"
+        >
+          用户列表加载失败，请重试。
+        </p>
+        <div
+          v-else-if="recipientUsers.data.value?.items.length"
+          class="recipient-list"
+          role="listbox"
+          aria-label="转发接收人"
+        >
           <button
-            class="button"
+            v-for="user in recipientUsers.data.value.items"
+            :key="user.id"
+            class="recipient-option"
+            :class="{ selected: forwardRecipient === user.id }"
             type="button"
-            :disabled="forwardRecipient.trim().length !== 36 || mutation.isPending.value"
-            @click="forward"
+            role="option"
+            :aria-selected="forwardRecipient === user.id"
+            :aria-label="`选择 ${user.displayName} @${user.username}`"
+            @click="forwardRecipient = user.id"
           >
-            转发副本
+            <strong>{{ user.displayName }}</strong><span>@{{ user.username }}</span>
           </button>
         </div>
+        <p
+          v-else
+          class="muted"
+        >
+          没有匹配的可转发用户。
+        </p>
+        <button
+          class="button forward-submit"
+          type="button"
+          :disabled="!forwardRecipient || mutation.isPending.value"
+          @click="forward"
+        >
+          转发副本
+        </button>
         <p class="muted">
           接收者会得到一条独立的临时副本；此内容保持不变。
         </p>
@@ -327,6 +364,6 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
 </template>
 
 <style scoped>
-.message-inspector{display:grid;align-content:start;gap:1rem;min-height:100%;padding:1.3rem;color:var(--text-primary)}.detail-header{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;position:sticky;top:-1.3rem;z-index:2;margin:-1.3rem -1.3rem 0;padding:1.3rem;background:color-mix(in srgb,var(--surface-raised) 94%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--border-default)}h1,h2,p{margin:.2rem 0}h1{font-size:1.25rem}.close{font-size:1.3rem}pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}.code{font-family:var(--font-mono);background:var(--surface-soft);padding:1rem;border-radius:var(--radius)}.sensitive{padding:1.25rem;box-shadow:none}.edit{display:grid;gap:.75rem}.edit textarea{resize:vertical}.edit>div{display:flex;gap:.5rem}.tags,.actions,.tag-picker{display:flex;flex-wrap:wrap;gap:.5rem}.files{display:grid;gap:.5rem}.add-files{display:flex;align-items:center;gap:.5rem;padding:.7rem;box-shadow:none}.add-files>div{display:grid;flex:1}.add-files span{color:var(--text-tertiary);font-size:.75rem}details{display:grid;gap:.6rem}summary{cursor:pointer}.state{padding:3rem 1rem;text-align:center}.forward{display:grid;gap:.5rem;padding:.7rem;box-shadow:none}.forward-row{display:grid;grid-template-columns:1fr auto;gap:.5rem}.restored{border:1px solid var(--border-default);border-radius:var(--radius-sm);padding:.55rem .65rem;display:grid;gap:.4rem}.restored h2{font-size:.78rem;color:var(--text-tertiary)}.restored ul{list-style:none;margin:0;padding:0;display:grid;gap:.35rem}.restored li{display:flex;align-items:center;justify-content:space-between;gap:.7rem;font-size:.82rem}.restored span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.restored .button{min-height:32px;padding:.25rem .55rem;font-size:.76rem;white-space:nowrap}
-@media(max-width:600px){.message-inspector{padding:1rem}.detail-header{top:-1rem;margin:-1rem -1rem 0;padding:1rem}.add-files{flex-wrap:wrap}.add-files>div{width:100%;flex-basis:100%}.forward-row{grid-template-columns:1fr}.restored li{align-items:flex-start;flex-direction:column}}
+.message-inspector{display:grid;align-content:start;gap:1rem;min-height:100%;padding:1.3rem;color:var(--text-primary)}.detail-header{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;position:sticky;top:-1.3rem;z-index:2;margin:-1.3rem -1.3rem 0;padding:1.3rem;background:color-mix(in srgb,var(--surface-raised) 94%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--border-default)}h1,h2,p{margin:.2rem 0}h1{font-size:1.25rem}.close{font-size:1.3rem}pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}.code{font-family:var(--font-mono);background:var(--surface-soft);padding:1rem;border-radius:var(--radius)}.sensitive{padding:1.25rem;box-shadow:none}.edit{display:grid;gap:.75rem}.edit textarea{resize:vertical}.edit>div{display:flex;gap:.5rem}.tags,.actions,.tag-picker{display:flex;flex-wrap:wrap;gap:.5rem}.files{display:grid;gap:.5rem}.add-files{display:flex;align-items:center;gap:.5rem;padding:.7rem;box-shadow:none}.add-files>div{display:grid;flex:1}.add-files span{color:var(--text-tertiary);font-size:.75rem}details{display:grid;gap:.6rem}summary{cursor:pointer}.state{padding:3rem 1rem;text-align:center}.forward{display:grid;gap:.5rem;padding:.7rem;box-shadow:none}.forward-search{font-size:.76rem}.recipient-list{display:grid;gap:.35rem}.recipient-option{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:.5rem;width:100%;border:1px solid var(--border-default);border-radius:var(--radius-sm);padding:.5rem .6rem;background:var(--surface-raised);color:var(--text-primary);text-align:left}.recipient-option:hover{border-color:var(--border-strong)}.recipient-option.selected{border-color:var(--accent-primary);background:var(--accent-primary-soft)}.recipient-option strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.8rem}.recipient-option span{color:var(--text-tertiary);font-size:.72rem}.forward-submit{justify-self:end}.restored{border:1px solid var(--border-default);border-radius:var(--radius-sm);padding:.55rem .65rem;display:grid;gap:.4rem}.restored h2{font-size:.78rem;color:var(--text-tertiary)}.restored ul{list-style:none;margin:0;padding:0;display:grid;gap:.35rem}.restored li{display:flex;align-items:center;justify-content:space-between;gap:.7rem;font-size:.82rem}.restored span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.restored .button{min-height:32px;padding:.25rem .55rem;font-size:.76rem;white-space:nowrap}
+@media(max-width:600px){.message-inspector{padding:1rem}.detail-header{top:-1rem;margin:-1rem -1rem 0;padding:1rem}.add-files{flex-wrap:wrap}.add-files>div{width:100%;flex-basis:100%}.recipient-option{grid-template-columns:minmax(0,1fr)}.forward-submit{justify-self:stretch}.restored li{align-items:flex-start;flex-direction:column}}
 </style>

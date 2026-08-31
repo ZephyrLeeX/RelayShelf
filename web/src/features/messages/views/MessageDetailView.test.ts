@@ -2,7 +2,7 @@ import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { DefaultService, UploadStatus, type UploadSession } from '@/api/generated'
+import { DefaultService, UploadStatus, type RecipientUser, type UploadSession } from '@/api/generated'
 import { queryKeys } from '@/shared/api/queryKeys'
 import { messageFixture } from '@/test/fixtures'
 import { uploadManager } from '@/features/uploads/manager'
@@ -10,16 +10,55 @@ import { uploadState } from '@/features/uploads/store'
 import type { UploadItem } from '@/features/uploads/types'
 import MessageDetailView from './MessageDetailView.vue'
 
-async function mountDetail(getMessage: (id: string) => ReturnType<typeof messageFixture>, id = 'message-1') {
+async function mountDetail(getMessage: (id: string) => ReturnType<typeof messageFixture>, id = 'message-1', recipients: RecipientUser[] = []) {
   vi.spyOn(DefaultService, 'getMessage').mockImplementation((messageId) => Promise.resolve(getMessage(messageId)) as never)
   vi.spyOn(DefaultService, 'listTags').mockResolvedValue([])
+  const recipientDirectory = vi.spyOn(DefaultService, 'listRecipientUsers').mockResolvedValue({ items: recipients })
   const client = new QueryClient({ defaultOptions: { queries: { retry:false }, mutations:{ retry:false } } })
   const router = createRouter({ history:createMemoryHistory(), routes:[{ path:'/messages/:id', component:{ template:'<div />' } }, { path:'/temporary', component:{ template:'<div />' } }] })
   await router.push(`/messages/${id}`); await router.isReady()
   const wrapper = mount(MessageDetailView, { props:{ id }, global:{ plugins:[router, [VueQueryPlugin, { queryClient:client }]], stubs:{ teleport:true } } })
   await flushPromises()
-  return { wrapper, client }
+  return { wrapper, client, recipientDirectory }
 }
+
+describe('forward recipient selection', () => {
+  beforeEach(() => vi.restoreAllMocks())
+
+  it('loads named users, searches them, and forwards with the selected user ID', async () => {
+    const users = [
+      { id: '11111111-1111-4111-8111-111111111111', username: 'alice', displayName: 'Alice Chen' },
+      { id: '22222222-2222-4222-8222-222222222222', username: 'bob', displayName: 'Bob Stone' },
+    ]
+    const forward = vi.spyOn(DefaultService, 'forwardMessage').mockResolvedValue({
+      messageId: 'forwarded-message',
+      createdAt: '2026-08-31T00:00:00Z',
+      expiresAt: '2026-09-03T00:00:00Z',
+    })
+    const { wrapper, recipientDirectory } = await mountDetail(() => messageFixture(), 'message-1', users)
+
+    expect(recipientDirectory).toHaveBeenCalledWith(undefined)
+    expect(wrapper.text()).toContain('Alice Chen')
+    expect(wrapper.text()).toContain('@bob')
+    expect(wrapper.find('input[placeholder*="用户 ID"]').exists()).toBe(false)
+
+    await wrapper.get('input[placeholder="用户名或显示名称"]').setValue('bob')
+    await flushPromises()
+    expect(recipientDirectory).toHaveBeenCalledWith('bob')
+
+    await wrapper.get('[aria-label="选择 Bob Stone @bob"]').trigger('click')
+    await wrapper.get('.forward-submit').trigger('click')
+    await flushPromises()
+
+    expect(forward).toHaveBeenCalledWith(
+      'message-1',
+      expect.any(String),
+      { expectedVersion: 1, recipientUserId: '22222222-2222-4222-8222-222222222222' },
+    )
+    expect(wrapper.text()).toContain('已转发')
+    wrapper.unmount()
+  })
+})
 
 describe('sensitive detail', () => {
   it('reveals only on explicit click and never puts plaintext in query cache', async () => {

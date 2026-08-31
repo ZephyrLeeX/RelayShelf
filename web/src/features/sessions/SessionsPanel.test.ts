@@ -3,6 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { nextTick } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import QRCode from 'qrcode'
 import { ApiError, DefaultService, TOTPEnrollmentPending } from '@/api/generated'
 import { useAuthStore } from '@/features/auth/store'
 import SessionsPanel from './SessionsPanel.vue'
@@ -21,15 +22,17 @@ async function render() {
 
 describe('TOTP enrollment re-authentication', () => {
   beforeEach(() => {
+    vi.spyOn(QRCode, 'toCanvas').mockResolvedValue(undefined)
     vi.spyOn(DefaultService, 'getTotpStatus').mockResolvedValue({ enabled: false })
     vi.spyOn(DefaultService, 'listSessions').mockResolvedValue([])
     vi.spyOn(DefaultService, 'listDevices').mockResolvedValue([])
   })
 
   it('sends the current password and clears it after enrollment starts', async () => {
+    const provisioningUri = 'otpauth://totp/RelayShelf%3Aalice?secret=ABCDEFGHIJKLMNOPQRSTUVWX23456789&issuer=RelayShelf'
     const start = vi.spyOn(DefaultService, 'startTotpEnrollment').mockResolvedValue({
       secret: 'ABCDEFGHIJKLMNOPQRSTUVWX23456789',
-      otpauthUrl: 'otpauth://totp/RelayShelf%3Aalice',
+      otpauthUrl: provisioningUri,
       digits: TOTPEnrollmentPending.digits._6,
       periodSeconds: TOTPEnrollmentPending.periodSeconds._30,
       algorithm: TOTPEnrollmentPending.algorithm.SHA1,
@@ -48,6 +51,33 @@ describe('TOTP enrollment re-authentication', () => {
     expect(start).toHaveBeenCalledWith({ currentPassword: 'TOTP_ENROLL_PASSWORD_SENTINEL' })
     expect((wrapper.vm as unknown as { enrollmentPassword: string }).enrollmentPassword).toBe('')
     expect(wrapper.findAll('input[type="password"]')).toHaveLength(2)
+    expect(wrapper.get('[aria-label="TOTP enrollment 二维码"]').element).toBeInstanceOf(HTMLCanvasElement)
+    expect(QRCode.toCanvas).toHaveBeenCalledWith(expect.any(HTMLCanvasElement), provisioningUri, expect.objectContaining({ errorCorrectionLevel: 'M' }))
+    wrapper.unmount()
+  })
+
+  it('keeps enrollment material out of persistent browser and query state', async () => {
+    const secret = 'PERSISTENCE_SENTINEL_234567'
+    const provisioningUri = `otpauth://totp/RelayShelf%3Aalice?secret=${secret}&issuer=RelayShelf`
+    const localWrite = vi.spyOn(Storage.prototype, 'setItem')
+    vi.spyOn(DefaultService, 'startTotpEnrollment').mockResolvedValue({
+      secret,
+      otpauthUrl: provisioningUri,
+      digits: TOTPEnrollmentPending.digits._6,
+      periodSeconds: TOTPEnrollmentPending.periodSeconds._30,
+      algorithm: TOTPEnrollmentPending.algorithm.SHA1,
+    })
+    const wrapper = await render()
+    const passwordInput = wrapper.findAll('input[type="password"]').at(-1)!
+    await passwordInput.setValue('TOTP_ENROLL_PASSWORD_SENTINEL')
+    await wrapper.findAll('button').find((item) => item.text().includes('开始启用'))!.trigger('click')
+    await flushPromises()
+
+    expect(localWrite).not.toHaveBeenCalledWith(expect.any(String), expect.stringContaining(secret))
+    expect(localStorage.length).toBe(0)
+    expect(sessionStorage.length).toBe(0)
+    expect(window.location.href).not.toContain(secret)
+    expect(wrapper.find('[aria-label="TOTP enrollment 二维码"]').exists()).toBe(true)
     wrapper.unmount()
   })
 

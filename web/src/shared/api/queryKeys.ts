@@ -32,6 +32,7 @@ export const queryKeys = {
   },
   trash: { list: () => ['trash'] as const },
   sessions: { all: () => ['sessions'] as const, devices: () => ['devices'] as const },
+  recipients: { list: (query: string) => ['recipients', query] as const },
   admin: {
     status: () => ['admin', 'status'] as const,
     storage: () => ['admin', 'storage'] as const,

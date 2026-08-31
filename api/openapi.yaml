@@ -583,6 +583,21 @@ paths:
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
+  /users/recipients:
+    get:
+      operationId: listRecipientUsers
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - name: query
+          in: query
+          schema: { type: string, maxLength: 100 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 20, default: 5 }
+      responses:
+        '200': { description: Active recipient directory ordered by recent activity, content: { application/json: { schema: { $ref: '#/components/schemas/RecipientUserList' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
 components:
   securitySchemes:
     cookieAuth: { type: apiKey, in: cookie, name: __Host-session }
@@ -1043,6 +1058,20 @@ components:
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/AdminUser' } }
         nextCursor: { type: [string, 'null'] }
+    RecipientUser:
+      type: object
+      additionalProperties: false
+      required: [id, username, displayName]
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        displayName: { type: string }
+    RecipientUserList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RecipientUser' } }
     CreateAdminUserRequest:
       type: object
       additionalProperties: false
