@@ -167,15 +167,52 @@ describe('MessageComposer', () => {
     expect(direct).not.toHaveBeenCalled()
     expect(create).toHaveBeenCalledWith('key-a', expect.objectContaining({ body: 'normal again', bodyFormat: BodyFormat.TEXT, lifecycle: Lifecycle.TEMPORARY }))
   })
-  it('disables lifecycle and tags while a direct recipient is selected', async () => {
+  it('truly disables tag editing while a direct recipient is selected and keeps the tag draft', async () => {
+    vi.mocked(DefaultService.listTags).mockResolvedValue([{
+      id: 'tag-ops', name: 'Ops', color: '#3B8C6E',
+      createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+    }])
+    const createTag = vi.spyOn(DefaultService, 'createTag')
+    const direct = vi.spyOn(DefaultService, 'directSendMessage').mockResolvedValue({
+      messageId: 'message-direct', createdAt: '2026-08-31T00:00:00Z', expiresAt: '2026-09-01T00:00:00Z',
+    })
     const wrapper = mountComposer()
+    await flushPromises()
     expect(wrapper.get('.lifecycle-control select').attributes('disabled')).toBeUndefined()
+    // Draft a tag selection while still sending to myself.
+    await wrapper.get<HTMLInputElement>('.tag-options input').setValue(true)
+
     await pickRecipient(wrapper, 'bob')
     expect(wrapper.get('.lifecycle-control select').attributes('disabled')).toBeDefined()
-    expect(wrapper.get('.tag-picker').classes()).toContain('disabled')
     expect(wrapper.text()).toContain('直发为独立临时副本')
+    // The interactive picker is gone: a truly disabled button replaces it, so
+    // pointer, keyboard, and programmatic invocation cannot open tag editing
+    // and no inner checkboxes or create-tag controls exist.
+    const control = wrapper.get('button[aria-label="标签"]')
+    expect(control.attributes('disabled')).toBeDefined()
+    expect(wrapper.find('details.tag-picker').exists()).toBe(false)
+    expect(wrapper.find('.tag-options').exists()).toBe(false)
+    expect(wrapper.find('input[aria-label="新建标签名称"]').exists()).toBe(false)
+    // The disabled control still shows the kept draft count.
+    expect(control.text()).toContain('1')
+
+    // Switching back to myself restores the interactive picker with the
+    // untouched tag draft — direct mode disables the UI but never wipes it.
     await pickSelf(wrapper)
     expect(wrapper.get('.lifecycle-control select').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('details.tag-picker').exists()).toBe(true)
+    expect(wrapper.get<HTMLInputElement>('.tag-options input').element.checked).toBe(true)
+
+    // A direct send still never carries tagIds, even with a drafted tag.
+    await pickRecipient(wrapper, 'bob')
+    await wrapper.get('textarea').setValue('direct with drafted tag')
+    await sendByKeyboard(wrapper)
+    await flushPromises()
+    expect(createTag).not.toHaveBeenCalled()
+    expect(direct).toHaveBeenCalledWith('key-a', {
+      recipientUserId: bob.id,
+      body: 'direct with drafted tag', bodyFormat: BodyFormat.TEXT, sensitive: false, uploadIds: [],
+    })
   })
   it('reuses the direct-send idempotency key after a network failure and rotates it when the recipient changes', async () => {
     const direct = vi.spyOn(DefaultService, 'directSendMessage')

@@ -25,7 +25,13 @@ async function mountDetail(getMessage: (id: string) => ReturnType<typeof message
 describe('forward recipient selection', () => {
   beforeEach(() => vi.restoreAllMocks())
 
-  it('loads named users, searches them, and forwards with the selected user ID', async () => {
+  // Accessible-name lookup: aria-label wins, otherwise the button's text.
+  function buttonsNamed(wrapper: VueWrapper, name: string) {
+    return wrapper.findAll('button').filter((button) =>
+      (button.attributes('aria-label') ?? button.text().trim()) === name)
+  }
+
+  it('loads named users lazily, searches them, and forwards with the selected user ID', async () => {
     const users = [
       { id: '11111111-1111-4111-8111-111111111111', username: 'alice', displayName: 'Alice Chen' },
       { id: '22222222-2222-4222-8222-222222222222', username: 'bob', displayName: 'Bob Stone' },
@@ -37,22 +43,37 @@ describe('forward recipient selection', () => {
     })
     const { wrapper, recipientDirectory } = await mountDetail(() => messageFixture(), 'message-1', users)
 
+    // Detail open: no recipient query fires.
     expect(recipientDirectory).not.toHaveBeenCalled()
     expect(wrapper.find('.forward').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('接收者会得到一条独立的临时副本')
-    await wrapper.get('.compact-action').trigger('click')
+
+    // Forward panel open: the picker is rendered but still collapsed, so the
+    // recipient directory query must stay idle until the picker itself opens.
+    await buttonsNamed(wrapper, '转发')[0]!.trigger('click')
     await flushPromises()
-    expect(recipientDirectory).toHaveBeenCalledWith(undefined)
+    expect(wrapper.find('.forward').exists()).toBe(true)
+    expect(recipientDirectory).not.toHaveBeenCalled()
+
+    // Opening the recipient picker is what starts the query.
+    await wrapper.get('button[aria-label="接收人"]').trigger('click')
+    await flushPromises()
+    expect(recipientDirectory).toHaveBeenCalledTimes(1)
+    expect(recipientDirectory).toHaveBeenCalledWith(undefined, 8)
     expect(wrapper.text()).toContain('Alice Chen')
     expect(wrapper.text()).toContain('@bob')
     expect(wrapper.find('input[placeholder*="用户 ID"]').exists()).toBe(false)
 
-    await wrapper.get('input[placeholder="搜索用户…"]').setValue('bob')
+    await wrapper.get('input[type="search"]').setValue('bob')
     await flushPromises()
-    expect(recipientDirectory).toHaveBeenCalledWith('bob')
+    expect(recipientDirectory).toHaveBeenLastCalledWith('bob', 8)
 
     await wrapper.get('[aria-label="选择 Bob Stone @bob"]').trigger('click')
-    await wrapper.get('.forward-submit').trigger('click')
+    // The panel's submit button is the 转发 button without the toggle's
+    // aria-expanded state.
+    const submit = buttonsNamed(wrapper, '转发').find((button) => button.attributes('aria-expanded') === undefined)
+    expect(submit).toBeTruthy()
+    await submit!.trigger('click')
     await flushPromises()
 
     expect(forward).toHaveBeenCalledWith(

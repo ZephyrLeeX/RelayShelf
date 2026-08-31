@@ -55,16 +55,44 @@ export interface FencedCode {
   code: string
 }
 
-// Matches a body that is nothing but a single fenced block (leading/trailing
-// whitespace tolerated, closing newline optional so truncated previews with a
-// complete fence still parse).
-const SINGLE_FENCE_PATTERN = /^\s*```([\w#+.-]*)[ \t]*\r?\n([\s\S]*?)\r?\n?```\s*$/
+// Opening fence: a run of at least three backticks, an optional info
+// language, then the end of the line. The length is variable because the
+// serializer grows the fence when the code itself contains backtick runs.
+const OPENING_FENCE_PATTERN = /^(`{3,})([\w#+.-]*)[ \t]*(?:\r?\n|$)/
+// Closing fence: a whole line of nothing but backticks (per CommonMark it
+// must be at least as long as the opening run).
+const CLOSING_FENCE_PATTERN = /^`+[ \t]*$/
 
-/** Extracts the fenced block when the whole body is exactly one code fence. */
+/** Longest run of consecutive backticks inside the code, 0 when there is none. */
+function longestBacktickRun(code: string): number {
+  let longest = 0
+  for (const match of code.matchAll(/`+/g)) longest = Math.max(longest, match[0].length)
+  return longest
+}
+
+/**
+ * Extracts the fenced block when the whole body is exactly one code fence.
+ * Any fence length >= 3 backticks is accepted, so historical triple-backtick
+ * bodies and the serializer's grown ```` / ````` fences both parse.
+ */
 export function extractSingleFencedCode(body: string): FencedCode | null {
-  const match = SINGLE_FENCE_PATTERN.exec(body)
-  if (!match) return null
-  return { language: match[1] ?? '', code: match[2] ?? '' }
+  const text = body.trim()
+  const opening = OPENING_FENCE_PATTERN.exec(text)
+  if (!opening) return null
+  const fenceLength = opening[1]?.length ?? 0
+  const language = opening[2] ?? ''
+  const lines = text.slice(opening[0].length).split('\n')
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? ''
+    const closing = CLOSING_FENCE_PATTERN.exec(line.replace(/\r$/, ''))
+    if (!closing || closing[0].replace(/[ \t]/g, '').length < fenceLength) continue
+    // The fenced block must span the whole body: only whitespace may follow.
+    if (lines.slice(index + 1).some((remaining) => remaining.trim() !== '')) return null
+    // The serializer joins the code with "\n" + closing fence, so the lines
+    // before the fence ARE the code; a trailing CR from CRLF input is not.
+    return { language, code: lines.slice(0, index).join('\n').replace(/\r$/, '') }
+  }
+  return null
 }
 
 /** Registry language of a body that is exactly one fenced code block. */
@@ -74,7 +102,11 @@ export function extractFenceLanguage(body: string) {
 }
 
 function fenceCode(fenceLanguage: string, code: string): string {
-  return `\`\`\`${fenceLanguage}\n${code}\n\`\`\``
+  // The outer fence must out-length the longest backtick run in the code,
+  // otherwise an embedded ``` would close the block early and corrupt the
+  // Markdown. Minimum stays three for compatibility with existing data.
+  const fence = '`'.repeat(Math.max(3, longestBacktickRun(code) + 1))
+  return `${fence}${fenceLanguage}\n${code}\n${fence}`
 }
 
 /**

@@ -30,6 +30,27 @@ describe('SafeMarkdown', () => {
     expect(wrapper.find('code script').exists()).toBe(false)
   })
 
+  it('renders code behind longer fences and keeps embedded ``` runs intact', async () => {
+    const source = '````python\nprint("```")\n````'
+    const wrapper = mount(SafeMarkdown, { props: { source } })
+    await vi.waitFor(() => expect(wrapper.find('pre code').exists()).toBe(true))
+    // The four-backtick fence keeps the inner ``` inside the code block
+    // instead of closing it early (which would emit a second block).
+    expect(wrapper.find('pre code').text()).toContain('print("```")')
+    expect(wrapper.findAll('pre')).toHaveLength(1)
+    expect(wrapper.find('p').exists()).toBe(false)
+  })
+
+  it('renders a heredoc containing a fenced json block without splitting it', async () => {
+    const source = '`````bash\ncat <<\'EOF\'\n```json\n{"a":1}\n```\nEOF\n`````'
+    const wrapper = mount(SafeMarkdown, { props: { source } })
+    await vi.waitFor(() => expect(wrapper.find('pre code').exists()).toBe(true))
+    expect(wrapper.findAll('pre')).toHaveLength(1)
+    expect(wrapper.find('pre code').text()).toContain('cat <<\'EOF\'')
+    expect(wrapper.find('pre code').text()).toContain('{"a":1}')
+    wrapper.unmount()
+  })
+
   it('blocks data: and other dangerous link schemes', async () => {
     const wrapper = mount(SafeMarkdown, { props: { source: '[a](data:text/html;base64,PHNjcmlwdD4)\n[b](vbscript:alert)\n[c](file:///etc/passwd)' } })
     await flushPromises()

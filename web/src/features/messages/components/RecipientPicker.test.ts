@@ -89,4 +89,21 @@ describe('RecipientPicker', () => {
     await flushPromises()
     expect(wrapper.find('.recipient-menu').exists()).toBe(false)
   })
+
+  it('gives the search control a real accessible name and keeps the listbox options-only', async () => {
+    const { wrapper } = mountPicker()
+    await open(wrapper)
+    const input = wrapper.get('input[type="search"]')
+    // Accessible name via an associated <label for>, not the placeholder.
+    const label = wrapper.get(`label[for="${input.attributes('id')}"]`)
+    expect(label.text()).toContain('搜索用户')
+
+    const listbox = wrapper.get('[role="listbox"]')
+    expect(listbox.find('input').exists()).toBe(false)
+    expect(listbox.find('.hint').exists()).toBe(false)
+    for (const child of listbox.findAll('[role="option"]')) {
+      expect(child.element.parentElement).toBe(listbox.element)
+    }
+    expect(listbox.findAll('[role="option"]').length).toBeGreaterThanOrEqual(1)
+  })
 })

@@ -34,7 +34,9 @@ const loaded = new Set<string>()
 
 async function render(source: string) {
   const current = ++generation
-  const languages = [...source.matchAll(/```([\w-]+)/g)].map((match) => match[1].toLowerCase()).filter((name) => name in languageLoaders && !loaded.has(name))
+  // Fences may be longer than three backticks (the serializer grows them when
+  // the code contains backtick runs), so discovery accepts any run length.
+  const languages = [...source.matchAll(/(`{3,})([\w-]+)/g)].map((match) => match[2].toLowerCase()).filter((name) => name in languageLoaders && !loaded.has(name))
   await Promise.all([...new Set(languages)].map(async (name) => { const module = await languageLoaders[name](); hljs.registerLanguage(name, module.default); loaded.add(name) }))
   if (current !== generation) return
   const markdown = new MarkdownIt({ html: false, linkify: true })

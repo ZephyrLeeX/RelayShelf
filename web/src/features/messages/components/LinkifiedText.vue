@@ -58,7 +58,10 @@ const segments = computed<Segment[]>(() => {
     const index = match.index ?? 0
     if (index > lastIndex) result.push({ kind: 'text', text: props.text.slice(lastIndex, index) })
     result.push({ kind: 'link', text: trimmed, href })
-    lastIndex = index + raw.length
+    // Resume right after the trimmed URL: any punctuation trimTrailingUrl cut
+    // off must survive as plain text, so linkification never drops or rewrites
+    // body characters (rendered textContent === the original text).
+    lastIndex = index + trimmed.length
   }
   if (lastIndex < props.text.length) result.push({ kind: 'text', text: props.text.slice(lastIndex) })
   return result

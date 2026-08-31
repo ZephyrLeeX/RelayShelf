@@ -59,13 +59,17 @@ function select(id: ContentTypeId) {
       role="listbox"
       aria-label="内容类型"
     >
-      <template
+      <div
         v-for="group in groups"
         :key="group.key"
+        class="type-group"
+        role="group"
+        :aria-label="group.label"
       >
         <p
           v-if="group.label"
           class="group-label"
+          aria-hidden="true"
         >
           {{ group.label }}
         </p>
@@ -86,7 +90,7 @@ function select(id: ContentTypeId) {
           >{{ item.shortLabel }}</span>
           <span class="type-name">{{ item.label }}</span>
         </button>
-      </template>
+      </div>
     </div>
   </div>
 </template>
@@ -96,7 +100,7 @@ function select(id: ContentTypeId) {
 .type-chip{display:inline-grid;place-items:center;min-width:30px;padding:.1rem .28rem;border-radius:.35rem;background:var(--surface-soft);color:var(--text-secondary);font-family:var(--font-mono);font-size:.64rem;font-weight:750;letter-spacing:.04em}.type-chip.code{background:color-mix(in srgb,var(--content-code) 13%,var(--surface-soft));color:var(--content-code)}
 .type-name{max-width:9rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chevron{width:.85rem;height:.85rem;color:var(--text-tertiary)}
 .type-menu{position:absolute;z-index:30;top:calc(100% + .4rem);left:0;display:grid;gap:.1rem;width:max-content;max-width:min(280px,calc(100vw - 2rem));max-height:min(300px,60vh);overflow:auto;padding:.4rem;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--surface-raised);box-shadow:var(--shadow-floating)}
-.group-label{margin:.25rem .3rem .1rem;color:var(--text-tertiary);font-size:.64rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+.group-label{margin:.25rem .3rem .1rem;color:var(--text-tertiary);font-size:.64rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.type-group{display:grid;gap:.1rem}
 .type-menu button{display:flex;align-items:center;gap:.45rem;width:100%;min-height:34px;border:0;border-radius:.45rem;padding:.3rem .4rem;background:transparent;color:var(--text-primary);font-size:.78rem;text-align:left;cursor:pointer}.type-menu button:hover{background:var(--surface-soft)}.type-menu button.selected{background:var(--accent-primary-soft);color:var(--accent-primary);font-weight:700}.type-menu button:focus-visible{outline:2px solid var(--focus-ring);outline-offset:-2px}
 @media(max-width:480px){.type-trigger .type-name{display:none}.type-trigger{padding-inline:.45rem}}
 </style>

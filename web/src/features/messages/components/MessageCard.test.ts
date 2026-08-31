@@ -99,7 +99,7 @@ describe('MessageCard', () => {
   })
   it('opens the inspector through canonical URL selection', async () => {
     const { router, wrapper } = await render()
-    await wrapper.get('.body-button').trigger('click')
+    await wrapper.get('.body-content').trigger('click')
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(router.currentRoute.value.query.detail).toBe('message-1')
     expect(router.currentRoute.value.path).toBe('/')
@@ -136,9 +136,34 @@ describe('MessageCard', () => {
   })
   it('opens detail when clicking the body outside links', async () => {
     const { router, wrapper } = await render({ bodyPreview: '见 https://example.com/a 说明' })
-    await wrapper.get('.body-button').trigger('click')
+    await wrapper.get('.body-content').trigger('click')
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(router.currentRoute.value.query.detail).toBe('message-1')
+  })
+  it('keeps an explicit keyboard-accessible detail button and no full-size overlay', async () => {
+    const { router, wrapper } = await render({ bodyPreview: 'select this text' })
+    // The body stays plain selectable text: no transparent button covers it.
+    expect(wrapper.find('.body-region button').exists()).toBe(false)
+    const detail = wrapper.get('button[aria-label="打开内容 message-1"]')
+    expect(detail.attributes('title')).toBe('打开内容')
+    await detail.trigger('click')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(router.currentRoute.value.query.detail).toBe('message-1')
+  })
+  it('does not open detail when a click ends an active text selection', async () => {
+    const { router, wrapper } = await render({ bodyPreview: 'select some of this text' })
+    const getSelection = vi.spyOn(window, 'getSelection')
+      .mockReturnValue({ rangeCount: 1, isCollapsed: false } as unknown as Selection)
+    await wrapper.get('.body-content').trigger('click')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(router.currentRoute.value.query.detail).toBeUndefined()
+
+    // An ordinary click (no selection) still opens the detail.
+    getSelection.mockReturnValue({ rangeCount: 1, isCollapsed: true } as unknown as Selection)
+    await wrapper.get('.body-content').trigger('click')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(router.currentRoute.value.query.detail).toBe('message-1')
+    getSelection.mockRestore()
   })
   it('copies the bare code for a body that is exactly one fenced block', async () => {
     const { wrapper } = await render({ bodyFormat: BodyFormat.MARKDOWN, bodyPreview: '```bash\ndocker compose up -d\n```' })

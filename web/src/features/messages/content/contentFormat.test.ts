@@ -4,6 +4,7 @@ import { findCodeLanguage } from './codeLanguages'
 import {
   CONTENT_TYPES,
   extractFenceLanguage,
+  extractSingleFencedCode,
   findContentType,
   parseStoredContent,
   serializeContent,
@@ -69,6 +70,35 @@ describe('serializeContent', () => {
     const parsed = parseStoredContent(stored.body, stored.bodyFormat)
     expect(parsed.text).toBe(code)
     expect(serializeContent(parsed.text, parsed.typeId)).toEqual(stored)
+  })
+
+  it('grows the outer fence when the code itself contains a ``` run', () => {
+    const code = 'before\n```\ninside\n```\nafter'
+    const stored = serializeContent(code, 'shell')
+    expect(stored.body).toBe('````bash\nbefore\n```\ninside\n```\nafter\n````')
+    expect(unwrapSingleFencedCode(stored.body)).toBe(code)
+    expect(parseStoredContent(stored.body, stored.bodyFormat)).toEqual({ typeId: 'shell', text: code })
+    expect(serializeContent(code, 'shell')).toEqual(stored)
+  })
+
+  it('grows the fence past a four-backtick run and keeps copy verbatim', () => {
+    const code = 'cat <<\'EOF\'\n````json\n{"a":1}\n````\nEOF'
+    const stored = serializeContent(code, 'shell')
+    expect(stored.body.startsWith('`````bash\n')).toBe(true)
+    expect(stored.body.endsWith('\n`````')).toBe(true)
+    expect(unwrapSingleFencedCode(stored.body)).toBe(code)
+  })
+
+  it('keeps serialize → parse → serialize stable for backtick-heavy code', () => {
+    for (const code of ['plain', 'x = `a`', 'echo ```', 'a\n```\nb\n```\nc', 'ends with `', '````']) {
+      const first = serializeContent(code, 'python')
+      const parsed = parseStoredContent(first.body, first.bodyFormat)
+      expect(parsed.text).toBe(code)
+      const second = serializeContent(parsed.text, parsed.typeId)
+      expect(second).toEqual(first)
+      // The round trip never loses the raw code: unwrap(serialized) === code.
+      expect(unwrapSingleFencedCode(first.body)).toBe(code)
+    }
   })
 })
 
@@ -145,5 +175,23 @@ describe('fence helpers', () => {
     expect(unwrapSingleFencedCode('```unknown\ncode\n```')).toBe('code')
     expect(unwrapSingleFencedCode('prose\n```bash\ncmd\n```\nmore')).toBeNull()
     expect(unwrapSingleFencedCode(null)).toBeNull()
+  })
+
+  it('parses historical triple-backtick bodies without migrating them', () => {
+    expect(parseStoredContent('```bash\nls -la\n```', BodyFormat.MARKDOWN)).toEqual({ typeId: 'shell', text: 'ls -la' })
+    expect(unwrapSingleFencedCode('```bash\nls -la\n```')).toBe('ls -la')
+    // Re-serializing the parsed code keeps the historical three-backtick form
+    // when the code contains no backtick run of its own.
+    expect(serializeContent('ls -la', 'shell').body).toBe('```bash\nls -la\n```')
+  })
+
+  it('accepts variable-length fences of four and five backticks', () => {
+    expect(parseStoredContent('````python\nprint("```")\n````', BodyFormat.MARKDOWN)).toEqual({
+      typeId: 'python',
+      text: 'print("```")',
+    })
+    expect(unwrapSingleFencedCode('`````json\n{"a":1}\n`````')).toBe('{"a":1}')
+    // A closing fence shorter than the opening run does not close the block.
+    expect(extractSingleFencedCode('````bash\n```\n````')).toEqual({ language: 'bash', code: '```' })
   })
 })

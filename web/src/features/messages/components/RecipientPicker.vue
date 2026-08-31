@@ -63,18 +63,18 @@ function choose(user: RecipientUser | null) {
       v-if="open"
       class="recipient-menu"
       :class="{ 'placement-top': placement === 'top' }"
-      role="listbox"
-      aria-label="接收人"
     >
       <div class="search-box">
         <Search
           aria-hidden="true"
           class="search-icon"
         />
-        <label class="sr-only">
-          搜索用户
-        </label>
+        <label
+          class="sr-only"
+          for="recipient-picker-search"
+        >搜索用户</label>
         <input
+          id="recipient-picker-search"
           v-model="search"
           type="search"
           maxlength="100"
@@ -82,20 +82,6 @@ function choose(user: RecipientUser | null) {
           autocomplete="off"
         >
       </div>
-      <button
-        type="button"
-        role="option"
-        class="recipient-option"
-        :aria-selected="recipient === null"
-        :class="{ selected: recipient === null }"
-        title="发送给自己"
-        @click="choose(null)"
-      >
-        <User
-          aria-hidden="true"
-          class="option-icon"
-        /><strong>自己</strong><span>普通发送</span>
-      </button>
       <p
         v-if="results.isPending.value"
         class="hint"
@@ -108,9 +94,27 @@ function choose(user: RecipientUser | null) {
       >
         用户列表加载失败，请重试。
       </p>
-      <template v-else-if="results.data.value?.items.length">
+      <div
+        class="recipient-options"
+        role="listbox"
+        aria-label="接收人"
+      >
         <button
-          v-for="user in results.data.value.items"
+          type="button"
+          role="option"
+          class="recipient-option"
+          :aria-selected="recipient === null"
+          :class="{ selected: recipient === null }"
+          title="发送给自己"
+          @click="choose(null)"
+        >
+          <User
+            aria-hidden="true"
+            class="option-icon"
+          /><strong>自己</strong><span>普通发送</span>
+        </button>
+        <button
+          v-for="user in results.data.value?.items ?? []"
           :key="user.id"
           type="button"
           role="option"
@@ -122,9 +126,9 @@ function choose(user: RecipientUser | null) {
         >
           <strong>{{ user.displayName }}</strong><span>@{{ user.username }}</span>
         </button>
-      </template>
+      </div>
       <p
-        v-else
+        v-if="!results.isPending.value && !results.isError.value && !results.data.value?.items.length"
         class="hint"
       >
         没有匹配的用户。
@@ -141,6 +145,7 @@ function choose(user: RecipientUser | null) {
    boundary. Anchor left instead. */
 .recipient-menu.placement-top{top:auto;bottom:calc(100% + .4rem);left:0;right:auto}
 .search-box{display:flex;align-items:center;gap:.4rem;padding:.3rem .45rem;border:1px solid var(--border-default);border-radius:.45rem;background:var(--surface-soft)}.search-box:focus-within{border-color:var(--accent-primary)}.search-icon{width:.85rem;height:.85rem;color:var(--text-tertiary)}.search-box input{width:100%;border:0;background:transparent;color:var(--text-primary);font-size:.78rem;outline:0}.search-box input::placeholder{color:var(--text-tertiary)}
+.recipient-options{display:grid;gap:.2rem}
 .recipient-option{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:.45rem;width:100%;min-height:38px;border:1px solid transparent;border-radius:.5rem;padding:.35rem .5rem;background:transparent;color:var(--text-primary);text-align:left;cursor:pointer}.recipient-option:hover{background:var(--surface-soft)}.recipient-option.selected{border-color:var(--accent-secondary);background:color-mix(in srgb,var(--accent-secondary) 12%,var(--surface-raised))}.recipient-option:focus-visible{outline:2px solid var(--focus-ring);outline-offset:-2px}.recipient-option strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.78rem}.recipient-option span{color:var(--text-tertiary);font-size:.7rem}
 .hint{margin:.2rem .3rem;color:var(--text-tertiary);font-size:.74rem}.hint.error{color:var(--state-danger)}
 @media(max-width:480px){.recipient-trigger .chevron{display:none}.recipient-trigger{padding-inline:.45rem}}

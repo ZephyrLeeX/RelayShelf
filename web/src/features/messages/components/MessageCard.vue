@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { LockKeyhole, Star } from '@lucide/vue'
+import { LockKeyhole, Maximize2, Star } from '@lucide/vue'
 import { computed, ref } from 'vue'
 import { BodyFormat, type MessageSummary } from '@/api/generated'
 import { useDetailSelection } from '@/app/composables/useDetailSelection'
@@ -51,9 +51,13 @@ function openDetail() {
   openSelectedDetail(props.message.id)
 }
 // Embedded links and other interactive elements must not also open the detail.
+// Finishing a text selection also fires a click in browsers — keep those from
+// opening the detail so partial text can be selected and copied from the body.
 function onCardClick(event: MouseEvent) {
   const target = event.target
   if (target instanceof HTMLElement && target.closest('a, button, input, select, textarea, summary, label')) return
+  const selection = window.getSelection()
+  if (selection && selection.rangeCount > 0 && !selection.isCollapsed) return
   openDetail()
 }
 function run(command: Parameters<typeof mutation.mutate>[0]) {
@@ -91,12 +95,26 @@ function relativeExpiry(value?: string | null) {
           class="favorite-badge"
         ><Star aria-hidden="true" />收藏</span>
       </div>
-      <QuickCopyButton
-        v-if="hasBody"
-        :body="copyBody"
-        :requires-detail="requiresDetailToCopy"
-        @open-detail="openDetail"
-      />
+      <div class="header-actions">
+        <QuickCopyButton
+          v-if="hasBody"
+          :body="copyBody"
+          :requires-detail="requiresDetailToCopy"
+          @open-detail="openDetail"
+        />
+        <!-- Explicit, keyboard-accessible way to open the detail. The body
+             itself opens the detail on ordinary clicks, but it must stay
+             selectable text rather than a full-size transparent button. -->
+        <button
+          class="detail-button"
+          type="button"
+          :aria-label="`打开内容 ${message.id}`"
+          title="打开内容"
+          @click.stop="openDetail"
+        >
+          <Maximize2 aria-hidden="true" />
+        </button>
+      </div>
     </header>
 
     <div class="body-region">
@@ -130,14 +148,6 @@ function relativeExpiry(value?: string | null) {
         v-if="message.bodyTruncated"
         class="truncated"
       >预览已截断 · 打开详情查看完整内容</small>
-      <!-- Transparent cover keeps "click body opens detail" without nesting
-           interactive elements: links sit above it and keep their own clicks. -->
-      <button
-        class="body-button"
-        type="button"
-        :aria-label="`打开内容 ${message.id}`"
-        @click.stop="openDetail"
-      />
     </div>
 
     <AttachmentGrid
@@ -221,8 +231,8 @@ function relativeExpiry(value?: string | null) {
 .message-card{position:relative;display:grid;gap:.65rem;padding:.82rem .9rem;cursor:pointer;transition:border-color .15s ease,background .15s ease,box-shadow .15s ease}.message-card:hover{border-color:var(--border-strong);box-shadow:var(--shadow-md)}.message-card.selected{border-color:var(--accent-primary);background:color-mix(in srgb,var(--accent-primary-soft) 44%,var(--surface-raised));box-shadow:inset 3px 0 var(--accent-primary),var(--shadow-sm)}
 .card-header,.headline,.tags,.actions,.meta{display:flex;flex-wrap:wrap;align-items:center}.card-header{justify-content:space-between;gap:.6rem}.headline,.tags,.actions,.meta{gap:.38rem}.type-badge,.expiry-badge,.favorite-badge{display:inline-flex;align-items:center;gap:.25rem;min-height:22px;border-radius:999px;padding:.16rem .46rem;font-size:.65rem;font-weight:750;letter-spacing:.035em}.favorite-badge svg{width:.72rem;height:.72rem}.type-badge{background:var(--surface-soft);color:var(--text-secondary)}.code-card .type-badge{background:color-mix(in srgb,var(--content-code) 13%,var(--surface-soft));color:var(--content-code)}.expiry-badge{background:color-mix(in srgb,var(--state-warning) 12%,var(--surface-soft));color:var(--state-warning)}.favorite-badge{background:var(--accent-primary-soft);color:var(--accent-primary)}
 .body-region{position:relative;display:grid;gap:.38rem}
-.body-button{position:absolute;inset:0;z-index:1;border:0;padding:0;background:transparent;cursor:pointer;border-radius:var(--radius-sm)}.body-button:focus-visible{outline:2px solid var(--focus-ring);outline-offset:3px}
-.body-region :deep(a){position:relative;z-index:2}
+.header-actions{display:flex;align-items:center;gap:.3rem}
+.detail-button{display:inline-grid;place-items:center;width:28px;height:28px;border:0;border-radius:.45rem;background:transparent;color:var(--text-tertiary);cursor:pointer}.detail-button svg{width:.95rem;height:.95rem}.detail-button:hover{background:var(--surface-soft);color:var(--text-primary)}.detail-button:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px}
 .body-content pre{max-height:10.5rem;margin:0;overflow:hidden;overflow-wrap:anywhere;white-space:pre-wrap;font:inherit;line-height:1.5}.code{border-left:3px solid var(--content-code);border-radius:var(--radius-sm);padding:.7rem .75rem;background:color-mix(in srgb,var(--content-code) 8%,var(--surface-soft));font-family:var(--font-mono);font-size:.82rem}
 .feed-markdown{max-height:11rem;overflow:hidden}
 .locked{display:grid;gap:.18rem;border-radius:var(--radius-sm);padding:.7rem .75rem;background:var(--surface-soft);color:var(--text-secondary)}.locked strong{display:flex;align-items:center;gap:.35rem;color:var(--text-primary);font-size:.85rem}.locked strong svg{width:.9rem;height:.9rem}.locked small,.truncated{color:var(--text-tertiary);font-size:.7rem}.attachment-only{color:var(--text-tertiary);font-size:.8rem}.truncated{display:block}

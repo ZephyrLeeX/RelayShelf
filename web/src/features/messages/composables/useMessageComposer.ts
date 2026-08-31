@@ -259,6 +259,9 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
   }
 
   async function addTag() {
+    // Direct sends cannot carry tags, so tag creation stays off even if a
+    // future UI bug still invokes this while a direct recipient is picked.
+    if (directMode.value) return
     const name = newTagName.value.trim()
     if (!name) return
     try {

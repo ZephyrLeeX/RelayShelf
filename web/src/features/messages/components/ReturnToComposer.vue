@@ -36,8 +36,10 @@ function jump() {
   if (!target) return
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
   target.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'start' })
+  // focus() scrolls the newly focused element into view on its own, which
+  // fights the smooth scroll above; the composer is already being revealed.
   const textarea = target.querySelector('textarea')
-  if (textarea instanceof HTMLTextAreaElement) textarea.focus()
+  if (textarea instanceof HTMLTextAreaElement) textarea.focus({ preventScroll: true })
 }
 </script>
 
