@@ -28,6 +28,10 @@ onUnmounted(() => observer?.disconnect())
     class="feed"
     :aria-busy="query.isPending.value"
   >
+    <div class="feed-toolbar">
+      <strong>内容流</strong>
+      <span>当前分区的全部内容</span>
+    </div>
     <p
       v-if="query.isFetching.value && !query.isPending.value"
       class="refresh muted"
@@ -83,5 +87,5 @@ onUnmounted(() => observer?.disconnect())
 </template>
 
 <style scoped>
-.feed { display:grid; gap:.75rem; }.refresh { margin:0; text-align:right; font-size:.8rem; }.loading,.empty,.end { padding:1.5rem; text-align:center; }.empty { color:var(--muted); }.spinner { display:inline-block; width:1rem; height:1rem; margin-right:.5rem; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin .7s linear infinite; }.sentinel { height:1px; } @keyframes spin { to { transform:rotate(360deg); } } @media(prefers-reduced-motion:reduce){.spinner{animation:none}}
+.feed { display:grid; gap:.65rem; }.feed-toolbar{display:flex;align-items:baseline;justify-content:space-between;gap:1rem;padding:.1rem .15rem .3rem;border-bottom:1px solid var(--border-default)}.feed-toolbar strong{font-size:.82rem}.feed-toolbar span{color:var(--text-tertiary);font-size:.7rem}.refresh { margin:0; text-align:right; font-size:.8rem; }.loading,.empty,.end { padding:1.5rem; text-align:center; }.empty { color:var(--muted); }.spinner { display:inline-block; width:1rem; height:1rem; margin-right:.5rem; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin .7s linear infinite; }.sentinel { height:1px; } @keyframes spin { to { transform:rotate(360deg); } } @media(prefers-reduced-motion:reduce){.spinner{animation:none}}
 </style>

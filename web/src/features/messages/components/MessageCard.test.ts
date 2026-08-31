@@ -1,7 +1,7 @@
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, DefaultService, Lifecycle } from '@/api/generated'
 import { messageFixture } from '@/test/fixtures'
 import MessageCard from './MessageCard.vue'
@@ -13,6 +13,13 @@ async function render(overrides = {}, trash = false) {
 }
 
 describe('MessageCard', () => {
+  const writeText = vi.fn().mockResolvedValue(undefined)
+
+  beforeEach(() => {
+    writeText.mockClear()
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+  })
+
   it('never renders a sensitive body preview', async () => {
     const { wrapper } = await render({ sensitive: true, bodyPreview: 'must-not-leak' })
     expect(wrapper.text()).toContain('Sensitive')
@@ -23,8 +30,42 @@ describe('MessageCard', () => {
     expect((await render({ lifecycle: Lifecycle.PERMANENT })).wrapper.text()).toContain('收藏')
   })
   it('does not offer preview copying as full body when truncated', async () => {
-    const { wrapper } = await render({ bodyTruncated: true })
+    const { router, wrapper } = await render({ bodyTruncated: true })
     expect(wrapper.text()).toContain('打开并复制')
+    await wrapper.get('[aria-label="打开详情后复制正文"]').trigger('click')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(writeText).not.toHaveBeenCalled()
+    expect(router.currentRoute.value.query.detail).toBe('message-1')
+  })
+  it('copies a complete ordinary preview without opening detail', async () => {
+    const { router, wrapper } = await render({ bodyPreview: 'copy this' })
+    await wrapper.get('[aria-label="复制正文"]').trigger('click')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(writeText).toHaveBeenCalledWith('copy this')
+    expect(router.currentRoute.value.query.detail).toBeUndefined()
+  })
+  it('opens detail instead of copying sensitive content', async () => {
+    const { router, wrapper } = await render({ sensitive: true, bodyPreview: null })
+    await wrapper.get('[aria-label="打开详情后复制正文"]').trigger('click')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(writeText).not.toHaveBeenCalled()
+    expect(router.currentRoute.value.query.detail).toBe('message-1')
+  })
+  it('does not render body copy for an attachment-only message', async () => {
+    const attachment = { id:'a1', originalFilename:'notes.txt', clientMime:'text/plain', detectedMime:'text/plain', sizeBytes:12, displayOrder:0 }
+    const { wrapper } = await render({ body:null, bodyPreview:null, attachments:[attachment], attachmentCount:1 })
+    expect(wrapper.find('[aria-label="复制正文"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('仅附件内容')
+  })
+  it('uses detected MIME, not the client MIME, as image thumbnail authority', async () => {
+    const disguised = { id:'unsafe', originalFilename:'unsafe.svg', clientMime:'image/png', detectedMime:'image/svg+xml', sizeBytes:12, displayOrder:0 }
+    const safe = { id:'safe', originalFilename:'photo.jpg', clientMime:null, detectedMime:'image/jpeg', sizeBytes:24, displayOrder:1 }
+    const { wrapper } = await render({ attachments:[disguised, safe], attachmentCount:2 })
+    const cards = wrapper.findAll('.attachment-card')
+    expect(cards[0].find('img').exists()).toBe(false)
+    expect(cards[0].text()).toContain('FILE')
+    expect(cards[1].get('img').attributes('src')).toContain('/api/v1/attachments/safe/thumbnail')
+    expect(cards[1].get('img').attributes('loading')).toBe('lazy')
   })
   it('uses restore and permanent delete semantics in trash', async () => {
     const { wrapper } = await render({ trashedAt: '2026-01-02T00:00:00Z' }, true)
@@ -50,5 +91,6 @@ describe('MessageCard', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(router.currentRoute.value.query.detail).toBe('message-1')
     expect(router.currentRoute.value.path).toBe('/')
+    expect(wrapper.classes()).toContain('selected')
   })
 })
