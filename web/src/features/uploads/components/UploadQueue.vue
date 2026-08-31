@@ -1,9 +1,27 @@
 <script setup lang="ts">
+import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { visibleUploads, uploadState } from '../store'
 import UploadItem from './UploadItem.vue'
 import ResumeUploads from './ResumeUploads.vue'
 
-defineEmits<{ close: [] }>()
+const emit = defineEmits<{ close: [] }>()
+const queue = ref<HTMLElement>()
+let returnFocusTo: HTMLElement | null = null
+
+function onKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') emit('close')
+}
+
+onMounted(async () => {
+  document.addEventListener('keydown', onKeydown)
+  returnFocusTo = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  await nextTick()
+  queue.value?.focus()
+})
+onUnmounted(() => {
+  document.removeEventListener('keydown', onKeydown)
+  returnFocusTo?.focus()
+})
 </script>
 
 <template>
@@ -13,10 +31,12 @@ defineEmits<{ close: [] }>()
       @click.self="$emit('close')"
     >
       <aside
+        ref="queue"
         class="queue panel"
         role="dialog"
         aria-modal="true"
         aria-labelledby="queue-title"
+        tabindex="-1"
       >
         <header>
           <div>

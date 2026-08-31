@@ -20,7 +20,10 @@ const {
 } = useMessageDetailController(() => props.id)
 
 function onKey(event: KeyboardEvent) {
-  if (event.key === 'Escape' && !viewerId.value) emit('close')
+  if (event.key !== 'Escape' || viewerId.value) return
+  // A shell-level modal opened over the inspector owns the first Escape.
+  if (document.querySelector('.viewer, .backdrop, .queue-backdrop, .more-backdrop')) return
+  emit('close')
 }
 onMounted(() => document.addEventListener('keydown', onKey))
 onUnmounted(() => document.removeEventListener('keydown', onKey))

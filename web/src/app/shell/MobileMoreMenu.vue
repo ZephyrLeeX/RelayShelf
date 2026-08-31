@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue'
+import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useAuthStore } from '@/features/auth/store'
 import { useTagsQuery } from '@/features/tags/queries'
 import AccountButton from './AccountButton.vue'
@@ -8,9 +8,19 @@ import ThemeToggle from './ThemeToggle.vue'
 const emit = defineEmits<{ close: [], openSessions: [], logout: [] }>()
 const auth = useAuthStore()
 const tags = useTagsQuery()
+const sheet = ref<HTMLElement>()
+let returnFocusTo: HTMLElement | null = null
 function onKey(event: KeyboardEvent) { if (event.key === 'Escape') emit('close') }
-onMounted(() => document.addEventListener('keydown', onKey))
-onUnmounted(() => document.removeEventListener('keydown', onKey))
+onMounted(async () => {
+  document.addEventListener('keydown', onKey)
+  returnFocusTo = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  await nextTick()
+  sheet.value?.focus()
+})
+onUnmounted(() => {
+  document.removeEventListener('keydown', onKey)
+  returnFocusTo?.focus()
+})
 </script>
 
 <template>
@@ -20,10 +30,12 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
       @click.self="emit('close')"
     >
       <section
+        ref="sheet"
         class="more-sheet panel"
         role="dialog"
         aria-modal="true"
         aria-labelledby="more-title"
+        tabindex="-1"
       >
         <div class="grab" /><header>
           <h2 id="more-title">

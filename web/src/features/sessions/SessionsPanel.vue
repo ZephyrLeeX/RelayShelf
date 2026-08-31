@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { DefaultService, type TOTPEnrollmentPending } from '@/api/generated'
 import { queryKeys } from '@/shared/api/queryKeys'
 import { apiCodes, displayError, toApiError } from '@/shared/api/errors'
@@ -13,6 +13,8 @@ const name = ref(auth.device?.name ?? '')
 const error = ref('')
 const currentPassword = ref('')
 const newPassword = ref('')
+const drawer = ref<HTMLElement>()
+let returnFocusTo: HTMLElement | null = null
 const enrollmentPassword = ref('')
 const totpCode = ref('')
 const pendingEnrollment = ref<TOTPEnrollmentPending | null>(null)
@@ -68,8 +70,16 @@ const password = useMutation({
   onError: (cause) => { error.value = displayError(cause) },
 })
 function onKey(event: KeyboardEvent) { if (event.key === 'Escape') emit('close') }
-onMounted(() => document.addEventListener('keydown', onKey))
-onUnmounted(() => document.removeEventListener('keydown', onKey))
+onMounted(async () => {
+  document.addEventListener('keydown', onKey)
+  returnFocusTo = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  await nextTick()
+  drawer.value?.focus()
+})
+onUnmounted(() => {
+  document.removeEventListener('keydown', onKey)
+  returnFocusTo?.focus()
+})
 </script>
 
 <template>
@@ -79,10 +89,12 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
       @click.self="emit('close')"
     >
       <section
+        ref="drawer"
         class="drawer panel"
         role="dialog"
         aria-modal="true"
         aria-labelledby="sessions-title"
+        tabindex="-1"
       >
         <header>
           <div>

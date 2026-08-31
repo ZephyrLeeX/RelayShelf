@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import type { AttachmentSummary } from '@/api/generated'
 import { downloadURL, previewKind, previewURL, safeRasterMIMEs } from './preview'
 import TextPreview from './TextPreview.vue'
@@ -7,6 +7,8 @@ import TextPreview from './TextPreview.vue'
 const props = defineProps<{ files: AttachmentSummary[]; currentId: string }>()
 const emit = defineEmits<{ close: []; select: [id: string] }>()
 const zoom = ref(1)
+const viewer = ref<HTMLElement>()
+let returnFocusTo: HTMLElement | null = null
 const current = computed(() => props.files.find((file) => file.id === props.currentId))
 const images = computed(() => props.files.filter((file) => safeRasterMIMEs.has(file.detectedMime)))
 const imageIndex = computed(() => images.value.findIndex((file) => file.id === props.currentId))
@@ -20,17 +22,27 @@ function key(event: KeyboardEvent) {
   if (event.key === 'ArrowLeft') navigate(-1)
   if (event.key === 'ArrowRight') navigate(1)
 }
-onMounted(() => document.addEventListener('keydown', key))
-onUnmounted(() => document.removeEventListener('keydown', key))
+onMounted(async () => {
+  document.addEventListener('keydown', key)
+  returnFocusTo = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  await nextTick()
+  viewer.value?.focus()
+})
+onUnmounted(() => {
+  document.removeEventListener('keydown', key)
+  returnFocusTo?.focus()
+})
 </script>
 
 <template>
   <Teleport to="body">
     <div
+      ref="viewer"
       class="viewer"
       role="dialog"
       aria-modal="true"
       aria-label="附件查看器"
+      tabindex="-1"
     >
       <header v-if="current">
         <div><strong>{{ current.originalFilename }}</strong><small>{{ current.detectedMime }}</small></div><nav>

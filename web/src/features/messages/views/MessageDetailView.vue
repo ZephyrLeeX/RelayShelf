@@ -14,7 +14,7 @@ function close() {
 </script>
 
 <template>
-  <article class="legacy-detail panel">
+  <article class="standalone-detail panel">
     <MessageInspector
       :id="id"
       @close="close"
@@ -23,5 +23,5 @@ function close() {
 </template>
 
 <style scoped>
-.legacy-detail{width:min(760px,100%);margin:0 auto;overflow:hidden}
+.standalone-detail{width:min(760px,100%);margin:0 auto;overflow:hidden}
 </style>

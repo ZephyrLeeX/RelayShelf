@@ -1,8 +1,37 @@
 <script setup lang="ts">
+import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useDetailSelection } from '@/app/composables/useDetailSelection'
 import MessageInspector from './MessageInspector.vue'
 
 const { selectedMessageId, closeDetail } = useDetailSelection()
+const detailSheet = ref<HTMLElement>()
+const compact = ref(false)
+let returnFocusTo: HTMLElement | null = null
+let compactMedia: MediaQueryList | undefined
+
+watch(selectedMessageId, async (id, previousId) => {
+  if (id) {
+    if (!previousId) returnFocusTo = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    await nextTick()
+    detailSheet.value?.focus()
+    return
+  }
+  if (previousId) {
+    returnFocusTo?.focus()
+    returnFocusTo = null
+  }
+}, { immediate: true })
+
+function onCompactChange(event: MediaQueryListEvent) { compact.value = event.matches }
+
+onMounted(() => {
+  compactMedia = window.matchMedia?.('(max-width: 1179px)')
+  compact.value = compactMedia?.matches ?? false
+  compactMedia?.addEventListener('change', onCompactChange)
+})
+onUnmounted(() => {
+  compactMedia?.removeEventListener('change', onCompactChange)
+})
 </script>
 
 <template>
@@ -20,10 +49,12 @@ const { selectedMessageId, closeDetail } = useDetailSelection()
     />
     <section
       v-if="selectedMessageId"
+      ref="detailSheet"
       class="detail-sheet"
       role="dialog"
-      aria-modal="true"
+      :aria-modal="compact ? 'true' : undefined"
       aria-labelledby="detail-title"
+      tabindex="-1"
     >
       <div
         class="drag-handle"
