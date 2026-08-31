@@ -64,7 +64,7 @@ watch(() => route.query, () => {
         v-model="q"
         placeholder="至少 2 个 Unicode 字符"
       ></label>
-      <label class="field">区域<select v-model="lifecycle"><option value="">全部</option><option :value="Lifecycle.TEMPORARY">Temporary</option><option :value="Lifecycle.PERMANENT">Permanent</option></select></label>
+      <label class="field">区域<select v-model="lifecycle"><option value="">全部</option><option :value="Lifecycle.TEMPORARY">临时区</option><option :value="Lifecycle.PERMANENT">长期区</option></select></label>
       <label class="field">时间<select v-model="time"><option value="all">全部</option><option value="24h">24 小时</option><option value="7d">7 天</option><option value="30d">30 天</option></select></label>
       <label class="toggle"><input
         v-model="favorite"

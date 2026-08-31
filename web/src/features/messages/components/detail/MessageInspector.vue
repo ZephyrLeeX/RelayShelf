@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Copy, LockKeyhole, Pencil, Star, Trash2, X } from '@lucide/vue'
 import { defineAsyncComponent, onMounted, onUnmounted } from 'vue'
 import { BodyFormat } from '@/api/generated'
 import { formatBytes } from '@/shared/utils/bytes'
@@ -48,7 +49,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
         aria-label="关闭详情"
         @click="emit('close')"
       >
-        ×
+        <X aria-hidden="true" />
       </button>
     </header>
     <div
@@ -74,7 +75,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
         class="sensitive panel"
       >
         <template v-if="currentSensitiveBody === null">
-          <strong>🔒 Sensitive locked</strong>
+          <strong class="sensitive-title"><LockKeyhole aria-hidden="true" />敏感内容已锁定</strong>
           <p class="muted">
             明文仅在本详情面板内存中短暂保留。
           </p>
@@ -112,7 +113,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
         <label class="field">格式<select
           v-model="editFormat"
           :disabled="message.sensitive"
-        ><option :value="BodyFormat.TEXT">Text</option><option :value="BodyFormat.MARKDOWN">Markdown</option></select></label>
+        ><option :value="BodyFormat.TEXT">纯文本</option><option :value="BodyFormat.MARKDOWN">Markdown</option></select></label>
         <label class="field">正文<textarea
           v-model="editBody"
           rows="12"
@@ -303,19 +304,19 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
             class="button"
             @click="copy"
           >
-            复制正文
+            <Copy aria-hidden="true" />复制正文
           </button>
           <button
             class="button"
             @click="startEdit"
           >
-            编辑
+            <Pencil aria-hidden="true" />编辑
           </button>
           <button
             class="button"
             @click="run({ type: 'sensitive', message, sensitive: !message.sensitive })"
           >
-            {{ message.sensitive ? '转为普通' : '设为 Sensitive' }}
+            {{ message.sensitive ? '转为普通内容' : '设为敏感内容' }}
           </button>
           <button
             v-if="message.lifecycle === 'TEMPORARY'"
@@ -329,13 +330,13 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
             class="button"
             @click="run({ type: 'favorite', message, favorite: !message.favorite })"
           >
-            {{ message.favorite ? '取消收藏' : '收藏' }}
+            <Star aria-hidden="true" />{{ message.favorite ? '取消收藏' : '收藏' }}
           </button>
           <button
             class="button danger"
             @click="run({ type: 'trash', message })"
           >
-            移到回收站
+            <Trash2 aria-hidden="true" />移到回收站
           </button>
         </template>
       </div>
@@ -364,6 +365,6 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
 </template>
 
 <style scoped>
-.message-inspector{display:grid;align-content:start;gap:1rem;min-height:100%;padding:1.3rem;color:var(--text-primary)}.detail-header{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;position:sticky;top:-1.3rem;z-index:2;margin:-1.3rem -1.3rem 0;padding:1.3rem;background:color-mix(in srgb,var(--surface-raised) 94%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--border-default)}h1,h2,p{margin:.2rem 0}h1{font-size:1.25rem}.close{font-size:1.3rem}pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}.code{font-family:var(--font-mono);background:var(--surface-soft);padding:1rem;border-radius:var(--radius)}.sensitive{padding:1.25rem;box-shadow:none}.edit{display:grid;gap:.75rem}.edit textarea{resize:vertical}.edit>div{display:flex;gap:.5rem}.tags,.actions,.tag-picker{display:flex;flex-wrap:wrap;gap:.5rem}.files{display:grid;gap:.5rem}.add-files{display:flex;align-items:center;gap:.5rem;padding:.7rem;box-shadow:none}.add-files>div{display:grid;flex:1}.add-files span{color:var(--text-tertiary);font-size:.75rem}details{display:grid;gap:.6rem}summary{cursor:pointer}.state{padding:3rem 1rem;text-align:center}.forward{display:grid;gap:.5rem;padding:.7rem;box-shadow:none}.forward-search{font-size:.76rem}.recipient-list{display:grid;gap:.35rem}.recipient-option{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:.5rem;width:100%;border:1px solid var(--border-default);border-radius:var(--radius-sm);padding:.5rem .6rem;background:var(--surface-raised);color:var(--text-primary);text-align:left}.recipient-option:hover{border-color:var(--border-strong)}.recipient-option.selected{border-color:var(--accent-primary);background:var(--accent-primary-soft)}.recipient-option strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.8rem}.recipient-option span{color:var(--text-tertiary);font-size:.72rem}.forward-submit{justify-self:end}.restored{border:1px solid var(--border-default);border-radius:var(--radius-sm);padding:.55rem .65rem;display:grid;gap:.4rem}.restored h2{font-size:.78rem;color:var(--text-tertiary)}.restored ul{list-style:none;margin:0;padding:0;display:grid;gap:.35rem}.restored li{display:flex;align-items:center;justify-content:space-between;gap:.7rem;font-size:.82rem}.restored span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.restored .button{min-height:32px;padding:.25rem .55rem;font-size:.76rem;white-space:nowrap}
+.message-inspector{display:grid;align-content:start;gap:1rem;min-height:100%;padding:1.3rem;color:var(--text-primary)}.detail-header{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;position:sticky;top:-1.3rem;z-index:2;margin:-1.3rem -1.3rem 0;padding:1.3rem;background:color-mix(in srgb,var(--surface-raised) 94%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--border-default)}h1,h2,p{margin:.2rem 0}h1{font-size:1.25rem}.close svg,.actions svg,.sensitive-title svg{width:1rem;height:1rem}.sensitive-title,.actions .button{display:inline-flex;align-items:center;gap:.35rem}pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}.code{font-family:var(--font-mono);background:var(--surface-soft);padding:1rem;border-radius:var(--radius)}.sensitive{padding:1.25rem;box-shadow:none}.edit{display:grid;gap:.75rem}.edit textarea{resize:vertical}.edit>div{display:flex;gap:.5rem}.tags,.actions,.tag-picker{display:flex;flex-wrap:wrap;gap:.5rem}.files{display:grid;gap:.5rem}.add-files{display:flex;align-items:center;gap:.5rem;padding:.7rem;box-shadow:none}.add-files>div{display:grid;flex:1}.add-files span{color:var(--text-tertiary);font-size:.75rem}details{display:grid;gap:.6rem}summary{cursor:pointer}.state{padding:3rem 1rem;text-align:center}.forward{display:grid;gap:.5rem;padding:.7rem;box-shadow:none}.forward-search{font-size:.76rem}.recipient-list{display:grid;gap:.35rem}.recipient-option{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:.5rem;width:100%;border:1px solid var(--border-default);border-radius:var(--radius-sm);padding:.5rem .6rem;background:var(--surface-raised);color:var(--text-primary);text-align:left}.recipient-option:hover{border-color:var(--border-strong)}.recipient-option.selected{border-color:var(--accent-primary);background:var(--accent-primary-soft)}.recipient-option strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.8rem}.recipient-option span{color:var(--text-tertiary);font-size:.72rem}.forward-submit{justify-self:end}.restored{border:1px solid var(--border-default);border-radius:var(--radius-sm);padding:.55rem .65rem;display:grid;gap:.4rem}.restored h2{font-size:.78rem;color:var(--text-tertiary)}.restored ul{list-style:none;margin:0;padding:0;display:grid;gap:.35rem}.restored li{display:flex;align-items:center;justify-content:space-between;gap:.7rem;font-size:.82rem}.restored span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.restored .button{min-height:32px;padding:.25rem .55rem;font-size:.76rem;white-space:nowrap}
 @media(max-width:600px){.message-inspector{padding:1rem}.detail-header{top:-1rem;margin:-1rem -1rem 0;padding:1rem}.add-files{flex-wrap:wrap}.add-files>div{width:100%;flex-basis:100%}.recipient-option{grid-template-columns:minmax(0,1fr)}.forward-submit{justify-self:stretch}.restored li{align-items:flex-start;flex-direction:column}}
 </style>

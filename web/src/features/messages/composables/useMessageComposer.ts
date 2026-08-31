@@ -179,7 +179,7 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
     error.value = ''
     if (!hasContent.value) error.value = '请输入正文或添加至少一个附件。'
     else if (attachmentsBlocking.value) error.value = '等待附件上传完成，或移除失败的附件。'
-    else if (tooLarge.value) error.value = '正文 UTF-8 大小不能超过 1 MiB。'
+    else if (tooLarge.value) error.value = '正文 UTF-8 大小不能超过 1 MB。'
     return !error.value
   }
 

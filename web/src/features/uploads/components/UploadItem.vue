@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { formatBytes } from '@/shared/utils/bytes'
+import { uploadStatusLabel } from '../labels'
 import { uploadManager } from '../manager'
 import type { UploadItem } from '../types'
 
@@ -25,7 +26,7 @@ function selected(event: Event) {
   <article class="upload-item">
     <div class="upload-main">
       <strong :title="item.filename">{{ item.filename }}</strong>
-      <span class="state">{{ item.status }}</span>
+      <span class="state">{{ uploadStatusLabel(item.status) }}</span>
       <span class="size">{{ formatBytes(item.sentBytes) }} / {{ formatBytes(item.size) }}</span>
     </div>
     <progress

@@ -8,7 +8,7 @@ import { useTagsQuery } from '@/features/tags/queries'
 type FeedKind = 'temporary' | 'permanent' | 'favorites' | 'tag' | 'trash'
 const props = defineProps<{ kind: FeedKind; tagId?: string }>()
 const tags = useTagsQuery()
-const title = computed(() => ({ temporary:'Temporary', permanent:'Permanent', favorites:'收藏', tag: tags.data.value?.find((tag) => tag.id === props.tagId)?.name || '标签', trash:'回收站' })[props.kind])
+const title = computed(() => ({ temporary:'临时区', permanent:'长期区', favorites:'收藏', tag: tags.data.value?.find((tag) => tag.id === props.tagId)?.name || '标签', trash:'回收站' })[props.kind])
 const description = computed(() => ({ temporary:'快速放下，按到期时间自然整理。', permanent:'长期保留的文字与知识片段。', favorites:'你标记为重要的长期内容。', tag:'按标签聚合的内容。', trash:'可恢复，或永久删除。' })[props.kind])
 const emptyText = computed(() => ({ temporary:'暂无临时内容', permanent:'暂无长期内容', favorites:'还没有收藏', tag:'该标签暂无内容', trash:'回收站为空' })[props.kind])
 const filters = computed(() => {

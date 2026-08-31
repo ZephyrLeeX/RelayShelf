@@ -12,6 +12,7 @@
     "e2e": "playwright test"
   },
   "dependencies": {
+    "@lucide/vue": "^1.37.0",
     "@tanstack/vue-query": "5.87.1",
     "dompurify": "^3.4.14",
     "highlight.js": "^11.12.0",

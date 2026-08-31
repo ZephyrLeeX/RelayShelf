@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ChevronLeft, ChevronRight, Download, X, ZoomIn, ZoomOut } from '@lucide/vue'
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import type { AttachmentSummary } from '@/api/generated'
 import { downloadURL, previewKind, previewURL, safeRasterMIMEs } from './preview'
@@ -52,7 +53,7 @@ onUnmounted(() => {
               aria-label="缩小"
               @click="zoom = Math.max(.25, zoom - .25)"
             >
-              −
+              <ZoomOut aria-hidden="true" />
             </button><button
               class="tool reset"
               @click="zoom = 1"
@@ -63,18 +64,19 @@ onUnmounted(() => {
               aria-label="放大"
               @click="zoom = Math.min(4, zoom + .25)"
             >
-              ＋
+              <ZoomIn aria-hidden="true" />
             </button>
           </template>
           <a
             class="tool download"
             :href="downloadURL(current.id)"
-          >下载</a><button
+            :aria-label="`下载 ${current.originalFilename}`"
+          ><Download aria-hidden="true" />下载</a><button
             class="tool close"
             aria-label="关闭"
             @click="emit('close')"
           >
-            ×
+            <X aria-hidden="true" />
           </button>
         </nav>
       </header>
@@ -111,7 +113,7 @@ onUnmounted(() => {
           v-else
           class="unsupported"
         >
-          <span>FILE</span><h2>此文件仅支持下载</h2><p>Office、HTML、SVG、XML 和未知类型不会在本站内直接打开。</p><a
+          <span>文件</span><h2>此文件仅支持下载</h2><p>Office、HTML、SVG、XML 和未知类型不会在本站内直接打开。</p><a
             class="button primary"
             :href="downloadURL(current.id)"
           >下载文件</a>
@@ -122,14 +124,14 @@ onUnmounted(() => {
           aria-label="上一张"
           @click="navigate(-1)"
         >
-          ‹
+          <ChevronLeft aria-hidden="true" />
         </button><button
           v-if="previewKind(current) === 'image' && images.length > 1"
           class="next"
           aria-label="下一张"
           @click="navigate(1)"
         >
-          ›
+          <ChevronRight aria-hidden="true" />
         </button>
       </main>
     </div>
@@ -137,6 +139,6 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.viewer{position:fixed;inset:0;z-index:90;display:grid;grid-template-rows:auto minmax(0,1fr);background:rgb(12 18 16 / .96);color:#f3f7f5}.viewer header{display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:.65rem 1rem;border-bottom:1px solid rgb(255 255 255 / .14)}header>div{display:grid;min-width:0}header strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}header small{color:#aebbb5}nav{display:flex;align-items:center;gap:.35rem}.tool{display:grid;place-items:center;min-width:42px;height:42px;padding:0 .65rem;border:1px solid rgb(255 255 255 / .18);border-radius:8px;background:rgb(255 255 255 / .08);color:inherit;text-decoration:none}.reset,.download{font-size:.8rem}.close{font-size:1.4rem}main{position:relative;display:grid;place-items:center;overflow:auto}.original{max-width:calc(100vw - 7rem);max-height:calc(100vh - 6rem);object-fit:contain;transition:transform .12s;transform-origin:center}iframe{width:100%;height:100%;border:0;background:white}audio{width:min(620px,90vw)}video{max-width:90vw;max-height:80vh}.previous,.next{position:fixed;top:50%;width:48px;height:64px;border:0;border-radius:10px;background:rgb(255 255 255 / .1);color:white;font-size:2rem}.previous{left:1rem}.next{right:1rem}.unsupported{text-align:center;max-width:430px;padding:2rem}.unsupported span{display:grid;place-items:center;width:72px;height:72px;margin:auto;border:1px solid rgb(255 255 255 / .2);border-radius:16px;font:700 .8rem var(--font-mono)}.unsupported p{color:#aebbb5;line-height:1.55}.unsupported .button{display:inline-flex}.text-preview{width:100%;height:100%}
+.viewer{position:fixed;inset:0;z-index:90;display:grid;grid-template-rows:auto minmax(0,1fr);background:rgb(12 18 16 / .96);color:#f3f7f5}.viewer header{display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:.65rem 1rem;border-bottom:1px solid rgb(255 255 255 / .14)}header>div{display:grid;min-width:0}header strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}header small{color:#aebbb5}nav{display:flex;align-items:center;gap:.35rem}.tool{display:grid;place-items:center;min-width:42px;height:42px;padding:0 .65rem;border:1px solid rgb(255 255 255 / .18);border-radius:8px;background:rgb(255 255 255 / .08);color:inherit;text-decoration:none}.tool svg,.previous svg,.next svg{width:1.1rem;height:1.1rem}.reset,.download{font-size:.8rem}.download{display:flex;gap:.35rem}main{position:relative;display:grid;place-items:center;overflow:auto}.original{max-width:calc(100vw - 7rem);max-height:calc(100vh - 6rem);object-fit:contain;transition:transform .12s;transform-origin:center}iframe{width:100%;height:100%;border:0;background:white}audio{width:min(620px,90vw)}video{max-width:90vw;max-height:80vh}.previous,.next{position:fixed;top:50%;display:grid;place-items:center;width:48px;height:64px;border:0;border-radius:10px;background:rgb(255 255 255 / .1);color:white}.previous{left:1rem}.next{right:1rem}.unsupported{text-align:center;max-width:430px;padding:2rem}.unsupported span{display:grid;place-items:center;width:72px;height:72px;margin:auto;border:1px solid rgb(255 255 255 / .2);border-radius:16px;font:700 .8rem var(--font-mono)}.unsupported p{color:#aebbb5;line-height:1.55}.unsupported .button{display:inline-flex}.text-preview{width:100%;height:100%}
 @media(max-width:600px){.viewer header{padding:.5rem}.viewer header small{display:none}.tool{min-width:40px;padding:0 .45rem}.download{display:none}.original{max-width:100vw;max-height:calc(100vh - 60px)}.previous{left:.35rem}.next{right:.35rem}}
 </style>

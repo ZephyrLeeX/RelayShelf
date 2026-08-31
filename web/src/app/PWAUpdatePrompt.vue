@@ -17,7 +17,7 @@ function update() { if (!updateBlocked.value) void updateServiceWorker(true) }
     aria-live="polite"
   >
     <div class="version-mark">
-      NEW
+      更新
     </div><div>
       <strong>发现新版本</strong><p v-if="hasActiveTransfers">
         当前有文件正在上传，上传完成后再刷新。

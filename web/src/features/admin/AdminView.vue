@@ -4,7 +4,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tansta
 import { DefaultService, type AdminUser, type HealthState, type UpdateRuntimeSettingsRequest } from '@/api/generated'
 import { queryKeys } from '@/shared/api/queryKeys'
 import { displayError } from '@/shared/api/errors'
-import { formatBytes } from '@/shared/utils/bytes'
+import { bytesToUnit, formatBytes, unitToBytes } from '@/shared/utils/bytes'
 
 type Section = 'overview' | 'storage' | 'settings' | 'users'
 type UserAction = 'disable' | 'reset' | 'delete'
@@ -25,16 +25,25 @@ const users = useInfiniteQuery({
 })
 const userRows = computed(() => users.data.value?.pages.flatMap((page) => page.items) ?? [])
 
-const settingsForm = reactive({ temporaryTtlHours: 72, trashTtlHours: 168, maxFileSizeBytes: 2147483648, maxStorageBytes: '', auditRetentionDays: 90, uploadRetentionHours: 24 })
+const MEBIBYTE = 1024 ** 2
+const GIBIBYTE = 1024 ** 3
+const settingsForm = reactive({ temporaryTtlHours: 72, trashTtlHours: 168, maxFileSizeMB: 2048, maxStorageGB: '' as number | '', auditRetentionDays: 90, uploadRetentionHours: 24 })
 watch(() => settings.data.value, (value) => {
   if (!value) return
-  Object.assign(settingsForm, { ...value, maxStorageBytes: value.maxStorageBytes == null ? '' : String(value.maxStorageBytes) })
+  Object.assign(settingsForm, {
+    temporaryTtlHours: value.temporaryTtlHours,
+    trashTtlHours: value.trashTtlHours,
+    maxFileSizeMB: bytesToUnit(value.maxFileSizeBytes, MEBIBYTE),
+    maxStorageGB: value.maxStorageBytes == null ? '' : bytesToUnit(value.maxStorageBytes, GIBIBYTE),
+    auditRetentionDays: value.auditRetentionDays,
+    uploadRetentionHours: value.uploadRetentionHours,
+  })
 }, { immediate: true })
 
 const saveSettings = useMutation({
   mutationFn: () => DefaultService.updateRuntimeSettings({
     temporaryTtlHours: Number(settingsForm.temporaryTtlHours), trashTtlHours: Number(settingsForm.trashTtlHours),
-    maxFileSizeBytes: Number(settingsForm.maxFileSizeBytes), maxStorageBytes: settingsForm.maxStorageBytes === '' ? null : Number(settingsForm.maxStorageBytes),
+    maxFileSizeBytes: unitToBytes(settingsForm.maxFileSizeMB, MEBIBYTE), maxStorageBytes: settingsForm.maxStorageGB === '' ? null : unitToBytes(settingsForm.maxStorageGB, GIBIBYTE),
     auditRetentionDays: Number(settingsForm.auditRetentionDays), uploadRetentionHours: Number(settingsForm.uploadRetentionHours),
   } satisfies UpdateRuntimeSettingsRequest),
   onSuccess: (value) => { client.setQueryData(queryKeys.admin.settings(), value); notice.value = '运行时设置已保存'; error.value = ''; void client.invalidateQueries({ queryKey: queryKeys.admin.status() }) },
@@ -72,6 +81,16 @@ const actionAllowed = computed(() => {
   return true
 })
 function stateLabel(value?: HealthState) { return value === 'HEALTHY' ? '正常' : value === 'DEGRADED' ? '降级' : '不可用' }
+function thresholdLabel(value: string) {
+  return ({ UNCONFIGURED: '未配置', NORMAL: '正常', WARNING: '接近上限', STRONG_WARNING: '严重接近上限', LIMIT_REACHED: '已达到上限' } as Record<string, string>)[value] ?? value
+}
+function userStatusLabel(value: string) { return value === 'ACTIVE' ? '正常' : '已禁用' }
+function degradedReasonLabel(value: string) {
+  return ({
+    NAS_UNAVAILABLE: 'NAS 不可用', NAS_TIMEOUT: 'NAS 响应超时', LOGICAL_THRESHOLD_WARNING: '逻辑容量接近阈值',
+    LOGICAL_THRESHOLD_EXCEEDED: '逻辑容量已超出阈值', STAGING_UNAVAILABLE: '暂存空间不可用', DATABASE_UNAVAILABLE: '数据库不可用',
+  } as Record<string, string>)[value] ?? value
+}
 function shortCommit(value: string) { return value === 'unknown' ? value : value.slice(0, 12) }
 function percent(used: number, total?: number | null) { return total ? Math.min(100, Math.round(used / total * 100)) : 0 }
 </script>
@@ -81,7 +100,7 @@ function percent(used: number, total?: number | null) { return total ? Math.min(
     <header class="admin-head">
       <div>
         <p class="eyebrow">
-          Operational control
+          运行控制
         </p><h1>系统管理</h1><p class="muted">
           维护账号、容量和运行参数。私人内容不在此处出现。
         </p>
@@ -140,13 +159,13 @@ function percent(used: number, total?: number | null) { return total ? Math.min(
           aria-label="依赖状态"
         >
           <article><span :data-state="status.data.value.databaseState" /><div><small>PostgreSQL</small><strong>{{ stateLabel(status.data.value.databaseState) }}</strong></div></article>
-          <article><span :data-state="status.data.value.storage.state" /><div><small>NAS / staging</small><strong>{{ stateLabel(status.data.value.storage.state) }}</strong></div></article>
-          <article><span :data-state="status.data.value.migration.compatible ? 'HEALTHY' : 'DEGRADED'" /><div><small>Schema</small><strong>{{ status.data.value.migration.currentVersion }} / {{ status.data.value.migration.latestVersion }}</strong></div></article>
+          <article><span :data-state="status.data.value.storage.state" /><div><small>NAS / 暂存空间</small><strong>{{ stateLabel(status.data.value.storage.state) }}</strong></div></article>
+          <article><span :data-state="status.data.value.migration.compatible ? 'HEALTHY' : 'DEGRADED'" /><div><small>数据库结构</small><strong>{{ status.data.value.migration.currentVersion }} / {{ status.data.value.migration.latestVersion }}</strong></div></article>
           <article><span :data-state="status.data.value.security.adminTotpSatisfied ? 'HEALTHY' : 'DEGRADED'" /><div><small>管理员 TOTP</small><strong>{{ status.data.value.security.adminTotpSatisfied ? '满足' : `${status.data.value.security.activeAdminsWithoutTOTP} 名未启用` }}</strong></div></article>
         </section>
         <div class="overview-grid">
           <section class="panel metric">
-            <small>逻辑存储</small><strong>{{ formatBytes(status.data.value.storage.logicalUsageBytes) }}</strong><p>{{ status.data.value.storage.thresholdState }}</p>
+            <small>逻辑存储</small><strong>{{ formatBytes(status.data.value.storage.logicalUsageBytes) }}</strong><p>{{ thresholdLabel(status.data.value.storage.thresholdState) }}</p>
           </section>
           <section class="panel metric">
             <small>失败任务</small><strong>{{ status.data.value.failedJobs.length }}</strong><p>仅显示安全诊断元数据</p>
@@ -154,7 +173,7 @@ function percent(used: number, total?: number | null) { return total ? Math.min(
           <section class="panel build">
             <h2>构建</h2><dl>
               <div><dt>版本</dt><dd>{{ status.data.value.build.version }}</dd></div><div>
-                <dt>Commit</dt><dd class="mono">
+                <dt>提交</dt><dd class="mono">
                   {{ shortCommit(status.data.value.build.gitCommit) }}
                 </dd>
               </div><div><dt>构建时间</dt><dd>{{ status.data.value.build.buildTime }}</dd></div>
@@ -194,20 +213,20 @@ function percent(used: number, total?: number | null) { return total ? Math.min(
           <header>
             <div>
               <p class="eyebrow">
-                Deduplicated objects
+                去重对象
               </p><h2>逻辑容量</h2>
             </div><strong>{{ formatBytes(storage.data.value.logicalUsageBytes) }}</strong>
           </header><div class="meter">
             <i :style="{ width: `${percent(storage.data.value.logicalUsageBytes, storage.data.value.maxStorageBytes)}%` }" />
           </div><p class="muted">
-            阈值 {{ storage.data.value.maxStorageBytes ? formatBytes(storage.data.value.maxStorageBytes) : '未配置' }} · {{ storage.data.value.thresholdState }}
+            阈值 {{ storage.data.value.maxStorageBytes ? formatBytes(storage.data.value.maxStorageBytes) : '未配置' }} · {{ thresholdLabel(storage.data.value.thresholdState) }}
           </p>
         </section>
         <div class="storage-grid">
           <section class="panel metric">
             <small>NAS 实际可用</small><strong>{{ storage.data.value.nasAvailableBytes == null ? '不可用' : formatBytes(storage.data.value.nasAvailableBytes) }}</strong><p>总计 {{ storage.data.value.nasTotalBytes == null ? '—' : formatBytes(storage.data.value.nasTotalBytes) }}</p>
           </section><section class="panel metric">
-            <small>VM staging 预留</small><strong>{{ formatBytes(storage.data.value.stagingUsageBytes) }}</strong><p>磁盘可用 {{ storage.data.value.stagingAvailableBytes == null ? '—' : formatBytes(storage.data.value.stagingAvailableBytes) }}</p>
+            <small>VM 暂存占用</small><strong>{{ formatBytes(storage.data.value.stagingUsageBytes) }}</strong><p>磁盘可用 {{ storage.data.value.stagingAvailableBytes == null ? '—' : formatBytes(storage.data.value.stagingAvailableBytes) }}</p>
           </section>
         </div>
         <section
@@ -219,7 +238,7 @@ function percent(used: number, total?: number | null) { return total ? Math.min(
               v-for="reason in storage.data.value.degradedReasons"
               :key="reason"
             >
-              {{ reason }}
+              {{ degradedReasonLabel(reason) }}
             </li>
           </ul>
         </section>
@@ -234,7 +253,7 @@ function percent(used: number, total?: number | null) { return total ? Math.min(
       <header>
         <div>
           <p class="eyebrow">
-            Database-backed singleton
+            数据库存储
           </p><h2>运行时设置</h2>
         </div><p class="muted">
           部署路径、密钥和并发参数只能在进程启动时配置。
@@ -259,17 +278,19 @@ function percent(used: number, total?: number | null) { return total ? Math.min(
           min="1"
           max="8760"
           required
-        ></label><label class="field">单文件上限（字节）<input
-          v-model.number="settingsForm.maxFileSizeBytes"
+        ></label><label class="field">单文件上限（MB）<input
+          v-model.number="settingsForm.maxFileSizeMB"
           type="number"
-          min="1"
-          max="2199023255552"
+          min="0.01"
+          max="2097152"
+          step="0.01"
           required
-        ></label><label class="field">逻辑容量阈值（字节，可空）<input
-          v-model="settingsForm.maxStorageBytes"
+        ><small>当前约 {{ formatBytes(unitToBytes(settingsForm.maxFileSizeMB, MEBIBYTE)) }}</small></label><label class="field">逻辑容量阈值（GB，可空）<input
+          v-model.number="settingsForm.maxStorageGB"
           type="number"
-          min="1"
-        ></label><label class="field">审计保留（天）<input
+          min="0.01"
+          step="0.01"
+        ><small v-if="settingsForm.maxStorageGB !== ''">当前约 {{ formatBytes(unitToBytes(settingsForm.maxStorageGB, GIBIBYTE)) }}</small></label><label class="field">审计保留（天）<input
           v-model.number="settingsForm.auditRetentionDays"
           type="number"
           min="1"
@@ -302,7 +323,7 @@ function percent(used: number, total?: number | null) { return total ? Math.min(
         @submit.prevent="createUser.mutate()"
       >
         <p class="eyebrow">
-          No public signup
+          仅限管理员创建
         </p><h2>创建用户</h2><label class="field">用户名<input
           v-model="createForm.username"
           maxlength="64"
@@ -333,7 +354,7 @@ function percent(used: number, total?: number | null) { return total ? Math.min(
         <header>
           <div>
             <p class="eyebrow">
-              Operational metadata only
+              仅显示运行元数据
             </p><h2>用户</h2>
           </div><span>已加载 {{ userRows.length }}</span>
         </header><p v-if="users.isPending.value">
@@ -354,7 +375,7 @@ function percent(used: number, total?: number | null) { return total ? Math.min(
               </div><span
                 class="state"
                 :data-active="user.status === 'ACTIVE'"
-              >{{ user.status }}</span><div class="actions">
+              >{{ userStatusLabel(user.status) }}</span><div class="actions">
                 <button
                   class="button"
                   :disabled="user.status === 'DISABLED'"
@@ -404,7 +425,7 @@ function percent(used: number, total?: number | null) { return total ? Math.min(
           aria-labelledby="confirm-title"
         >
           <p class="eyebrow">
-            Dangerous operation
+            高风险操作
           </p><h2 id="confirm-title">
             {{ pending.action === 'disable' ? '禁用用户' : pending.action === 'reset' ? '重置密码' : '永久删除用户' }}
           </h2><p>目标：<strong>{{ pending.user.displayName }}</strong>（@{{ pending.user.username }}）</p><p

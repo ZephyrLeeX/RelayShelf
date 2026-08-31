@@ -27,7 +27,7 @@ onBeforeUnmount(() => controller?.abort())
 <template>
   <div class="text-preview">
     <p v-if="pending">
-      正在读取前 1 MiB…
+      正在读取前 1 MB…
     </p><p
       v-else-if="error"
       class="error"
@@ -38,7 +38,7 @@ onBeforeUnmount(() => controller?.abort())
         v-if="truncated"
         class="notice"
       >
-        仅显示前 1 MiB，下载文件可查看完整内容。
+        仅显示前 1 MB，下载文件可查看完整内容。
       </p>
     </template>
   </div>

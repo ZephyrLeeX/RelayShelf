@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Settings, Star, Trash2, UserRound, X } from '@lucide/vue'
 import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useAuthStore } from '@/features/auth/store'
 import { useTagsQuery } from '@/features/tags/queries'
@@ -45,7 +46,7 @@ onUnmounted(() => {
             aria-label="关闭"
             @click="emit('close')"
           >
-            ×
+            <X aria-hidden="true" />
           </button>
         </header>
         <AccountButton
@@ -76,26 +77,26 @@ onUnmounted(() => {
             to="/favorites"
             @click="emit('close')"
           >
-            收藏
+            <Star aria-hidden="true" />收藏
           </RouterLink>
           <RouterLink
             to="/trash"
             @click="emit('close')"
           >
-            回收站
+            <Trash2 aria-hidden="true" />回收站
           </RouterLink>
           <button
             type="button"
             @click="emit('openSessions')"
           >
-            设备与会话
+            <UserRound aria-hidden="true" />设备与会话
           </button>
           <RouterLink
             v-if="auth.user?.isAdmin"
             to="/admin"
             @click="emit('close')"
           >
-            管理
+            <Settings aria-hidden="true" />管理
           </RouterLink>
         </nav>
         <div class="theme-row">
@@ -114,6 +115,7 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.more-sheet svg{width:1rem;height:1rem;flex:0 0 auto}header button{display:grid;place-items:center}
 .more-backdrop{position:fixed;inset:0;z-index:60;display:none;align-items:flex-end;padding:1rem;background:var(--surface-overlay)}.more-sheet{width:min(100%,560px);max-height:min(78vh,680px);margin:0 auto;padding:.55rem 1rem 1rem;overflow:auto;border-radius:var(--radius-lg)}.grab{width:38px;height:4px;margin:.1rem auto .55rem;border-radius:999px;background:var(--border-strong)}header{display:flex;align-items:center;justify-content:space-between}h2{margin:.3rem 0;font-size:1.1rem}header button{width:40px;height:40px;border:0;background:transparent;font-size:1.3rem}nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.4rem;padding:1rem 0;border-top:1px solid var(--border-default);border-bottom:1px solid var(--border-default)}nav a,nav button{display:flex;align-items:center;gap:.5rem;min-height:44px;padding:.55rem .7rem;border:0;border-radius:var(--radius-sm);background:var(--surface-soft);text-decoration:none;font-size:.8rem}nav i{width:.5rem;height:.5rem;border-radius:50%}.menu-label{grid-column:1/-1;margin:.45rem 0 0;color:var(--text-tertiary);font:700 .65rem/1 var(--font-mono);letter-spacing:.1em}.menu-label:first-child{margin-top:0}.empty-tags{grid-column:1/-1;padding:.65rem;color:var(--text-tertiary);font-size:.76rem}.theme-row{display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding:1rem 0}.theme-row>span{font-size:.78rem;color:var(--text-secondary)}.logout{width:100%;min-height:44px;border:0;border-radius:var(--radius-sm);background:transparent;color:var(--state-danger)}
 @media(max-width:1179px){.more-backdrop{display:flex}}@media(prefers-reduced-motion:no-preference){.more-sheet{animation:sheet-in .16s ease-out}@keyframes sheet-in{from{transform:translateY(18px);opacity:.8}}}
 </style>

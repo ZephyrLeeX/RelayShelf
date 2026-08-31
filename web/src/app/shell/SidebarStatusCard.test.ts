@@ -15,7 +15,7 @@ describe('SidebarStatusCard', () => {
     } })
     expect(wrapper.text()).toContain('实时连接正常')
     expect(wrapper.text()).toContain('3 个设备')
-    expect(wrapper.text()).toContain('存储 1.0 KiB / 4.0 KiB')
+    expect(wrapper.text()).toContain('存储 1.0 KB / 4.0 KB')
     expect(wrapper.text()).not.toContain('在线')
     await wrapper.get('button').trigger('click')
     expect(wrapper.emitted('openUploads')).toHaveLength(1)

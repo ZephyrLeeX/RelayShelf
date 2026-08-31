@@ -22,7 +22,7 @@ describe('MessageCard', () => {
 
   it('never renders a sensitive body preview', async () => {
     const { wrapper } = await render({ sensitive: true, bodyPreview: 'must-not-leak' })
-    expect(wrapper.text()).toContain('Sensitive')
+    expect(wrapper.text()).toContain('敏感内容已锁定')
     expect(wrapper.text()).not.toContain('must-not-leak')
   })
   it('hides favorite for temporary messages and offers it for permanent messages', async () => {

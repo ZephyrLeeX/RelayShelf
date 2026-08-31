@@ -31,7 +31,7 @@ describe('TextPreview', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(206, 'partial')))
     const wrapper = mount(TextPreview, { props: { file: file(3_000_000) } })
     await flushPromises()
-    expect(wrapper.text()).toContain('仅显示前 1 MiB')
+    expect(wrapper.text()).toContain('仅显示前 1 MB')
     wrapper.unmount()
   })
 

@@ -78,7 +78,7 @@ describe('sensitive detail', () => {
     await wrapper.setProps({ id:'message-2' }); await flushPromises()
     resolveA({ body:'secret-from-a', version:1 }); await flushPromises()
     expect(wrapper.text()).not.toContain('secret-from-a')
-    expect(wrapper.text()).toContain('Sensitive locked')
+    expect(wrapper.text()).toContain('敏感内容已锁定')
     wrapper.unmount()
   })
   it('clears v1 plaintext on a v2 refetch and requires a v2 reveal before editing', async () => {
@@ -107,7 +107,7 @@ describe('sensitive detail', () => {
     const { wrapper } = await mountDetail(() => messageFixture({ sensitive:true, body:null, bodyPreview:null, version:2 }))
     await wrapper.get('.sensitive .button.primary').trigger('click'); await flushPromises()
     expect(wrapper.text()).not.toContain('stale-secret')
-    expect(wrapper.text()).toContain('Sensitive locked')
+    expect(wrapper.text()).toContain('敏感内容已锁定')
     wrapper.unmount()
   })
 })

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { MoreHorizontal, Paperclip, Tags } from '@lucide/vue'
 import { ref } from 'vue'
 import { Lifecycle } from '@/api/generated'
 import { formatBytes } from '@/shared/utils/bytes'
@@ -70,12 +71,12 @@ function setMode(mode: ComposerMode) {
         type="button"
         @click="fileInput?.click()"
       >
-        <span aria-hidden="true">＋</span> 文件
+        <Paperclip aria-hidden="true" />文件
       </button>
 
       <details class="popover tag-picker">
         <summary class="tool-button">
-          标签<span
+          <Tags aria-hidden="true" />标签<span
             v-if="composer.selectedTags.value.length"
             class="count"
           >{{ composer.selectedTags.value.length }}</span>
@@ -117,7 +118,7 @@ function setMode(mode: ComposerMode) {
           class="tool-button"
           aria-label="高级选项"
         >
-          •••
+          <MoreHorizontal aria-hidden="true" />
         </summary>
         <div class="popover-panel advanced-panel">
           <section>
@@ -134,7 +135,7 @@ function setMode(mode: ComposerMode) {
                 :class="{ active: composer.mode.value === item }"
                 @click="setMode(item)"
               >
-                {{ item === 'text' ? 'Text' : item === 'markdown' ? 'Markdown' : 'Code' }}
+                {{ item === 'text' ? '纯文本' : item === 'markdown' ? 'Markdown' : 'Code' }}
               </button>
             </div>
           </section>
@@ -144,7 +145,7 @@ function setMode(mode: ComposerMode) {
               v-model="composer.sensitive.value"
               type="checkbox"
             >
-            <span><strong>Sensitive</strong><small>正文需在详情中显式揭示</small></span>
+            <span><strong>敏感内容</strong><small>正文需在详情中显式揭示</small></span>
           </label>
 
           <label class="field direct-send">
@@ -216,7 +217,7 @@ function setMode(mode: ComposerMode) {
         class="bytes"
         :class="{ error: composer.tooLarge.value }"
       >
-        {{ composer.byteLength.value.toLocaleString() }} / 1 MiB
+        {{ formatBytes(composer.byteLength.value) }} / 1 MB
       </span>
       <button
         class="button primary send-button"
@@ -243,7 +244,7 @@ function setMode(mode: ComposerMode) {
         class="error"
         role="alert"
       >
-        正文 UTF-8 大小不能超过 1 MiB。
+        正文 UTF-8 大小不能超过 1 MB。
       </p>
       <p
         v-if="composer.error.value"
@@ -258,7 +259,7 @@ function setMode(mode: ComposerMode) {
 
 <style scoped>
 .composer{position:relative;display:grid;border-radius:var(--radius-lg);box-shadow:var(--shadow-md);overflow:visible}.composer-heading{display:flex;align-items:center;justify-content:space-between;padding:.7rem 1rem .55rem}.composer-heading>div{display:flex;align-items:center;gap:.5rem}.route-mark{width:9px;height:9px;border-radius:50%;background:var(--accent-secondary);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent-secondary) 13%,transparent)}h2{margin:0;font-size:.88rem;letter-spacing:.01em}.shortcut{color:var(--text-tertiary);font-family:var(--font-mono);font-size:.67rem}
-.composer-toolbar{display:flex;align-items:center;gap:.35rem;padding:.7rem .8rem}.tool-button,.lifecycle-control select{display:inline-flex;align-items:center;justify-content:center;gap:.35rem;min-height:36px;border:0;border-radius:.55rem;padding:.4rem .62rem;background:transparent;color:var(--text-secondary);font-size:.8rem;font-weight:620}.tool-button:hover,.lifecycle-control select:hover{background:var(--surface-soft);color:var(--text-primary)}.attach{color:var(--accent-secondary)}.count{display:grid;place-items:center;min-width:18px;height:18px;border-radius:999px;background:var(--accent-primary-soft);color:var(--accent-primary);font-size:.66rem}.lifecycle-control select{appearance:auto;cursor:pointer}.lifecycle-control select:disabled{cursor:not-allowed;opacity:.55}.popover{position:relative}.popover>summary{list-style:none;cursor:pointer}.popover>summary::-webkit-details-marker{display:none}.popover[open]>summary{background:var(--surface-soft);color:var(--text-primary)}.popover-panel{position:absolute;z-index:20;bottom:calc(100% + .55rem);left:0;width:max-content;min-width:210px;max-width:min(360px,calc(100vw - 2rem));padding:.65rem;border:1px solid var(--border-default);border-radius:var(--radius);background:var(--surface-raised);box-shadow:var(--shadow-floating)}.tag-options{display:grid;gap:.25rem}.tag-options label{display:flex;align-items:center;gap:.45rem;padding:.35rem;border-radius:.4rem;font-size:.82rem}.tag-options label:hover{background:var(--surface-soft)}.tag-options i{width:.55rem;height:.55rem;border-radius:50%}.empty-note{margin:.2rem;color:var(--text-secondary);font-size:.78rem}.advanced-menu{margin-right:auto}.advanced-panel{left:auto;right:0;width:min(340px,calc(100vw - 2rem));display:grid;gap:.8rem}.advanced-panel section>h3,.restored h3{margin:0 0 .45rem;font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--text-tertiary)}.modes{display:grid;grid-template-columns:repeat(3,1fr);padding:.2rem;border-radius:.65rem;background:var(--surface-soft)}.modes button{border:0;border-radius:.5rem;padding:.42rem;background:transparent;font-size:.77rem}.modes .active{background:var(--surface-raised);box-shadow:var(--shadow-sm);color:var(--accent-primary)}.toggle{display:flex;align-items:flex-start;gap:.55rem}.toggle span{display:grid}.toggle strong{font-size:.82rem}.toggle small{color:var(--text-secondary);font-size:.71rem}.direct-send{font-size:.76rem}.direct-note{margin:-.4rem 0 0;font-size:.72rem}.new-tag{display:grid;grid-template-columns:1fr 38px auto;gap:.4rem}.new-tag input[type=color]{width:38px;height:38px;padding:.1rem;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:transparent}.new-tag .button{min-height:38px;padding:.35rem .65rem}.restored ul{list-style:none;margin:0;padding:0;display:grid;gap:.35rem}.restored li{display:flex;align-items:center;justify-content:space-between;gap:.6rem;font-size:.76rem}.restored li span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.restored .button{min-height:32px;padding:.25rem .5rem;font-size:.7rem;white-space:nowrap}.bytes{color:var(--text-tertiary);font-family:var(--font-mono);font-size:.65rem;white-space:nowrap}.send-button{min-height:38px;padding:.45rem 1rem;border-radius:.65rem}.composer-feedback{display:grid;gap:.2rem;padding:0 .9rem}.composer-feedback:empty{display:none}.composer-feedback p{margin:0 0 .65rem;font-size:.76rem}.warning{color:var(--state-warning)}
+.composer-toolbar{display:flex;align-items:center;gap:.35rem;padding:.7rem .8rem}.tool-button,.lifecycle-control select{display:inline-flex;align-items:center;justify-content:center;gap:.35rem;min-height:36px;border:0;border-radius:.55rem;padding:.4rem .62rem;background:transparent;color:var(--text-secondary);font-size:.8rem;font-weight:620}.tool-button>svg{width:1rem;height:1rem}.tool-button:hover,.lifecycle-control select:hover{background:var(--surface-soft);color:var(--text-primary)}.attach{color:var(--accent-secondary)}.count{display:grid;place-items:center;min-width:18px;height:18px;border-radius:999px;background:var(--accent-primary-soft);color:var(--accent-primary);font-size:.66rem}.lifecycle-control select{appearance:auto;cursor:pointer}.lifecycle-control select:disabled{cursor:not-allowed;opacity:.55}.popover{position:relative}.popover>summary{list-style:none;cursor:pointer}.popover>summary::-webkit-details-marker{display:none}.popover[open]>summary{background:var(--surface-soft);color:var(--text-primary)}.popover-panel{position:absolute;z-index:20;bottom:calc(100% + .55rem);left:0;width:max-content;min-width:210px;max-width:min(360px,calc(100vw - 2rem));padding:.65rem;border:1px solid var(--border-default);border-radius:var(--radius);background:var(--surface-raised);box-shadow:var(--shadow-floating)}.tag-options{display:grid;gap:.25rem}.tag-options label{display:flex;align-items:center;gap:.45rem;padding:.35rem;border-radius:.4rem;font-size:.82rem}.tag-options label:hover{background:var(--surface-soft)}.tag-options i{width:.55rem;height:.55rem;border-radius:50%}.empty-note{margin:.2rem;color:var(--text-secondary);font-size:.78rem}.advanced-menu{margin-right:auto}.advanced-panel{left:auto;right:0;width:min(340px,calc(100vw - 2rem));display:grid;gap:.8rem}.advanced-panel section>h3,.restored h3{margin:0 0 .45rem;font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--text-tertiary)}.modes{display:grid;grid-template-columns:repeat(3,1fr);padding:.2rem;border-radius:.65rem;background:var(--surface-soft)}.modes button{border:0;border-radius:.5rem;padding:.42rem;background:transparent;font-size:.77rem}.modes .active{background:var(--surface-raised);box-shadow:var(--shadow-sm);color:var(--accent-primary)}.toggle{display:flex;align-items:flex-start;gap:.55rem}.toggle span{display:grid}.toggle strong{font-size:.82rem}.toggle small{color:var(--text-secondary);font-size:.71rem}.direct-send{font-size:.76rem}.direct-note{margin:-.4rem 0 0;font-size:.72rem}.new-tag{display:grid;grid-template-columns:1fr 38px auto;gap:.4rem}.new-tag input[type=color]{width:38px;height:38px;padding:.1rem;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:transparent}.new-tag .button{min-height:38px;padding:.35rem .65rem}.restored ul{list-style:none;margin:0;padding:0;display:grid;gap:.35rem}.restored li{display:flex;align-items:center;justify-content:space-between;gap:.6rem;font-size:.76rem}.restored li span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.restored .button{min-height:32px;padding:.25rem .5rem;font-size:.7rem;white-space:nowrap}.bytes{color:var(--text-tertiary);font-family:var(--font-mono);font-size:.65rem;white-space:nowrap}.send-button{min-height:38px;padding:.45rem 1rem;border-radius:.65rem}.composer-feedback{display:grid;gap:.2rem;padding:0 .9rem}.composer-feedback:empty{display:none}.composer-feedback p{margin:0 0 .65rem;font-size:.76rem}.warning{color:var(--state-warning)}
 @media(max-width:700px){.composer-heading{padding:.65rem .85rem .45rem}.shortcut{display:none}.composer-toolbar{flex-wrap:wrap;padding:.6rem}.advanced-menu{margin-right:0}.bytes{order:5;margin-left:auto}.send-button{order:6}.popover-panel{position:fixed;left:1rem;right:1rem;bottom:calc(72px + env(safe-area-inset-bottom));width:auto;max-width:none}.advanced-panel{width:auto}.composer-feedback{padding:0 .7rem}}
 @media(max-width:420px){.bytes{display:none}.send-button{margin-left:auto}.lifecycle-control select,.tool-button{padding-inline:.5rem}}
 </style>
