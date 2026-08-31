@@ -1,5 +1,4 @@
-import { computed, ref, watch, type MaybeRefOrGetter } from 'vue'
-import { toValue } from 'vue'
+import { computed, ref, toValue, watch, type MaybeRefOrGetter } from 'vue'
 import { useMutation, useQueryClient } from '@tanstack/vue-query'
 import {
   BodyFormat,
@@ -39,6 +38,17 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
   const body = ref('')
   const mode = ref<ComposerMode>('text')
   const lifecycle = ref(toValue(defaultLifecycle))
+  let lifecycleOverridden = false
+  let syncingLifecycle = false
+  watch(lifecycle, () => {
+    if (!syncingLifecycle) lifecycleOverridden = true
+  }, { flush: 'sync' })
+  watch(() => toValue(defaultLifecycle), (value) => {
+    if (lifecycleOverridden) return
+    syncingLifecycle = true
+    lifecycle.value = value
+    syncingLifecycle = false
+  })
   const sensitive = ref(false)
   const selectedTags = ref<string[]>([])
   const selectedUploadClients = ref<string[]>([])

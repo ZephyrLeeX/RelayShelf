@@ -191,6 +191,47 @@ describe('MessageComposer', () => {
     await flushPromises()
     expect(create).toHaveBeenLastCalledWith('key-b', expect.objectContaining({ bodyFormat: BodyFormat.TEXT }))
   })
+  it('uses PERMANENT for a new send after navigating from temporary to permanent', async () => {
+    const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
+    const wrapper = mountComposer(Lifecycle.TEMPORARY)
+
+    await wrapper.setProps({ defaultLifecycle: Lifecycle.PERMANENT })
+    await wrapper.get('textarea').setValue('keep permanently')
+    await wrapper.get('button.primary').trigger('click')
+    await flushPromises()
+
+    expect(create).toHaveBeenCalledWith('key-a', expect.objectContaining({
+      body: 'keep permanently', lifecycle: Lifecycle.PERMANENT,
+    }))
+  })
+  it('uses TEMPORARY for a new send after navigating from permanent to temporary', async () => {
+    const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
+    const wrapper = mountComposer(Lifecycle.PERMANENT)
+
+    await wrapper.setProps({ defaultLifecycle: Lifecycle.TEMPORARY })
+    await wrapper.get('textarea').setValue('expire later')
+    await wrapper.get('button.primary').trigger('click')
+    await flushPromises()
+
+    expect(create).toHaveBeenCalledWith('key-a', expect.objectContaining({
+      body: 'expire later', lifecycle: Lifecycle.TEMPORARY,
+    }))
+  })
+  it('preserves an explicitly selected lifecycle when the route default changes', async () => {
+    const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
+    const wrapper = mountComposer(Lifecycle.TEMPORARY)
+    await wrapper.get('select').setValue(Lifecycle.PERMANENT)
+
+    await wrapper.setProps({ defaultLifecycle: Lifecycle.PERMANENT })
+    await wrapper.setProps({ defaultLifecycle: Lifecycle.TEMPORARY })
+    await wrapper.get('textarea').setValue('edited draft')
+    await wrapper.get('button.primary').trigger('click')
+    await flushPromises()
+
+    expect(create).toHaveBeenCalledWith('key-a', expect.objectContaining({
+      body: 'edited draft', lifecycle: Lifecycle.PERMANENT,
+    }))
+  })
   it('reuses one idempotency key for retry but resets it after draft changes', async () => {
     const create = vi.spyOn(DefaultService, 'createMessage').mockRejectedValueOnce(new TypeError('offline')).mockResolvedValueOnce(messageFixture()).mockResolvedValueOnce(messageFixture())
     const wrapper = mountComposer()
