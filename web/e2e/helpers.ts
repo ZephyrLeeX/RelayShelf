@@ -25,7 +25,7 @@ export async function composeAndSend(page: Page, body: string, options: { sensit
   await page.locator('#composer-body').fill(body)
   if (options.sensitive) {
     await page.getByLabel('高级选项').click()
-    await page.getByLabel('Sensitive').check()
+    await page.getByLabel('敏感内容').check()
   }
   if (options.lifecycle === 'PERMANENT') await page.getByLabel('保存位置').selectOption('PERMANENT')
   await page.getByRole('button', { name: '发送', exact: true }).click()

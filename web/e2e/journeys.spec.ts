@@ -4,11 +4,11 @@ import { alice, bob, composeAndSend, currentUserId, login, logout, marker } from
 test.describe('login journey', () => {
   test('login, survive reload, and logout', async ({ page }) => {
     await login(page, alice)
-    await expect(page.getByRole('heading', { name: 'Temporary' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '临时区' })).toBeVisible()
 
     // The session survives a full reload.
     await page.reload()
-    await expect(page.getByRole('heading', { name: 'Temporary' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '临时区' })).toBeVisible()
     await expect(page.getByRole('button', { name: '退出登录' })).toBeVisible()
 
     await logout(page)
@@ -61,7 +61,7 @@ test.describe('second browser SSE journey', () => {
         response.url().includes('/api/v1/events') && response.status() === 200,
       )
       await login(pageB, alice)
-      await expect(pageB.getByRole('heading', { name: 'Temporary' })).toBeVisible()
+      await expect(pageB.getByRole('heading', { name: '临时区' })).toBeVisible()
       await bStreamOpen
 
       await composeAndSend(pageA, body)
@@ -220,7 +220,7 @@ test.describe('sensitive reveal and copy journey', () => {
     await login(page, alice)
     await composeAndSend(page, secret, { sensitive: true })
 
-    const card = page.locator('.message-card', { hasText: '🔒 Sensitive' }).first()
+    const card = page.locator('.message-card', { hasText: '敏感内容已锁定' }).first()
     await expect(card).toBeVisible()
     await expect(page.locator('.message-card pre', { hasText: secret })).toHaveCount(0)
 

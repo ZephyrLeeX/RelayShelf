@@ -26,7 +26,7 @@ test.describe('upload journey', () => {
 
     await selectComposerFiles(page, path)
     await expect(page.locator('.selected-files li', { hasText: name })).toBeVisible()
-    await expect(page.locator('.selected-files li', { hasText: name })).toContainText('COMPLETED', { timeout: 60_000 })
+    await expect(page.locator('.selected-files li', { hasText: name })).toContainText('已完成', { timeout: 60_000 })
 
     await page.locator('#composer-body').fill(`upload note ${name}`)
     await page.getByRole('button', { name: '发送', exact: true }).click()
@@ -86,7 +86,7 @@ test.describe('upload resume journey', () => {
     }, { timeout: 60_000 }).toBeGreaterThanOrEqual(1)
 
     await page.reload()
-    await expect(page.getByRole('heading', { name: 'Temporary' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '临时区' })).toBeVisible()
     // The interruption is real: the page died mid-transfer while parts were
     // hanging. Route registrations survive reloads, so lift them now to model
     // the network being healthy again for the resumed attempt.
@@ -98,14 +98,14 @@ test.describe('upload resume journey', () => {
     const queueItem = page.locator('.upload-item', { hasText: name })
     await expect(queueItem).toBeVisible({ timeout: 20_000 })
     await expect(page.getByText(/个上传等待重新选择原文件/)).toBeVisible()
-    await queueItem.getByText('PAUSED').waitFor()
+    await queueItem.getByText('已暂停').waitFor()
 
     // Routes are gone after reload; reselecting the same file continues from
     // the server-confirmed part 0.
     const chooser = page.waitForEvent('filechooser')
     await queueItem.getByRole('button', { name: '选择原文件' }).click()
     await (await chooser).setFiles(path)
-    await expect(queueItem.getByText('COMPLETED')).toBeVisible({ timeout: 120_000 })
+    await expect(queueItem.getByText('已完成')).toBeVisible({ timeout: 120_000 })
 
     // Bind the finished upload to a message from the composer.
     await page.getByRole('button', { name: '关闭上传任务' }).click()
