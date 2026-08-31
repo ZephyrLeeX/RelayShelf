@@ -3,6 +3,12 @@ import { configDefaults, defineConfig } from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
 import { VitePWA } from 'vite-plugin-pwa'
 
+const apiOrigin = process.env.RELAY_SHELF_DEV_API_ORIGIN || 'http://localhost:8080'
+const allowedHosts = (process.env.RELAY_SHELF_DEV_ALLOWED_HOSTS || '')
+  .split(',')
+  .map((host) => host.trim())
+  .filter(Boolean)
+
 export default defineConfig({
   plugins: [vue(), VitePWA({
     registerType: 'prompt',
@@ -30,12 +36,13 @@ export default defineConfig({
   },
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   server: {
+    ...(allowedHosts.length > 0 ? { allowedHosts } : {}),
     proxy: {
       '/api': {
-        target: 'http://localhost:8080',
+        target: apiOrigin,
         changeOrigin: true,
         configure(proxy) {
-          proxy.on('proxyReq', (request) => request.setHeader('Origin', 'http://localhost:8080'))
+          proxy.on('proxyReq', (request) => request.setHeader('Origin', apiOrigin))
         },
       },
     },

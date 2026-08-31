@@ -1,7 +1,6 @@
-// Command e2eseed creates deterministic browser-test users with real Argon2id
-// password hashes. It exists only for E2E bootstrap: the production binary has
-// no user-creation backdoor, so the browser suite needs this separate helper
-// against the same database the server uses.
+// Command e2eseed creates deterministic browser-test and development users
+// with real Argon2id password hashes. It remains a separate tool so the
+// production binary has no user-creation backdoor.
 package main
 
 import (
@@ -16,7 +15,7 @@ import (
 )
 
 func main() {
-	databaseURL := flag.String("database-url", "", "PostgreSQL URL for the E2E database")
+	databaseURL := flag.String("database-url", os.Getenv("DATABASE_URL"), "PostgreSQL URL for the test or development database")
 	flag.Parse()
 	if *databaseURL == "" {
 		fmt.Fprintln(os.Stderr, "-database-url is required")

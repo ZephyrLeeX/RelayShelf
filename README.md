@@ -87,6 +87,16 @@ git diff --exit-code
 
 ## 本地运行
 
+日常开发和 UI 人工验收优先使用持久化、生产隔离的 Dev Stack：
+
+```bash
+make dev          # 仅本机 127.0.0.1:5173
+make dev-preview  # Codex/远程工作区仅开放 Vite 5173
+```
+
+启动、停止、重置、测试账号、数据持久化和生产隔离规则参见
+[开发环境指南](docs/DEVELOPMENT.md)。
+
 RelayShelf 不会自动加载 `.env` 文件。请以 `.env.example` 为模板准备环境
 变量，并使用独立的本地存储和暂存目录。以下示例假设 PostgreSQL 已运行在
 `127.0.0.1:5432`，且已创建用户和数据库 `relayshelf`：
@@ -205,6 +215,7 @@ web/                   Vue 前端与 Playwright 测试
 
 ## 文档索引
 
+- [开发环境指南](docs/DEVELOPMENT.md)
 - [产品需求文档](docs/PRD.md)
 - [系统架构](docs/ARCHITECTURE.md)
 - [数据模型](docs/DATA_MODEL.md)
