@@ -89,6 +89,9 @@ func classifyCause(err error) string {
 	if errors.Is(err, ErrFull) {
 		return "NAS_FULL"
 	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "NAS_TIMEOUT"
+	}
 	return "NAS_UNAVAILABLE"
 }
 
