@@ -54,6 +54,7 @@ export type { SensitiveBody } from './models/SensitiveBody';
 export type { SensitiveRequest } from './models/SensitiveRequest';
 export type { Session } from './models/Session';
 export type { SessionId } from './models/SessionId';
+export { StorageRuntimeStatus } from './models/StorageRuntimeStatus';
 export type { StorageStatus } from './models/StorageStatus';
 export { StorageThresholdState } from './models/StorageThresholdState';
 export type { Tag } from './models/Tag';

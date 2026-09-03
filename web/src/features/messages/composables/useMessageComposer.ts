@@ -13,6 +13,7 @@ import { useCreateTag, useTagsQuery } from '@/features/tags/queries'
 import { uploadManager } from '@/features/uploads/manager'
 import { visibleUploads } from '@/features/uploads/store'
 import type { UploadItem } from '@/features/uploads/types'
+import { storageAvailable } from '@/features/storage/runtime'
 import { serializeContent, type ContentTypeId } from '../content/contentFormat'
 
 interface SendSnapshot {
@@ -223,6 +224,10 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
   }
 
   async function selectFiles(files: FileList | File[]) {
+    if (!storageAvailable.value) {
+      error.value = '存储服务暂时不可用，恢复后即可添加附件。'
+      return
+    }
     const ids = await uploadManager.addFiles(Array.from(files))
     selectedUploadClients.value.push(...ids)
   }
@@ -238,6 +243,10 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
       item.kind === 'file' && item.type.startsWith('image/'))
     if (!images.length) return
     event.preventDefault()
+    if (!storageAvailable.value) {
+      error.value = '存储服务暂时不可用，恢复后即可添加附件。'
+      return
+    }
     const files = images.flatMap((item) => {
       const blob = item.getAsFile()
       if (!blob) return []
@@ -251,6 +260,10 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
 
   function dropFiles(event: DragEvent) {
     dragging.value = false
+    if (!storageAvailable.value) {
+      if (event.dataTransfer?.files.length) error.value = '存储服务暂时不可用，恢复后即可添加附件。'
+      return
+    }
     if (event.dataTransfer?.files.length) void selectFiles(event.dataTransfer.files)
   }
 
@@ -285,6 +298,6 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
     selectedUploadIds, restorableUploads, selectedRecipient, directMode, byteLength, tooLarge,
     attachmentsBlocking, hasContent, dragging, error, failed, sending, tags, newTagName,
     newTagColor, selectFiles, removeSelected, pasteFiles, dropFiles, addTag, addRestored,
-    submit, submitDirect, onKeydown,
+    submit, submitDirect, onKeydown, storageAvailable,
   }
 }

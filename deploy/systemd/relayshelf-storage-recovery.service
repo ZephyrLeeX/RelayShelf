@@ -1,0 +1,9 @@
+[Unit]
+Description=RelayShelf confirmed NFS stale-handle recovery
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/relayshelf-storage-recover /mnt/relayshelf
+TimeoutStartSec=4min

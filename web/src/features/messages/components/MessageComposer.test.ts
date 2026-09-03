@@ -2,7 +2,7 @@ import { VueQueryPlugin, QueryClient } from '@tanstack/vue-query'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { BodyFormat, DefaultService, Lifecycle, UploadStatus, type UploadSession } from '@/api/generated'
+import { BodyFormat, DefaultService, Lifecycle, StorageRuntimeStatus, UploadStatus, type UploadSession } from '@/api/generated'
 import { queryKeys } from '@/shared/api/queryKeys'
 import { messageFixture } from '@/test/fixtures'
 import MessageComposer from './MessageComposer.vue'
@@ -10,6 +10,7 @@ import { uploadManager } from '@/features/uploads/manager'
 import { ResumeLedger } from '@/features/uploads/resumeLedger'
 import { uploadState } from '@/features/uploads/store'
 import type { UploadItem } from '@/features/uploads/types'
+import { setStorageRuntimeStatus } from '@/features/storage/runtime'
 
 const bob = { id: '11111111-1111-4111-8111-111111111111', username: 'bob', displayName: 'Bob' }
 const carol = { id: '22222222-2222-4222-8222-222222222222', username: 'carol', displayName: 'Carol' }
@@ -62,11 +63,22 @@ function sendByKeyboard(wrapper: VueWrapper) {
 describe('MessageComposer', () => {
   beforeEach(() => {
     uploadState.items = []
+    setStorageRuntimeStatus(undefined)
     vi.spyOn(DefaultService, 'listTags').mockResolvedValue([])
     vi.spyOn(DefaultService, 'listRecipientUsers').mockImplementation((query?: string) => Promise.resolve({
       items: [bob, carol].filter((user) => !query || user.username.includes(query) || user.displayName.toLowerCase().includes(query.toLowerCase())),
     }) as never)
     vi.stubGlobal('crypto', { randomUUID: vi.fn().mockReturnValueOnce('key-a').mockReturnValueOnce('key-b') })
+  })
+  it('disables only attachments while degraded and still sends text', async () => {
+    setStorageRuntimeStatus({ healthy: false, reason: StorageRuntimeStatus.reason.NAS_TIMEOUT, lastCheckedAt: null, changedAt: '2026-09-03T00:00:00Z' })
+    const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
+    const wrapper = mountComposer()
+    expect(wrapper.get('button[aria-label="附件"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('textarea').setValue('text still works')
+    await sendByKeyboard(wrapper)
+    await flushPromises()
+    expect(create).toHaveBeenCalledWith('key-a', expect.objectContaining({ body: 'text still works', uploadIds: [] }))
   })
   it('keeps Enter as a newline and sends on Ctrl/Cmd+Enter', async () => {
     const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())

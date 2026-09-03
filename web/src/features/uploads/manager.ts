@@ -1,6 +1,7 @@
 import { DefaultService, type UploadSession } from '@/api/generated'
 import { notifyAuthExpired } from '@/shared/api/authExpiry'
 import { getCsrfToken } from '@/shared/api/configure'
+import { storageAvailable } from '@/features/storage/runtime'
 import { fingerprintFile } from './fingerprint'
 import { uploadError } from './errors'
 import { MAX_CHUNK_ATTEMPTS, retryDelay, waitForRetry } from './retry'
@@ -62,6 +63,7 @@ export class UploadManager {
   setCsrfRefresh(refresh: () => Promise<unknown>) { this.csrfRefresh = refresh }
 
   async addFiles(files: Iterable<File>) {
+    if (!storageAvailable.value) return []
     const added: string[] = []
     for (const file of files) {
       const item = baseItem(file)
@@ -71,6 +73,12 @@ export class UploadManager {
       void this.create(item.clientId, file)
     }
     return added
+  }
+
+  pauseForStorage() {
+    for (const item of [...uploadState.items]) {
+      if (['QUEUED', 'CREATING', 'UPLOADING'].includes(item.status)) this.pause(item.clientId)
+    }
   }
 
   private async prepareFingerprint(clientId: string, file: File) {
@@ -114,6 +122,7 @@ export class UploadManager {
   }
 
   async resume(clientId: string, file?: File) {
+    if (!storageAvailable.value) return
     const item = this.getItem(clientId)
     if (!item || !item.serverUploadId) return
     if (file) {
@@ -143,6 +152,7 @@ export class UploadManager {
   }
 
   retry(clientId: string) {
+    if (!storageAvailable.value) return
     const item = this.getItem(clientId)
     if (!item || item.status !== 'FAILED') return
     if (!item.serverUploadId) {
@@ -163,6 +173,7 @@ export class UploadManager {
   // Safe terminal action for server-FAILED or corrupt staging sessions: the
   // dead server session is abandoned and the same File starts a fresh upload.
   reupload(clientId: string) {
+    if (!storageAvailable.value) return
     const item = this.getItem(clientId)
     if (!item?.file || item.status !== 'FAILED') return
     const file = item.file

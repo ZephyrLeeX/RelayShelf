@@ -14,6 +14,6 @@ export type StorageStatus = {
     stagingUsageBytes: number;
     stagingAvailableBytes: number | null;
     stagingTotalBytes: number | null;
-    degradedReasons: Array<'NAS_UNAVAILABLE' | 'NAS_TIMEOUT' | 'LOGICAL_THRESHOLD_WARNING' | 'LOGICAL_THRESHOLD_EXCEEDED' | 'STAGING_UNAVAILABLE' | 'DATABASE_UNAVAILABLE'>;
+    degradedReasons: Array<'NAS_UNAVAILABLE' | 'NAS_TIMEOUT' | 'NAS_FULL' | 'LOGICAL_THRESHOLD_WARNING' | 'LOGICAL_THRESHOLD_EXCEEDED' | 'STAGING_UNAVAILABLE' | 'DATABASE_UNAVAILABLE'>;
 };
 

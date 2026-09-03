@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { UploadStatus, type UploadSession } from '@/api/generated'
+import { StorageRuntimeStatus, UploadStatus, type UploadSession } from '@/api/generated'
 import { setAuthExpiredHandler } from '@/shared/api/authExpiry'
 import { getCsrfToken, setCsrfToken } from '@/shared/api/configure'
 import { UploadManager, partRange } from './manager'
@@ -7,6 +7,7 @@ import { ResumeLedger } from './resumeLedger'
 import { uploadState } from './store'
 import { fingerprintFile } from './fingerprint'
 import type { ChunkRequest, ChunkTransport, UploadItem } from './types'
+import { setStorageRuntimeStatus } from '@/features/storage/runtime'
 
 // jsdom's Blob lacks arrayBuffer(); the production fingerprint stays intact
 // while tests substitute a deterministic content-sensitive stub via FileReader.
@@ -74,6 +75,17 @@ describe('UploadManager', () => {
     sequence = 0
     vi.stubGlobal('crypto', { randomUUID: () => `client-${sequence++}`, subtle: crypto.subtle })
     setCsrfToken(undefined)
+    setStorageRuntimeStatus(undefined)
+  })
+
+  it('rejects new files while degraded and retains existing resumable items', async () => {
+    const api = { create: vi.fn(), get: vi.fn(), complete: vi.fn() }
+    const manager = new UploadManager(api, new ControlledTransport())
+    uploadState.items.push({ clientId: 'kept', filename: 'kept.bin', size: 1, lastModified: 1, completedParts: [], activeParts: [], transferredByPart: {}, sentBytes: 0, progress: 0, createdAt: 't', selected: true, status: 'PAUSED' })
+    setStorageRuntimeStatus({ healthy: false, reason: StorageRuntimeStatus.reason.NAS_UNAVAILABLE, lastCheckedAt: null, changedAt: '2026-09-03T00:00:00Z' })
+    expect(await manager.addFiles([file9()])).toEqual([])
+    expect(api.create).not.toHaveBeenCalled()
+    expect(manager.items.map((item) => item.clientId)).toEqual(['kept'])
   })
 
   it.each([

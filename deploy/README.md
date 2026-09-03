@@ -87,6 +87,46 @@ sudo ./libexec/relayshelf-host-storage-check /mnt/relayshelf
 如果导出使用 root-squash，请使用 NAS 的所有权或 ACL 机制，而不是
 `chown`。最终要求是数字 UID/GID 65532 对该目录具有读、写和遍历权限。
 
+### NFS stale file handle 自动恢复
+
+`findmnt` 仍显示挂载并不代表 NFS 可访问。NAS 升级、重启或重新导出文件系统后，
+旧客户端句柄可能让 `stat /mnt/relayshelf` 返回 `Stale file handle`，同时应用报告
+`STORAGE_UNAVAILABLE`。安装和升级流程会安装并启用
+`relayshelf-storage-recovery.timer`，每分钟进行一次只读 `stat`；日常检查不会创建
+文件，也不会调用应用的完整 storage check。
+
+只有连续两次（间隔 3 秒）明确出现英文 `Stale file handle`，且当前挂载为
+`nfs`/`nfs4`、source 与 `/etc/fstab` 中该 target 的 source 完全一致，才会进入恢复。
+恢复顺序为：停止应用、限时普通卸载、必要时限时 `umount -f`（永不使用 `-l`）、
+重新挂载、验证挂载身份和真实访问、以 UID/GID 65532 在 `.commit-tmp` 做
+write/read/delete、启动应用并执行 `/relayshelf storage check`。网络超时、权限错误、
+ENOSPC/EDQUOT、普通 I/O 错误、挂载缺失或 source 不匹配都只记录诊断，不会卸载。
+
+恢复使用 `/run/relayshelf/storage-recovery.lock` 防并发，并从 recovery 开始执行
+5 分钟冷却，避免失败风暴。卸载、挂载、UID 探针或应用 storage check 失败时，
+恢复返回失败；一旦应用已停止，失败路径会保持应用停止，避免在未验证存储上继续
+服务或形成 stop/start 循环，需运维人员诊断后手动启动。
+
+常用诊断和控制命令：
+
+```bash
+findmnt /mnt/relayshelf
+stat /mnt/relayshelf
+systemctl status relayshelf-storage-recovery.timer
+journalctl -u relayshelf-storage-recovery.service
+sudo systemctl start relayshelf-storage-recovery.service
+sudo podman exec relayshelf-app /relayshelf storage check
+
+# 临时禁用/恢复 watchdog
+sudo systemctl disable --now relayshelf-storage-recovery.timer
+sudo systemctl enable --now relayshelf-storage-recovery.timer
+```
+
+若需人工恢复，先禁用 timer，然后沿用相同安全顺序；必须核对 fstab source，停止
+应用后依次普通卸载、必要时 `umount -f`、重新挂载、以应用 UID 验证写入，最后启动
+应用并运行原生 storage check。禁止使用 lazy unmount，也不要把 hard mount 改为
+soft mount。
+
 ## 密钥与环境配置
 
 创建仅供当前操作使用的私有副本。安装程序会拒绝权限模式不是 0600，

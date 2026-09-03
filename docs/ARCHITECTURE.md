@@ -740,6 +740,17 @@ network-online
 - Upload Chunk 仍可继续写 VM Staging；
 - Complete 在 Storage 恢复后 Retry。
 
+应用的 `storage.Monitor` 是运行时健康状态的单一权威来源：它以有界、去重的
+后台探针更新内存快照；普通登录用户的 storage status API 只读取该快照，不在
+HTTP 请求中触碰 hard NFS。Web 用它显示全局降级提示、阻止新附件进入 staging，
+同时保留已有可恢复上传并继续提供纯文本能力。
+
+NAS 重启或重新导出造成的 `ESTALE` 由 Debian Host 的 systemd timer 负责恢复。
+只有轻量探针连续两次明确返回 `Stale file handle`，且挂载类型和 fstab source
+匹配时，宿主机才停止应用并执行有界 remount、UID 65532 实际读写验证和容器内
+storage check。容器不获得 mount 权限，API/Web 也不能触发 recovery；网络超时、
+权限、容量及其他通用错误不进入 destructive recovery。
+
 ## 21. Download 架构
 
 Download 以 Attachment 为授权边界：

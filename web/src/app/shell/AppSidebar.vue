@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Archive, Clock3, Search, Settings, Star, Trash2, Upload } from '@lucide/vue'
-import type { StorageStatus } from '@/api/generated'
+import type { StorageRuntimeStatus } from '@/api/generated'
 import type { RealtimeConnectionState } from '@/app/realtime'
 import { useAuthStore } from '@/features/auth/store'
 import { useTagsQuery } from '@/features/tags/queries'
@@ -12,7 +12,7 @@ defineProps<{
   activeTransfers: boolean
   deviceCount?: number
   realtimeState: RealtimeConnectionState
-  storage?: StorageStatus
+  storage?: StorageRuntimeStatus
 }>()
 defineEmits<{ openUploads: [], openSessions: [], logout: [] }>()
 const auth = useAuthStore()

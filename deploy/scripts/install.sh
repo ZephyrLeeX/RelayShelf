@@ -31,7 +31,7 @@ require_secure_file "$app_env"
 require_secure_file "$postgres_env"
 reject_placeholders "$app_env"
 reject_placeholders "$postgres_env"
-for command_name in podman systemctl findmnt install chown tar curl; do require_command "$command_name"; done
+for command_name in podman systemctl findmnt install chown tar curl timeout flock setpriv; do require_command "$command_name"; done
 
 for target in \
   /etc/relayshelf/relayshelf.env \
@@ -39,7 +39,11 @@ for target in \
   /etc/containers/systemd/relayshelf.network \
   /etc/containers/systemd/relayshelf-postgres.container \
   /etc/containers/systemd/relayshelf-app.container \
-  /usr/local/libexec/relayshelf-host-storage-check; do
+  /usr/local/libexec/relayshelf-host-storage-check \
+  /usr/local/libexec/relayshelf-storage-common \
+  /usr/local/libexec/relayshelf-storage-recover \
+  /etc/systemd/system/relayshelf-storage-recovery.service \
+  /etc/systemd/system/relayshelf-storage-recovery.timer; do
   [ ! -e "$target" ] || die "refusing to overwrite existing production file: $target"
 done
 
@@ -53,6 +57,10 @@ chown 65532:65532 /var/lib/relayshelf/staging
 install -m 0600 "$app_env" /etc/relayshelf/relayshelf.env
 install -m 0600 "$postgres_env" /etc/relayshelf/postgres.env
 install -m 0755 "$bundle_root/libexec/relayshelf-host-storage-check" /usr/local/libexec/relayshelf-host-storage-check
+install -m 0644 "$bundle_root/libexec/relayshelf-storage-common" /usr/local/libexec/relayshelf-storage-common
+install -m 0755 "$bundle_root/libexec/relayshelf-storage-recover" /usr/local/libexec/relayshelf-storage-recover
+install -m 0644 "$bundle_root/systemd/relayshelf-storage-recovery.service" /etc/systemd/system/relayshelf-storage-recovery.service
+install -m 0644 "$bundle_root/systemd/relayshelf-storage-recovery.timer" /etc/systemd/system/relayshelf-storage-recovery.timer
 install -m 0644 "$bundle_root/quadlet/relayshelf.network" /etc/containers/systemd/relayshelf.network
 install -m 0644 "$bundle_root/quadlet/relayshelf-postgres.container" /etc/containers/systemd/relayshelf-postgres.container
 rendered=$(mktemp)
@@ -78,5 +86,6 @@ curl --fail --silent --show-error --max-time 10 "http://$listen_address:8080/hea
   die "published HTTP endpoint $listen_address:8080 is not ready after installation"
 postgres_ports=$(podman port relayshelf-postgres)
 [ -z "$postgres_ports" ] || die "PostgreSQL unexpectedly publishes a host port: $postgres_ports"
+systemctl enable --now relayshelf-storage-recovery.timer
 
 echo "RelayShelf installation complete. Configure OpenWrt and verify PUBLIC_ORIGIN before setting operator attestations."

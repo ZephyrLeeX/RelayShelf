@@ -520,6 +520,13 @@ paths:
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
         '422': { $ref: '#/components/responses/Error' }
+  /storage/status:
+    get:
+      operationId: getStorageRuntimeStatus
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200': { description: Constant-time in-memory storage health for authenticated clients, content: { application/json: { schema: { $ref: '#/components/schemas/StorageRuntimeStatus' } } } }
+        '401': { $ref: '#/components/responses/Error' }
   /admin/storage:
     get:
       operationId: getStorageStatus
@@ -991,6 +998,15 @@ components:
     StorageThresholdState:
       type: string
       enum: [UNCONFIGURED, NORMAL, WARNING, STRONG_WARNING, LIMIT_REACHED]
+    StorageRuntimeStatus:
+      type: object
+      additionalProperties: false
+      required: [healthy, reason, lastCheckedAt, changedAt]
+      properties:
+        healthy: { type: boolean }
+        reason: { type: string, enum: [HEALTHY, NAS_UNAVAILABLE, NAS_TIMEOUT, NAS_FULL] }
+        lastCheckedAt: { type: [string, 'null'], format: date-time }
+        changedAt: { type: string, format: date-time }
     StorageStatus:
       type: object
       additionalProperties: false
@@ -1005,7 +1021,7 @@ components:
         stagingUsageBytes: { type: integer, format: int64, minimum: 0 }
         stagingAvailableBytes: { type: [integer, 'null'], format: int64, minimum: 0 }
         stagingTotalBytes: { type: [integer, 'null'], format: int64, minimum: 0 }
-        degradedReasons: { type: array, items: { type: string, enum: [NAS_UNAVAILABLE, NAS_TIMEOUT, LOGICAL_THRESHOLD_WARNING, LOGICAL_THRESHOLD_EXCEEDED, STAGING_UNAVAILABLE, DATABASE_UNAVAILABLE] }, uniqueItems: true }
+        degradedReasons: { type: array, items: { type: string, enum: [NAS_UNAVAILABLE, NAS_TIMEOUT, NAS_FULL, LOGICAL_THRESHOLD_WARNING, LOGICAL_THRESHOLD_EXCEEDED, STAGING_UNAVAILABLE, DATABASE_UNAVAILABLE] }, uniqueItems: true }
     BuildInfo:
       type: object
       additionalProperties: false

@@ -70,13 +70,15 @@ function filesChanged(event: Event) {
         class="sr-only"
         type="file"
         multiple
+        :disabled="!composer.storageAvailable.value"
         @change="filesChanged"
       >
       <button
         class="tool-button"
         type="button"
         aria-label="附件"
-        title="添加附件"
+        :title="composer.storageAvailable.value ? '添加附件' : '存储服务暂时不可用'"
+        :disabled="!composer.storageAvailable.value"
         @click="fileInput?.click()"
       >
         <Paperclip aria-hidden="true" /><span class="tool-label">附件</span>

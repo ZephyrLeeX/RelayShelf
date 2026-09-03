@@ -24,13 +24,23 @@ done
 [ "$backup_confirmed" = yes ] || die "upgrade requires --backup-confirmed after verifying a current PostgreSQL and encryption-key backup"
 require_root
 validate_image_ref "$image_ref"
-for command_name in podman systemctl findmnt install df tar curl; do require_command "$command_name"; done
+for command_name in podman systemctl findmnt install df tar curl timeout flock setpriv; do require_command "$command_name"; done
 require_secure_file /etc/relayshelf/relayshelf.env
 require_secure_file /etc/relayshelf/postgres.env
 reject_placeholders /etc/relayshelf/relayshelf.env
 [ -f /etc/containers/systemd/relayshelf-app.container ] || die "RelayShelf is not installed"
 [ -f /etc/containers/systemd/relayshelf.network ] || die "installed RelayShelf network authority is missing"
 [ -f /etc/containers/systemd/relayshelf-postgres.container ] || die "installed PostgreSQL unit is missing"
+
+# Host recovery authority is independent from the candidate container image.
+# Upgrade it idempotently without changing transient state or its cooldown.
+install -d -m 0755 /usr/local/libexec /etc/systemd/system
+install -m 0644 "$bundle_root/libexec/relayshelf-storage-common" /usr/local/libexec/relayshelf-storage-common
+install -m 0755 "$bundle_root/libexec/relayshelf-host-storage-check" /usr/local/libexec/relayshelf-host-storage-check
+install -m 0755 "$bundle_root/libexec/relayshelf-storage-recover" /usr/local/libexec/relayshelf-storage-recover
+install -m 0644 "$bundle_root/systemd/relayshelf-storage-recovery.service" /etc/systemd/system/relayshelf-storage-recovery.service
+install -m 0644 "$bundle_root/systemd/relayshelf-storage-recovery.timer" /etc/systemd/system/relayshelf-storage-recovery.timer
+systemctl daemon-reload
 
 echo "PREFLIGHT 1/7: NFS mount and storage access"
 "$bundle_root/libexec/relayshelf-host-storage-check" /mnt/relayshelf
@@ -160,5 +170,6 @@ curl --fail --silent --show-error --max-time 10 "http://$listen_address:8080/hea
   die "published HTTP endpoint $listen_address:8080 is not ready after upgrade"
 postgres_ports=$(podman port relayshelf-postgres)
 [ -z "$postgres_ports" ] || die "PostgreSQL unexpectedly publishes a host port: $postgres_ports"
+systemctl enable --now relayshelf-storage-recovery.timer
 
 echo "RelayShelf upgrade complete: $image_ref"

@@ -18,7 +18,7 @@ version_at_least() {
   }'
 }
 
-for script in "$script_dir"/*.sh "$bundle_root/tests"/*.sh "$bundle_root/libexec/relayshelf-host-storage-check"; do
+for script in "$script_dir"/*.sh "$bundle_root/tests"/*.sh "$bundle_root/libexec/relayshelf-host-storage-check" "$bundle_root/libexec/relayshelf-storage-common" "$bundle_root/libexec/relayshelf-storage-recover"; do
   sh -n "$script"
 done
 
@@ -26,6 +26,12 @@ postgres_unit=$bundle_root/quadlet/relayshelf-postgres.container
 app_template=$bundle_root/quadlet/relayshelf-app.container.in
 network_unit=${RELAYSHELF_NETWORK_UNIT:-$bundle_root/quadlet/relayshelf.network}
 nginx_config=$bundle_root/nginx/openwrt-relayshelf.conf
+recovery_service=$bundle_root/systemd/relayshelf-storage-recovery.service
+recovery_timer=$bundle_root/systemd/relayshelf-storage-recovery.timer
+
+grep -Fxq 'ExecStart=/usr/local/libexec/relayshelf-storage-recover /mnt/relayshelf' "$recovery_service" || die "storage recovery service helper mismatch"
+grep -Fxq 'OnUnitActiveSec=1min' "$recovery_timer" || die "storage recovery timer cadence mismatch"
+grep -Fxq 'WantedBy=timers.target' "$recovery_timer" || die "storage recovery timer is not enableable"
 
 grep -Fxq 'Image=docker.io/library/postgres:17.11-bookworm' "$postgres_unit" || die "PostgreSQL image must use the approved exact tag"
 ! grep -Eq '(^|:)latest([[:space:]]|$)' "$bundle_root"/quadlet/* || die "latest tag found in Quadlet"

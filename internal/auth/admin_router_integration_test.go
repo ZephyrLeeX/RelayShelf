@@ -31,6 +31,10 @@ func (s *recordingServer) GetAdminStatus(w http.ResponseWriter, _ *http.Request)
 	s.reached++
 	w.WriteHeader(http.StatusOK)
 }
+func (s *recordingServer) GetStorageRuntimeStatus(w http.ResponseWriter, _ *http.Request) {
+	s.reached++
+	w.WriteHeader(http.StatusOK)
+}
 func (s *recordingServer) CreateAdminUser(w http.ResponseWriter, _ *http.Request) {
 	s.reached++
 	w.WriteHeader(http.StatusCreated)
@@ -94,6 +98,12 @@ func TestAdminRoutesAreEnforcedServerSide(t *testing.T) {
 		router.ServeHTTP(w, r)
 		return w
 	}
+	if w := request(http.MethodGet, "/api/v1/storage/status", "", ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous runtime storage status=%d body=%s", w.Code, w.Body.String())
+	}
+	if w := request(http.MethodGet, "/api/v1/storage/status", userSession.RawToken, ""); w.Code != http.StatusOK || server.reached != 1 {
+		t.Fatalf("normal user runtime storage status=%d reached=%d", w.Code, server.reached)
+	}
 
 	if w := request(http.MethodGet, "/api/v1/admin/status", "", ""); w.Code != http.StatusUnauthorized || !strings.Contains(w.Body.String(), "AUTH_REQUIRED") {
 		t.Fatalf("unauthenticated status=%d body=%s", w.Code, w.Body.String())
@@ -101,14 +111,14 @@ func TestAdminRoutesAreEnforcedServerSide(t *testing.T) {
 	if w := request(http.MethodGet, "/api/v1/admin/status", userSession.RawToken, ""); w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "ADMIN_REQUIRED") {
 		t.Fatalf("normal user status=%d body=%s", w.Code, w.Body.String())
 	}
-	if w := request(http.MethodGet, "/api/v1/admin/status", adminSession.RawToken, ""); w.Code != http.StatusOK || server.reached != 1 {
+	if w := request(http.MethodGet, "/api/v1/admin/status", adminSession.RawToken, ""); w.Code != http.StatusOK || server.reached != 2 {
 		t.Fatalf("administrator status=%d reached=%d body=%s", w.Code, server.reached, w.Body.String())
 	}
 	// Unsafe admin methods stay authorization-gated behind CSRF.
 	if w := request(http.MethodPost, "/api/v1/admin/users", userSession.RawToken, csrf.Token(userSession.Session.ID)); w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "ADMIN_REQUIRED") {
 		t.Fatalf("normal user unsafe status=%d body=%s", w.Code, w.Body.String())
 	}
-	if w := request(http.MethodPost, "/api/v1/admin/users", adminSession.RawToken, csrf.Token(adminSession.Session.ID)); w.Code != http.StatusCreated || server.reached != 2 {
+	if w := request(http.MethodPost, "/api/v1/admin/users", adminSession.RawToken, csrf.Token(adminSession.Session.ID)); w.Code != http.StatusCreated || server.reached != 3 {
 		t.Fatalf("administrator unsafe status=%d reached=%d body=%s", w.Code, server.reached, w.Body.String())
 	}
 
@@ -120,11 +130,11 @@ func TestAdminRoutesAreEnforcedServerSide(t *testing.T) {
 	if w := request(http.MethodGet, "/api/v1/admin/status", secondAdminSession.RawToken, ""); w.Code != http.StatusUnauthorized {
 		t.Fatalf("disabled administrator status=%d body=%s", w.Code, w.Body.String())
 	}
-	if server.reached != 2 {
+	if server.reached != 3 {
 		t.Fatalf("disabled administrator reached handler reached=%d", server.reached)
 	}
 	// The untouched administrator keeps access after the other was disabled.
-	if w := request(http.MethodGet, "/api/v1/admin/status", adminSession.RawToken, ""); w.Code != http.StatusOK || server.reached != 3 {
+	if w := request(http.MethodGet, "/api/v1/admin/status", adminSession.RawToken, ""); w.Code != http.StatusOK || server.reached != 4 {
 		t.Fatalf("administrator after disable status=%d reached=%d", w.Code, server.reached)
 	}
 }

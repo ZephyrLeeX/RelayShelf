@@ -1,4 +1,5 @@
 import { ApiError } from '@/api/generated'
+import { notifyStorageUnavailable } from '@/features/storage/runtime'
 
 export const apiCodes = {
   authRequired: 'AUTH_REQUIRED',
@@ -15,6 +16,7 @@ export const apiCodes = {
   totpEnrollmentChanged: 'TOTP_ENROLLMENT_CHANGED',
   totpNotEnrolled: 'TOTP_NOT_ENROLLED',
   recipientUnavailable: 'RECIPIENT_UNAVAILABLE',
+  storageUnavailable: 'STORAGE_UNAVAILABLE',
 } as const
 
 export interface AppApiError {
@@ -25,17 +27,40 @@ export interface AppApiError {
 }
 
 export function toApiError(error: unknown): AppApiError {
+  if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string') {
+    const value = error as { status?: unknown; code: string; message?: unknown; traceId?: unknown }
+    const adapted = {
+      status: typeof value.status === 'number' ? value.status : 0,
+      code: value.code,
+      message: typeof value.message === 'string' ? value.message : '',
+      traceId: typeof value.traceId === 'string' ? value.traceId : undefined,
+    }
+    if (adapted.code === apiCodes.storageUnavailable) notifyStorageUnavailable()
+    return adapted
+  }
   if (error instanceof ApiError) {
     const body = typeof error.body === 'object' && error.body ? error.body as Record<string, unknown> : {}
-    return {
+    const adapted = {
       status: error.status,
       code: typeof body.code === 'string' ? body.code : 'HTTP_ERROR',
       message: typeof body.message === 'string' ? body.message : error.statusText,
       traceId: typeof body.traceId === 'string' ? body.traceId : undefined,
     }
+    if (adapted.code === apiCodes.storageUnavailable) notifyStorageUnavailable()
+    return adapted
   }
   return { status: 0, code: 'NETWORK_ERROR', message: '无法连接服务器，请检查网络后重试。' }
 }
+
+export async function apiErrorFromResponse(response: Response) {
+  let body: unknown
+  try { body = await response.clone().json() } catch { body = undefined }
+  return toApiError(body && typeof body === 'object' ? { ...body, status: response.status } : new Error(response.statusText))
+}
+
+export function getApiErrorCode(error: unknown) { return toApiError(error).code }
+export function getTraceId(error: unknown) { return toApiError(error).traceId }
+export function isStorageUnavailable(error: unknown) { return getApiErrorCode(error) === apiCodes.storageUnavailable }
 
 export function isAuthExpired(error: unknown) {
   const adapted = toApiError(error)

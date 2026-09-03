@@ -2,6 +2,7 @@
 import { onBeforeUnmount, ref, watch } from 'vue'
 import type { AttachmentSummary } from '@/api/generated'
 import { downloadURL } from './preview'
+import { apiErrorFromResponse } from '@/shared/api/errors'
 
 const props = defineProps<{ file: AttachmentSummary }>()
 const content = ref('')
@@ -14,11 +15,17 @@ watch(() => props.file.id, async () => {
   controller?.abort(); controller = new AbortController(); pending.value = true; error.value = ''; content.value = ''
   try {
     const response = await fetch(downloadURL(props.file.id), { credentials: 'include', headers: { Range: 'bytes=0-1048575' }, signal: controller.signal })
-    if (!response.ok && response.status !== 206) throw new Error('preview unavailable')
+    if (!response.ok && response.status !== 206) throw await apiErrorFromResponse(response)
     const bytes = await response.arrayBuffer()
     content.value = new TextDecoder().decode(bytes)
     truncated.value = response.status === 206 || props.file.sizeBytes > bytes.byteLength
-  } catch (cause) { if (!(cause instanceof DOMException && cause.name === 'AbortError')) error.value = '文本预览暂不可用，请下载后查看。' }
+  } catch (cause) {
+    if (!(cause instanceof DOMException && cause.name === 'AbortError')) {
+      error.value = cause && typeof cause === 'object' && 'code' in cause && cause.code === 'STORAGE_UNAVAILABLE'
+        ? '文件暂时无法读取。存储服务当前不可用，请在恢复后重试。'
+        : '文本预览暂不可用，请下载后查看。'
+    }
+  }
   finally { pending.value = false }
 }, { immediate: true })
 onBeforeUnmount(() => controller?.abort())

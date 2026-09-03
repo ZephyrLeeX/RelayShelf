@@ -1,7 +1,8 @@
-import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AttachmentSummary } from '@/api/generated'
 import AttachmentViewer from './AttachmentViewer.vue'
+import { setStorageRuntimeStatus } from '@/features/storage/runtime'
 
 const file = (detectedMime: string): AttachmentSummary =>
   ({ id: 'attach-1', originalFilename: 'file.bin', clientMime: 'text/plain', detectedMime, sizeBytes: 10, displayOrder: 0 })
@@ -12,6 +13,10 @@ function mountViewer(detectedMime: string) {
 }
 
 describe('AttachmentViewer', () => {
+  afterEach(() => {
+    setStorageRuntimeStatus(undefined)
+    vi.unstubAllGlobals()
+  })
   it('renders the safe raster original through the preview endpoint', () => {
     const wrapper = mountViewer('image/png')
     const image = wrapper.get('img.original')
@@ -37,5 +42,15 @@ describe('AttachmentViewer', () => {
       expect(wrapper.get('a.button').attributes('href')).toBe('/api/v1/attachments/attach-1/download')
       wrapper.unmount()
     }
+  })
+
+  it('shows a friendly inline error when download reports storage unavailable', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 'STORAGE_UNAVAILABLE', message: 'storage is unavailable', traceId: 'abc' }), { status: 503, headers: { 'Content-Type': 'application/json' } })))
+    const wrapper = mountViewer('application/octet-stream')
+    await wrapper.get('a.download').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('文件暂时无法读取')
+    expect(wrapper.text()).toContain('存储服务当前不可用')
+    wrapper.unmount()
   })
 })

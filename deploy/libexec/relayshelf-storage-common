@@ -1,0 +1,25 @@
+#!/bin/sh
+
+FINDMNT_BIN=${FINDMNT_BIN:-findmnt}
+TIMEOUT_BIN=${TIMEOUT_BIN:-timeout}
+STAT_BIN=${STAT_BIN:-stat}
+
+storage_identity() {
+  identity=$($FINDMNT_BIN --noheadings --output SOURCE,FSTYPE --mountpoint "$1" 2>/dev/null) || return 1
+  set -- $identity
+  [ "$#" -eq 2 ] || return 1
+  case "$2" in nfs|nfs4) ;; *) return 1 ;; esac
+  STORAGE_SOURCE=$1
+  STORAGE_FSTYPE=$2
+}
+
+storage_configured_source() {
+  configured=$($FINDMNT_BIN --fstab --evaluate --noheadings --output SOURCE --target "$1" 2>/dev/null) || return 1
+  set -- $configured
+  [ "$#" -eq 1 ] || return 1
+  STORAGE_CONFIGURED_SOURCE=$1
+}
+
+storage_stat_probe() {
+  $TIMEOUT_BIN "${PROBE_TIMEOUT_SECONDS:-10}" "$STAT_BIN" -- "$1"
+}

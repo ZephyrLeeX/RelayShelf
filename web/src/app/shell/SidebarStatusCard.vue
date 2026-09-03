@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { ArrowUpRight } from '@lucide/vue'
 import { computed } from 'vue'
-import type { StorageStatus } from '@/api/generated'
+import type { StorageRuntimeStatus } from '@/api/generated'
 import type { RealtimeConnectionState } from '@/app/realtime'
-import { formatBytes } from '@/shared/utils/bytes'
 
 const props = defineProps<{
   device?: string
@@ -11,7 +10,7 @@ const props = defineProps<{
   uploadCount: number
   active: boolean
   realtimeState: RealtimeConnectionState
-  storage?: StorageStatus
+  storage?: StorageRuntimeStatus
 }>()
 defineEmits<{ openUploads: [] }>()
 
@@ -23,8 +22,7 @@ const realtimeLabel = computed(() => ({
 })[props.realtimeState])
 const storageLabel = computed(() => {
   if (!props.storage) return ''
-  const maximum = props.storage.maxStorageBytes == null ? '未设上限' : formatBytes(props.storage.maxStorageBytes)
-  return `存储 ${formatBytes(props.storage.logicalUsageBytes)} / ${maximum}`
+  return props.storage.healthy ? '存储 · 正常' : props.storage.reason === 'NAS_FULL' ? '存储 · 空间已满' : '存储 · 不可用'
 })
 </script>
 
@@ -38,7 +36,7 @@ const storageLabel = computed(() => {
     <span
       v-if="storageLabel"
       class="storage"
-      :data-state="storage?.state"
+      :data-state="storage?.healthy ? 'HEALTHY' : 'DEGRADED'"
     >{{ storageLabel }}</span>
     <button
       type="button"

@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,7 +23,15 @@ type Monitor struct {
 	gate         chan struct{}
 	healthy      atomic.Bool
 	reason       atomic.Value // string
+	snapshot     atomic.Value // HealthSnapshot
 	startOnce    sync.Once
+}
+
+type HealthSnapshot struct {
+	Healthy       bool
+	Reason        string
+	LastCheckedAt *time.Time
+	ChangedAt     time.Time
 }
 
 // DefaultMonitorInterval is deliberately modest: probes are cheap statfs
@@ -42,9 +51,17 @@ func NewMonitor(adapter Adapter) *Monitor {
 // threshold; production uses the defaults, tests shrink both.
 func NewMonitorTunable(adapter Adapter, interval time.Duration, failureThreshold int) *Monitor {
 	m := &Monitor{interval: interval, failures: failureThreshold, gate: make(chan struct{}, 1)}
-	m.probe = func(ctx context.Context) error { _, err := adapter.Space(ctx); return err }
+	m.probe = func(ctx context.Context) error {
+		space, err := adapter.Space(ctx)
+		if err == nil && space.AvailableBytes == 0 {
+			return ErrFull
+		}
+		return err
+	}
 	m.healthy.Store(true)
 	m.reason.Store("")
+	now := time.Now().UTC()
+	m.snapshot.Store(HealthSnapshot{Healthy: true, Reason: "HEALTHY", ChangedAt: now})
 	return m
 }
 
@@ -60,6 +77,8 @@ func NewMonitorWithProbe(probe func(context.Context) error, interval time.Durati
 	m := &Monitor{probe: probe, interval: interval, failures: failureThreshold, gate: make(chan struct{}, 1)}
 	m.healthy.Store(true)
 	m.reason.Store("")
+	now := time.Now().UTC()
+	m.snapshot.Store(HealthSnapshot{Healthy: true, Reason: "HEALTHY", ChangedAt: now})
 	return m
 }
 
@@ -67,7 +86,7 @@ func classifyCause(err error) string {
 	if err == nil {
 		return ""
 	}
-	if errors.Is(err, ErrFull) || errors.Is(err, ErrDifferentFilesystems) {
+	if errors.Is(err, ErrFull) {
 		return "NAS_FULL"
 	}
 	return "NAS_UNAVAILABLE"
@@ -86,6 +105,18 @@ func (m *Monitor) Reason() string {
 	}
 	reason, _ := m.reason.Load().(string)
 	return reason
+}
+
+// Snapshot returns only atomically maintained memory state. It never touches
+// the filesystem and is therefore safe for request handlers even when a hard
+// NFS mount has an indefinitely blocked syscall.
+func (m *Monitor) Snapshot() HealthSnapshot {
+	if m == nil {
+		now := time.Now().UTC()
+		return HealthSnapshot{Healthy: true, Reason: "HEALTHY", ChangedAt: now}
+	}
+	snapshot, _ := m.snapshot.Load().(HealthSnapshot)
+	return snapshot
 }
 
 // Run probes until the context is cancelled. Run returns immediately if the
@@ -144,14 +175,34 @@ func (m *Monitor) probeOnce(ctx context.Context) {
 // settle applies the consecutive-failure policy: degraded after the
 // configured threshold of consecutive failures, healthy after one success.
 func (m *Monitor) settle(healthy bool, reason string) {
+	now := time.Now().UTC()
+	previous := m.Snapshot()
 	if healthy {
+		wasHealthy := m.healthy.Load()
+		m.reason.Store("")
 		m.healthy.Store(true)
 		m.failureCount.Store(0)
-		m.reason.Store("")
+		changedAt := previous.ChangedAt
+		if !wasHealthy {
+			changedAt = now
+			log.Printf("storage health changed: degraded -> healthy")
+		}
+		m.snapshot.Store(HealthSnapshot{Healthy: true, Reason: "HEALTHY", LastCheckedAt: &now, ChangedAt: changedAt})
 		return
 	}
 	if int(m.failureCount.Add(1)) >= m.failures {
-		m.healthy.Store(false)
+		wasHealthy := m.healthy.Load()
+		previousReason := m.Reason()
 		m.reason.Store(reason)
+		m.healthy.Store(false)
+		changedAt := previous.ChangedAt
+		if wasHealthy || previousReason != reason {
+			changedAt = now
+			log.Printf("storage health changed: %s -> degraded reason=%s", previous.Reason, reason)
+		}
+		m.snapshot.Store(HealthSnapshot{Healthy: false, Reason: reason, LastCheckedAt: &now, ChangedAt: changedAt})
+		return
 	}
+	previous.LastCheckedAt = &now
+	m.snapshot.Store(previous)
 }

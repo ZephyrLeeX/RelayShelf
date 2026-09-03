@@ -4,6 +4,7 @@ import { formatBytes } from '@/shared/utils/bytes'
 import { uploadStatusLabel } from '../labels'
 import { uploadManager } from '../manager'
 import type { UploadItem } from '../types'
+import { storageAvailable } from '@/features/storage/runtime'
 
 const props = defineProps<{ item: UploadItem }>()
 const picker = ref<HTMLInputElement>()
@@ -60,6 +61,8 @@ function selected(event: Event) {
         v-if="item.status === 'PAUSED'"
         class="button"
         type="button"
+        :disabled="!storageAvailable"
+        :title="storageAvailable ? undefined : '存储服务暂时不可用'"
         @click="continueUpload"
       >
         {{ item.file ? '继续' : '选择原文件' }}
@@ -68,6 +71,8 @@ function selected(event: Event) {
         v-if="item.status === 'FAILED' && item.retryable"
         class="button"
         type="button"
+        :disabled="!storageAvailable"
+        :title="storageAvailable ? undefined : '存储服务暂时不可用'"
         @click="uploadManager.retry(item.clientId)"
       >
         重试
@@ -76,6 +81,8 @@ function selected(event: Event) {
         v-if="item.status === 'FAILED' && item.file"
         class="button"
         type="button"
+        :disabled="!storageAvailable"
+        :title="storageAvailable ? undefined : '存储服务暂时不可用'"
         @click="uploadManager.reupload(item.clientId)"
       >
         重新上传
@@ -92,6 +99,7 @@ function selected(event: Event) {
       ref="picker"
       class="sr-only"
       type="file"
+      :disabled="!storageAvailable"
       @change="selected"
     >
   </article>

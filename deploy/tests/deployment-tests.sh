@@ -13,6 +13,7 @@ expect_failure() {
 }
 
 "$bundle_root/scripts/verify.sh"
+"$test_dir/storage-recovery-tests.sh"
 
 expect_failure sh -c '. "$1"; validate_image_ref relayshelf:1.2.3' sh "$bundle_root/scripts/common.sh"
 expect_failure sh -c '. "$1"; validate_image_ref docker.io/example/relayshelf:latest' sh "$bundle_root/scripts/common.sh"
@@ -67,7 +68,13 @@ grep -Fq 'Found: 4.9.3. Required: >= 5.2.0.' "$old_generator_log" ||
 expect_failure "$bundle_root/libexec/relayshelf-host-storage-check" /tmp
 
 # Upgrade ordering and failure boundaries are release invariants.
+install_script=$bundle_root/scripts/install.sh
 upgrade=$bundle_root/scripts/upgrade.sh
+for deployment_script in "$install_script" "$upgrade"; do
+  grep -Fq 'relayshelf-storage-recover' "$deployment_script" || fail "$deployment_script does not install the recovery helper"
+  grep -Fq 'relayshelf-storage-recovery.service' "$deployment_script" || fail "$deployment_script does not install the recovery service"
+  grep -Fq 'systemctl enable --now relayshelf-storage-recovery.timer' "$deployment_script" || fail "$deployment_script does not enable the recovery timer"
+done
 grep -Fq '"$script_dir/render-quadlet.sh" "$image_ref" "$listen_address" "$rendered"' "$upgrade" ||
   fail "upgrade does not render the candidate unit from the deployment authority"
 grep -Fq 'install -m 0644 "$bundle_root/quadlet/relayshelf.network" /etc/containers/systemd/relayshelf.network' "$upgrade" ||

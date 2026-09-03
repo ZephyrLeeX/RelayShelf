@@ -19,6 +19,12 @@ function threeChunkFile(name: string): string {
 
 test.describe('upload journey', () => {
   test('small file uploads, binds to a message, and downloads back', async ({ page }) => {
+    let storageHealthy = true
+    await page.route('**/api/v1/storage/status', (route) => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ healthy: storageHealthy, reason: storageHealthy ? 'HEALTHY' : 'NAS_UNAVAILABLE', lastCheckedAt: new Date().toISOString(), changedAt: new Date().toISOString() }),
+    }))
     const name = `${marker('upload')}.txt`
     const path = threeChunkFile(name)
     const digest = crypto.createHash('sha256').update(readFileSync(path)).digest('hex')
@@ -53,6 +59,27 @@ test.describe('upload journey', () => {
     for await (const chunk of stream) chunks.push(chunk as Buffer)
     const received = crypto.createHash('sha256').update(Buffer.concat(chunks)).digest('hex')
     expect(received).toBe(digest)
+
+    // The first file API error invalidates the shared runtime-status query,
+    // producing a global warning without waiting for the normal poll.
+    storageHealthy = false
+    await page.route(`**/api/v1/attachments/*/download`, (route) => route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: JSON.stringify({ code: 'STORAGE_UNAVAILABLE', message: 'storage is unavailable', traceId: 'e2e-storage' }),
+    }))
+    await viewer.locator('a.download').click()
+    await expect(viewer.getByText('文件暂时无法读取', { exact: true })).toBeVisible()
+    await page.setViewportSize({ width: 390, height: 844 })
+    await expect(page.getByRole('alert').filter({ hasText: '存储服务暂时不可用' })).toBeVisible()
+    await viewer.getByRole('button', { name: '关闭' }).click()
+    await expect(page.getByRole('button', { name: '附件', exact: true })).toBeDisabled()
+    await expect(page.locator('#composer-body')).toBeEnabled()
+
+    // Recovery is observed by polling; controls and banner update in place.
+    storageHealthy = true
+    await expect(page.getByRole('alert').filter({ hasText: '存储服务暂时不可用' })).toBeHidden({ timeout: 20_000 })
+    await expect(page.getByRole('button', { name: '附件', exact: true })).toBeEnabled()
   })
 })
 

@@ -1,0 +1,149 @@
+#!/bin/sh
+set -eu
+export LC_ALL=C
+
+mount_path=${1:-/mnt/relayshelf}
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+. "${STORAGE_COMMON:-$script_dir/relayshelf-storage-common}"
+
+SYSTEMCTL_BIN=${SYSTEMCTL_BIN:-systemctl}
+MOUNT_BIN=${MOUNT_BIN:-mount}
+UMOUNT_BIN=${UMOUNT_BIN:-umount}
+PODMAN_BIN=${PODMAN_BIN:-podman}
+SET_PRIV_BIN=${SET_PRIV_BIN:-setpriv}
+FLOCK_BIN=${FLOCK_BIN:-flock}
+SLEEP_BIN=${SLEEP_BIN:-sleep}
+DATE_BIN=${DATE_BIN:-date}
+ID_BIN=${ID_BIN:-id}
+INSTALL_BIN=${INSTALL_BIN:-install}
+STATE_DIR=${STATE_DIR:-/run/relayshelf}
+APP_SERVICE=${APP_SERVICE:-relayshelf-app.service}
+APP_CONTAINER=${APP_CONTAINER:-relayshelf-app}
+APP_UID=${APP_UID:-65532}
+APP_GID=${APP_GID:-65532}
+CONFIRM_DELAY_SECONDS=${CONFIRM_DELAY_SECONDS:-3}
+COOLDOWN_SECONDS=${COOLDOWN_SECONDS:-300}
+OP_TIMEOUT_SECONDS=${OP_TIMEOUT_SECONDS:-90}
+
+log_event() {
+  event=$1
+  shift
+  printf 'relayshelf_storage_recovery event=%s' "$event"
+  for field in "$@"; do printf ' %s' "$field"; done
+  printf '\n'
+}
+fail() { log_event recovery_failed "reason=$1" >&2; exit 1; }
+
+[ "$($ID_BIN -u)" -eq 0 ] || fail requires_root
+"$INSTALL_BIN" -d -m 0755 "$STATE_DIR"
+lock_file=$STATE_DIR/storage-recovery.lock
+cooldown_file=$STATE_DIR/storage-recovery.last
+exec 9>"$lock_file"
+if ! "$FLOCK_BIN" -n 9; then
+  log_event lock_busy
+  exit 0
+fi
+
+if ! storage_identity "$mount_path"; then
+  log_event probe_failed reason=unexpected_or_missing_mount
+  exit 0
+fi
+if [ -n "${EXPECTED_NFS_SOURCE:-}" ]; then
+  expected_source=$EXPECTED_NFS_SOURCE
+elif storage_configured_source "$mount_path"; then
+  expected_source=$STORAGE_CONFIGURED_SOURCE
+else
+  log_event probe_failed reason=expected_source_not_configured
+  exit 0
+fi
+[ "$STORAGE_SOURCE" = "$expected_source" ] || {
+  log_event probe_failed reason=mounted_source_mismatch
+  exit 0
+}
+
+probe_error=$STATE_DIR/storage-probe.$$.err
+trap 'rm -f "$probe_error"' EXIT HUP INT TERM
+probe_kind() {
+  : >"$probe_error"
+  if storage_stat_probe "$mount_path" >/dev/null 2>"$probe_error"; then
+    echo healthy
+  elif grep -Fq 'Stale file handle' "$probe_error"; then
+    echo estale
+  else
+    echo other
+  fi
+}
+
+first=$(probe_kind)
+if [ "$first" = healthy ]; then
+  log_event healthy
+  exit 0
+fi
+if [ "$first" != estale ]; then
+  log_event probe_failed reason=not_estale
+  exit 0
+fi
+"$SLEEP_BIN" "$CONFIRM_DELAY_SECONDS"
+second=$(probe_kind)
+if [ "$second" = healthy ]; then
+  log_event healthy detail=second_probe_recovered
+  exit 0
+fi
+if [ "$second" != estale ]; then
+  log_event probe_failed reason=estale_not_confirmed
+  exit 0
+fi
+log_event estale_confirmed
+
+now=$($DATE_BIN +%s)
+if [ -f "$cooldown_file" ]; then
+  last=$(sed -n '1p' "$cooldown_file" 2>/dev/null || true)
+  case "$last" in ''|*[!0-9]*) last=0 ;; esac
+  if [ $((now - last)) -lt "$COOLDOWN_SECONDS" ]; then
+    log_event cooldown_active remaining_seconds=$((COOLDOWN_SECONDS - now + last))
+    exit 0
+  fi
+fi
+printf '%s\n' "$now" >"$cooldown_file"
+log_event recovery_started source="$expected_source"
+
+storage_identity "$mount_path" || fail mount_identity_changed
+[ "$STORAGE_SOURCE" = "$expected_source" ] || fail mount_source_changed
+
+"$TIMEOUT_BIN" "$OP_TIMEOUT_SECONDS" "$SYSTEMCTL_BIN" stop "$APP_SERVICE" || fail app_stop_failed
+if "$SYSTEMCTL_BIN" is-active --quiet "$APP_SERVICE"; then fail app_still_running; fi
+log_event app_stopped
+
+log_event unmount_started
+if ! "$TIMEOUT_BIN" "$OP_TIMEOUT_SECONDS" "$UMOUNT_BIN" "$mount_path"; then
+  log_event unmount_forced
+  "$TIMEOUT_BIN" "$OP_TIMEOUT_SECONDS" "$UMOUNT_BIN" -f "$mount_path" || fail force_unmount_failed
+fi
+
+log_event mount_started
+"$TIMEOUT_BIN" "$OP_TIMEOUT_SECONDS" "$MOUNT_BIN" "$mount_path" || fail mount_failed
+storage_identity "$mount_path" || fail mounted_identity_invalid
+[ "$STORAGE_SOURCE" = "$expected_source" ] || fail mounted_source_mismatch
+storage_stat_probe "$mount_path" >/dev/null 2>&1 || fail mounted_access_failed
+log_event mount_verified source="$STORAGE_SOURCE"
+
+probe_file=$mount_path/.commit-tmp/.host-recovery-probe-$$
+"$TIMEOUT_BIN" "$OP_TIMEOUT_SECONDS" "$SET_PRIV_BIN" --reuid "$APP_UID" --regid "$APP_GID" --clear-groups sh -c '
+  set -eu
+  probe_file=$1
+  trap '\''rm -f "$probe_file"'\'' EXIT HUP INT TERM
+  umask 027
+  printf '\''relayshelf-storage-recovery\n'\'' >"$probe_file"
+  [ "$(sed -n '\''1p'\'' "$probe_file")" = relayshelf-storage-recovery ]
+  rm -f "$probe_file"
+' sh "$probe_file" || fail uid_probe_failed
+log_event uid_probe_passed uid="$APP_UID" gid="$APP_GID"
+
+"$TIMEOUT_BIN" "$OP_TIMEOUT_SECONDS" "$SYSTEMCTL_BIN" start "$APP_SERVICE" || fail app_start_failed
+log_event app_started
+if ! "$TIMEOUT_BIN" "$OP_TIMEOUT_SECONDS" "$PODMAN_BIN" exec "$APP_CONTAINER" /relayshelf storage check; then
+  "$TIMEOUT_BIN" "$OP_TIMEOUT_SECONDS" "$SYSTEMCTL_BIN" stop "$APP_SERVICE" >/dev/null 2>&1 || true
+  fail storage_check_failed_app_left_stopped
+fi
+log_event storage_check_passed
+log_event recovery_succeeded

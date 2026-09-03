@@ -31,6 +31,7 @@ import type { RuntimeSettings } from '../models/RuntimeSettings';
 import type { SensitiveBody } from '../models/SensitiveBody';
 import type { SensitiveRequest } from '../models/SensitiveRequest';
 import type { Session } from '../models/Session';
+import type { StorageRuntimeStatus } from '../models/StorageRuntimeStatus';
 import type { StorageStatus } from '../models/StorageStatus';
 import type { Tag } from '../models/Tag';
 import type { TagRequest } from '../models/TagRequest';
@@ -1074,6 +1075,19 @@ export class DefaultService {
                 401: `API error`,
                 403: `API error`,
                 422: `API error`,
+            },
+        });
+    }
+    /**
+     * @returns StorageRuntimeStatus Constant-time in-memory storage health for authenticated clients
+     * @throws ApiError
+     */
+    public static getStorageRuntimeStatus(): CancelablePromise<StorageRuntimeStatus> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/storage/status',
+            errors: {
+                401: `API error`,
             },
         });
     }

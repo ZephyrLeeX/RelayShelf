@@ -101,3 +101,17 @@ echo
 echo "RESULT: PASS — writes bounded during the outage, recovery clean."
 echo "Pair this with the application-level evidence:"
 echo "  go test -tags=integration -run TestNFSOutage ./internal/uploads/..."
+
+cat <<'EOF'
+
+Manual ESTALE qualification (requires a NAS restart/re-export that really
+invalidates handles; ordinary network outage is intentionally insufficient):
+  1. Confirm RelayShelf and /relayshelf storage check are healthy.
+  2. Restart/upgrade the NAS or re-export the filesystem until the Debian
+     mount remains listed but stat returns Stale file handle.
+  3. Observe two confirmed ESTALE probes in the recovery service journal.
+  4. Verify the journal records app_stopped, mount_verified,
+     uid_probe_passed, app_started, storage_check_passed, and
+     recovery_succeeded in order.
+  5. Confirm upload, preview, and download recover without a browser reload.
+EOF

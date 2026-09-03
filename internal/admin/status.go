@@ -51,9 +51,12 @@ type StatusService struct {
 	pool                 *pgxpool.Pool
 	storage              spaceAdapter
 	staging              staging.SpaceProbe
+	monitor              *storage.Monitor
 	probeTimeout         time.Duration
 	nasGate, stagingGate chan struct{}
 }
+
+func (s *StatusService) SetMonitor(monitor *storage.Monitor) { s.monitor = monitor }
 
 func NewStatusService(pool *pgxpool.Pool, adapter spaceAdapter, stagingProbe staging.SpaceProbe) *StatusService {
 	return &StatusService{pool: pool, storage: adapter, staging: stagingProbe, probeTimeout: 1500 * time.Millisecond, nasGate: make(chan struct{}, 1), stagingGate: make(chan struct{}, 1)}
@@ -91,10 +94,14 @@ func (s *StatusService) Storage(ctx context.Context) StorageStatus {
 		err   error
 	}
 	nasDone, stagingDone := make(chan nasResult, 1), make(chan stagingResult, 1)
-	go func() {
-		value, err := boundedProbe(ctx, s.probeTimeout, s.nasGate, func() (storage.Space, error) { return s.storage.Space(context.Background()) })
-		nasDone <- nasResult{value, err}
-	}()
+	if s.monitor != nil && !s.monitor.Healthy() {
+		nasDone <- nasResult{err: monitorHealthError{s.monitor.Reason()}}
+	} else {
+		go func() {
+			value, err := boundedProbe(ctx, s.probeTimeout, s.nasGate, func() (storage.Space, error) { return s.storage.Space(context.Background()) })
+			nasDone <- nasResult{value, err}
+		}()
+	}
 	go func() {
 		value, err := boundedProbe(ctx, s.probeTimeout, s.stagingGate, func() (staging.Space, error) { return s.staging.Probe() })
 		stagingDone <- stagingResult{value, err}
@@ -104,6 +111,8 @@ func (s *StatusService) Storage(ctx context.Context) StorageStatus {
 	if nasErr == nil {
 		available, total := int64(nas.AvailableBytes), int64(nas.TotalBytes)
 		result.NASAvailableBytes, result.NASTotalBytes = &available, &total
+	} else if reason, ok := nasErr.(monitorHealthError); ok {
+		result.DegradedReasons = append(result.DegradedReasons, reason.reason)
 	} else if errors.Is(nasErr, context.DeadlineExceeded) {
 		result.DegradedReasons = append(result.DegradedReasons, "NAS_TIMEOUT")
 	} else {
@@ -121,6 +130,10 @@ func (s *StatusService) Storage(ctx context.Context) StorageStatus {
 	}
 	return result
 }
+
+type monitorHealthError struct{ reason string }
+
+func (e monitorHealthError) Error() string { return e.reason }
 
 // security computes the admin TOTP half of the public-exposure safety gate:
 // the gate is only satisfiable when at least one active admin exists and all

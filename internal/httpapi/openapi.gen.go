@@ -73,19 +73,19 @@ func (e ExtendMessageExpiryRequestDays) Valid() bool {
 
 // Defines values for HealthState.
 const (
-	DEGRADED    HealthState = "DEGRADED"
-	HEALTHY     HealthState = "HEALTHY"
-	UNAVAILABLE HealthState = "UNAVAILABLE"
+	HealthStateDEGRADED    HealthState = "DEGRADED"
+	HealthStateHEALTHY     HealthState = "HEALTHY"
+	HealthStateUNAVAILABLE HealthState = "UNAVAILABLE"
 )
 
 // Valid indicates whether the value is a known member of the HealthState enum.
 func (e HealthState) Valid() bool {
 	switch e {
-	case DEGRADED:
+	case HealthStateDEGRADED:
 		return true
-	case HEALTHY:
+	case HealthStateHEALTHY:
 		return true
-	case UNAVAILABLE:
+	case HealthStateUNAVAILABLE:
 		return true
 	default:
 		return false
@@ -110,30 +110,57 @@ func (e Lifecycle) Valid() bool {
 	}
 }
 
+// Defines values for StorageRuntimeStatusReason.
+const (
+	StorageRuntimeStatusReasonHEALTHY        StorageRuntimeStatusReason = "HEALTHY"
+	StorageRuntimeStatusReasonNASFULL        StorageRuntimeStatusReason = "NAS_FULL"
+	StorageRuntimeStatusReasonNASTIMEOUT     StorageRuntimeStatusReason = "NAS_TIMEOUT"
+	StorageRuntimeStatusReasonNASUNAVAILABLE StorageRuntimeStatusReason = "NAS_UNAVAILABLE"
+)
+
+// Valid indicates whether the value is a known member of the StorageRuntimeStatusReason enum.
+func (e StorageRuntimeStatusReason) Valid() bool {
+	switch e {
+	case StorageRuntimeStatusReasonHEALTHY:
+		return true
+	case StorageRuntimeStatusReasonNASFULL:
+		return true
+	case StorageRuntimeStatusReasonNASTIMEOUT:
+		return true
+	case StorageRuntimeStatusReasonNASUNAVAILABLE:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for StorageStatusDegradedReasons.
 const (
-	DATABASEUNAVAILABLE      StorageStatusDegradedReasons = "DATABASE_UNAVAILABLE"
-	LOGICALTHRESHOLDEXCEEDED StorageStatusDegradedReasons = "LOGICAL_THRESHOLD_EXCEEDED"
-	LOGICALTHRESHOLDWARNING  StorageStatusDegradedReasons = "LOGICAL_THRESHOLD_WARNING"
-	NASTIMEOUT               StorageStatusDegradedReasons = "NAS_TIMEOUT"
-	NASUNAVAILABLE           StorageStatusDegradedReasons = "NAS_UNAVAILABLE"
-	STAGINGUNAVAILABLE       StorageStatusDegradedReasons = "STAGING_UNAVAILABLE"
+	StorageStatusDegradedReasonsDATABASEUNAVAILABLE      StorageStatusDegradedReasons = "DATABASE_UNAVAILABLE"
+	StorageStatusDegradedReasonsLOGICALTHRESHOLDEXCEEDED StorageStatusDegradedReasons = "LOGICAL_THRESHOLD_EXCEEDED"
+	StorageStatusDegradedReasonsLOGICALTHRESHOLDWARNING  StorageStatusDegradedReasons = "LOGICAL_THRESHOLD_WARNING"
+	StorageStatusDegradedReasonsNASFULL                  StorageStatusDegradedReasons = "NAS_FULL"
+	StorageStatusDegradedReasonsNASTIMEOUT               StorageStatusDegradedReasons = "NAS_TIMEOUT"
+	StorageStatusDegradedReasonsNASUNAVAILABLE           StorageStatusDegradedReasons = "NAS_UNAVAILABLE"
+	StorageStatusDegradedReasonsSTAGINGUNAVAILABLE       StorageStatusDegradedReasons = "STAGING_UNAVAILABLE"
 )
 
 // Valid indicates whether the value is a known member of the StorageStatusDegradedReasons enum.
 func (e StorageStatusDegradedReasons) Valid() bool {
 	switch e {
-	case DATABASEUNAVAILABLE:
+	case StorageStatusDegradedReasonsDATABASEUNAVAILABLE:
 		return true
-	case LOGICALTHRESHOLDEXCEEDED:
+	case StorageStatusDegradedReasonsLOGICALTHRESHOLDEXCEEDED:
 		return true
-	case LOGICALTHRESHOLDWARNING:
+	case StorageStatusDegradedReasonsLOGICALTHRESHOLDWARNING:
 		return true
-	case NASTIMEOUT:
+	case StorageStatusDegradedReasonsNASFULL:
 		return true
-	case NASUNAVAILABLE:
+	case StorageStatusDegradedReasonsNASTIMEOUT:
 		return true
-	case STAGINGUNAVAILABLE:
+	case StorageStatusDegradedReasonsNASUNAVAILABLE:
+		return true
+	case StorageStatusDegradedReasonsSTAGINGUNAVAILABLE:
 		return true
 	default:
 		return false
@@ -567,6 +594,17 @@ type Session struct {
 	LastSeenAt        time.Time          `json:"lastSeenAt"`
 }
 
+// StorageRuntimeStatus defines model for StorageRuntimeStatus.
+type StorageRuntimeStatus struct {
+	ChangedAt     time.Time                  `json:"changedAt"`
+	Healthy       bool                       `json:"healthy"`
+	LastCheckedAt *time.Time                 `json:"lastCheckedAt"`
+	Reason        StorageRuntimeStatusReason `json:"reason"`
+}
+
+// StorageRuntimeStatusReason defines model for StorageRuntimeStatus.Reason.
+type StorageRuntimeStatusReason string
+
 // StorageStatus defines model for StorageStatus.
 type StorageStatus struct {
 	DegradedReasons       []StorageStatusDegradedReasons `json:"degradedReasons"`
@@ -998,6 +1036,9 @@ type ServerInterface interface {
 	// (DELETE /sessions/{sessionId})
 	RevokeSession(w http.ResponseWriter, r *http.Request, sessionId SessionId)
 
+	// (GET /storage/status)
+	GetStorageRuntimeStatus(w http.ResponseWriter, r *http.Request)
+
 	// (GET /tags)
 	ListTags(w http.ResponseWriter, r *http.Request)
 
@@ -1251,6 +1292,11 @@ func (_ Unimplemented) ListSessions(w http.ResponseWriter, r *http.Request) {
 
 // (DELETE /sessions/{sessionId})
 func (_ Unimplemented) RevokeSession(w http.ResponseWriter, r *http.Request, sessionId SessionId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /storage/status)
+func (_ Unimplemented) GetStorageRuntimeStatus(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -2502,6 +2548,20 @@ func (siw *ServerInterfaceWrapper) RevokeSession(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// GetStorageRuntimeStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetStorageRuntimeStatus(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetStorageRuntimeStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListTags operation middleware
 func (siw *ServerInterfaceWrapper) ListTags(w http.ResponseWriter, r *http.Request) {
 
@@ -3080,6 +3140,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/admin/settings", wrapper.UpdateRuntimeSettings)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/storage/status", wrapper.GetStorageRuntimeStatus)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/admin/storage", wrapper.GetStorageStatus)

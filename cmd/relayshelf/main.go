@@ -55,6 +55,7 @@ type realtimeEndpoints struct{ *realtime.Handler }
 type settingsEndpoints struct{ *settings.Handler }
 type adminEndpoints struct{ *admin.Handler }
 type userEndpoints struct{ *recipients.Handler }
+type storageStatusEndpoints struct{ *storage.StatusHandler }
 type apiHandler struct {
 	*authEndpoints
 	*messageEndpoints
@@ -66,6 +67,7 @@ type apiHandler struct {
 	*settingsEndpoints
 	*adminEndpoints
 	*userEndpoints
+	*storageStatusEndpoints
 }
 
 var _ httpapi.ServerInterface = (*apiHandler)(nil)
@@ -273,6 +275,7 @@ func main() {
 		uploadHandler := uploads.NewHandler(uploadService)
 		fileService := files.NewService(db, storageAdapter)
 		fileService.SetMonitor(storageMonitor)
+		storageStatusHandler := storage.NewStatusHandler(storageMonitor)
 		if reconcileErr := fileService.Reconcile(ctx, 100); reconcileErr != nil {
 			log.Printf("file object reconciliation failed: %v", reconcileErr)
 			os.Exit(1)
@@ -283,6 +286,7 @@ func main() {
 		}
 		fileHandler := files.NewHandler(fileService)
 		adminStatus := admin.NewStatusService(db, storageAdapter, staging.NewStatFSProbe(cfg.StagingRoot))
+		adminStatus.SetMonitor(storageMonitor)
 		adminHandler := admin.NewHandler(userAdminService, authService, adminStatus)
 		thumbnailer := files.NewThumbnailer(db, storageAdapter, id.UUIDv7{}, now.Now)
 		worker := jobs.NewWorker(jobRepo, map[string]jobs.Handler{jobs.TypeGenerateThumbnail: thumbnailer}, jobWake, now)
@@ -301,7 +305,7 @@ func main() {
 		scheduler := jobs.NewScheduler(db, jobRepo, uploadService, fileService, hub, id.UUIDv7{}, now, jobWake)
 		background.Add(1)
 		go func() { defer background.Done(); scheduler.Run(serveCtx) }()
-		handler := &apiHandler{authEndpoints: &authEndpoints{authHandler}, messageEndpoints: &messageEndpoints{messageHandler}, tagEndpoints: &tagEndpoints{tagHandler}, uploadEndpoints: &uploadEndpoints{uploadHandler}, fileEndpoints: &fileEndpoints{fileHandler}, searchEndpoints: &searchEndpoints{searchHandler}, realtimeEndpoints: &realtimeEndpoints{realtimeHandler}, settingsEndpoints: &settingsEndpoints{settingsHandler}, adminEndpoints: &adminEndpoints{adminHandler}, userEndpoints: &userEndpoints{userDirectoryHandler}}
+		handler := &apiHandler{authEndpoints: &authEndpoints{authHandler}, messageEndpoints: &messageEndpoints{messageHandler}, tagEndpoints: &tagEndpoints{tagHandler}, uploadEndpoints: &uploadEndpoints{uploadHandler}, fileEndpoints: &fileEndpoints{fileHandler}, searchEndpoints: &searchEndpoints{searchHandler}, realtimeEndpoints: &realtimeEndpoints{realtimeHandler}, settingsEndpoints: &settingsEndpoints{settingsHandler}, adminEndpoints: &adminEndpoints{adminHandler}, userEndpoints: &userEndpoints{userDirectoryHandler}, storageStatusEndpoints: &storageStatusEndpoints{storageStatusHandler}}
 		router := newHTTPRouter(authMiddleware.Host, auth.Router(handler, authMiddleware), health(http.StatusOK), ready(db))
 
 		address := os.Getenv("LISTEN_ADDR")

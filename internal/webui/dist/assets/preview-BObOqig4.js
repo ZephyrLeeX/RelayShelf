@@ -1,4 +1,4 @@
-import{n as t}from"./index-D7I-dQdl.js";/**
+import{n as t}from"./index-DE3scbep.js";/**
  * @license @lucide/vue v1.37.0 - ISC
  *
  * This source code is licensed under the ISC license.
