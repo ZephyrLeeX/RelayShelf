@@ -11,6 +11,7 @@ trap 'rm -rf "$test_root"' EXIT HUP INT TERM
 fail() { echo "FAIL: $*" >&2; exit 1; }
 assert_has() { grep -Fq "$2" "$1" || fail "$1 missing: $2"; }
 assert_lacks() { ! grep -Fq "$2" "$1" || fail "$1 unexpectedly contains: $2"; }
+assert_tmp_clean() { [ -z "$(find "$1/tmp" -mindepth 1 -print -quit)" ] || fail "temporary files survived: $1"; }
 
 make_case() {
   name=$1
@@ -52,6 +53,12 @@ while [ "\$#" -gt 0 ]; do
   esac
 done
 [ -n "\$output" ] && [ -n "\$url" ] || exit 2
+if [ -f '$case_dir/curl-signal' ]; then
+  signal_name=\$(sed -n '1p' '$case_dir/curl-signal')
+  rm -f '$case_dir/curl-signal'
+  kill -s "\$signal_name" "\$PPID"
+  sleep 1
+fi
 asset=\${url##*/}
 cp '$case_dir/serve/'"\$asset" "\$output"
 EOF
@@ -152,6 +159,7 @@ run_plain "$test_root/download-404" 1.2.3
 [ "$status" -ne 0 ] || fail "missing bundle unexpectedly succeeded"
 assert_has "$test_root/download-404/output" 'could not download RelayShelf deployment bundle'
 assert_lacks "$test_root/download-404/calls" 'upgrade '
+assert_tmp_clean "$test_root/download-404"
 
 make_case checksum-missing
 rm "$test_root/checksum-missing/serve/relayshelf-deploy-1.2.3.tar.gz.sha256"
@@ -165,6 +173,7 @@ run_plain "$test_root/checksum-mismatch" 1.2.3
 [ "$status" -ne 0 ] || fail "checksum mismatch unexpectedly succeeded"
 assert_has "$test_root/checksum-mismatch/output" 'checksum verification failed'
 assert_lacks "$test_root/checksum-mismatch/calls" 'upgrade '
+assert_tmp_clean "$test_root/checksum-mismatch"
 
 make_case checksum-malformed
 printf 'not-a-checksum\n' >"$test_root/checksum-malformed/serve/relayshelf-deploy-1.2.3.tar.gz.sha256"
@@ -245,7 +254,27 @@ printf 'YES\n' | script -qefc "$test_root/upgrade-failure/run 1.2.3" /dev/null >
 status=$?
 set -e
 [ "$status" -eq 23 ] || fail "bundled upgrade failure status was not propagated (got $status)"
-[ -z "$(find "$test_root/upgrade-failure/tmp" -mindepth 1 -print -quit)" ] || fail "temporary files survived failed upgrade"
+assert_tmp_clean "$test_root/upgrade-failure"
+
+for signal_case in hup int term; do
+  make_case "signal-$signal_case"
+done
+echo HUP >"$test_root/signal-hup/curl-signal"
+echo INT >"$test_root/signal-int/curl-signal"
+echo TERM >"$test_root/signal-term/curl-signal"
+for signal_case in hup int term; do
+  case "$signal_case" in
+    hup) expected_status=129 ;;
+    int) expected_status=130 ;;
+    term) expected_status=143 ;;
+  esac
+  run_plain "$test_root/signal-$signal_case" 1.2.3
+  [ "$status" -eq "$expected_status" ] || fail "SIG$(printf '%s' "$signal_case" | tr '[:lower:]' '[:upper:]') returned $status, expected $expected_status"
+  assert_tmp_clean "$test_root/signal-$signal_case"
+  assert_lacks "$test_root/signal-$signal_case/calls" 'upgrade '
+  assert_lacks "$test_root/signal-$signal_case/calls" 'systemctl '
+  assert_lacks "$test_root/signal-$signal_case/output" 'RelayShelf upgrade completed successfully'
+done
 
 make_case final-mismatch
 echo 9.9.9 >"$test_root/final-mismatch/final-version"

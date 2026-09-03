@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   quality-gate:
     uses: ./.github/workflows/ci.yml
@@ -48,6 +52,43 @@ jobs:
           echo "bundle=${BUNDLE}" >> "$GITHUB_OUTPUT"
           echo "checksum=${CHECKSUM}" >> "$GITHUB_OUTPUT"
 
+      - name: Check release immutability
+        id: release_guard
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+
+          release_state=$(gh api graphql \
+            -F owner="${GITHUB_REPOSITORY_OWNER}" \
+            -F name="${GITHUB_REPOSITORY#*/}" \
+            -F tag="$tag" \
+            -f query='query($owner: String!, $name: String!, $tag: String!) {
+              repository(owner: $owner, name: $name) {
+                release(tagName: $tag) { tagName isDraft }
+              }
+            }' \
+            --jq 'if .data.repository.release == null then "missing" else [.data.repository.release.tagName, (.data.repository.release.isDraft | tostring)] | @tsv end')
+
+          case "$release_state" in
+            missing)
+              echo "release_state=missing" >> "$GITHUB_OUTPUT"
+              ;;
+            "$tag"$'\ttrue')
+              echo "release_state=draft" >> "$GITHUB_OUTPUT"
+              ;;
+            "$tag"$'\tfalse')
+              echo "Release $tag is already published and immutable" >&2
+              exit 1
+              ;;
+            *)
+              echo "Unexpected release state for $tag: $release_state" >&2
+              exit 1
+              ;;
+          esac
+
       - name: Install Podman
         run: |
           sudo apt-get update
@@ -80,7 +121,7 @@ jobs:
         run: |
           podman push "${{ steps.version.outputs.image }}"
 
-      - name: Publish immutable GitHub Release assets
+      - name: Publish GitHub Release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -89,12 +130,25 @@ jobs:
           bundle="${{ steps.version.outputs.bundle }}"
           checksum="${{ steps.version.outputs.checksum }}"
 
-          if gh release view "$tag" >/dev/null 2>&1; then
-            gh release edit "$tag" --draft=true
+          release_state="${{ steps.release_guard.outputs.release_state }}"
+          if [ "$release_state" = draft ]; then
+            existing_tag=$(gh release view "$tag" --json tagName --jq '.tagName')
+            is_draft=$(gh release view "$tag" --json isDraft --jq '.isDraft')
+            [ "$existing_tag" = "$tag" ] || {
+              echo "Draft Release tag mismatch: expected $tag, got $existing_tag" >&2
+              exit 1
+            }
+            [ "$is_draft" = true ] || {
+              echo "Release $tag is already published and immutable" >&2
+              exit 1
+            }
             gh release upload "$tag" "$bundle" "$checksum" --clobber
-          else
+          elif [ "$release_state" = missing ]; then
             gh release create "$tag" "$bundle" "$checksum" \
               --draft --verify-tag --title "RelayShelf ${{ steps.version.outputs.version }}" --generate-notes
+          else
+            echo "Refusing unexpected guarded release state: $release_state" >&2
+            exit 1
           fi
 
           asset_names=$(gh release view "$tag" --json assets --jq '.assets[].name')

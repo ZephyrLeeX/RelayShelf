@@ -238,7 +238,10 @@ web/                   Vue 前端与 Playwright 测试
 - `TRUSTED_PROXIES` 只能包含实际的 OpenWrt 代理地址或 CIDR；
 - PostgreSQL 数据不得放在 NFS，5432 不得暴露到 LAN；
 - NFS 缺失时不得使用空的本地目录作为降级存储；
-- 发布镜像必须使用完全限定的精确 SemVer 标签，禁止 `latest`。
+- 发布镜像必须使用完全限定的精确 SemVer 标签，禁止 `latest`。Release workflow
+  对每个 SemVer tag 只允许一次正式发布；Release 一旦 published，后续运行会在重新
+  构建、推送同版本镜像或覆盖 assets 前失败。未完成的 draft Release 可以恢复；已发布
+  版本的修复必须使用新版本（例如用 `v1.2.4` 修复 `v1.2.3`）。
 
 ## 品牌资源
 

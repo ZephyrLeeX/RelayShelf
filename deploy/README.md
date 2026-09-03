@@ -357,11 +357,16 @@ git push origin v1.2.3
 ```
 
 Release workflow 首先以 reusable `CI` workflow 对该 tag commit 执行完整质量门，
-再构建并验证 `ghcr.io/zephyrleex/relayshelf:1.2.3` 和 deployment bundle，生成标准
+随后先检查同 tag Release 的发布状态，再构建并验证
+`ghcr.io/zephyrleex/relayshelf:1.2.3` 和 deployment bundle，生成标准
 `sha256sum` 文件。只有精确 GHCR image push 成功后，才以 draft GitHub Release
 上传 bundle 与 checksum；两个 asset 均可见后才发布 Release。发布 asset 失败会使
 workflow 失败，draft 不会成为正常可见的生产 Release。生产升级始终绑定明确 tag、
-明确 asset 与 immutable SemVer image，不读取 `main`、raw script 或 mutable image tag。
+明确 asset 与 release-pinned exact SemVer image，不读取 `main`、raw script 或 mutable
+image tag。每个正式 SemVer tag 只允许发布一次：未完成的同 tag draft 可以在 workflow
+重跑时恢复，但 Release 一旦 published，后续运行会在 build、GHCR push 和 asset upload
+之前失败，不允许覆盖 Release assets 或重新 push 同版本镜像。已发布版本必须以新版本
+修复，例如用 `v1.2.4` 修复 `v1.2.3`，不能重发 `v1.2.3`。
 
 ## 故障排查
 

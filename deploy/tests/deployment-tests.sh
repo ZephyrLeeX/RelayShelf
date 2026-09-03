@@ -108,8 +108,8 @@ grep -Fq 'http://$listen_address:8080/health/ready' "$upgrade" || fail "upgrade 
 grep -Fq 'podman port relayshelf-postgres' "$upgrade" || fail "upgrade does not check PostgreSQL host exposure"
 grep -Fq 'candidate image build metadata does not match the deployment bundle' "$upgrade" || fail "upgrade does not bind image metadata to the release bundle"
 
-# Release publication must be gated by the same CI, push the immutable image
-# first, then publish both checksum-protected deployment assets.
+# Release publication must be gated by the same CI. A published release must
+# stop the workflow before any authoritative build, image push, or asset upload.
 release_workflow=$bundle_root/../.github/workflows/release.yml
 ci_workflow=$bundle_root/../.github/workflows/ci.yml
 grep -Fq 'workflow_call:' "$ci_workflow" || fail "CI is not reusable as the release quality gate"
@@ -117,12 +117,22 @@ grep -Fq -- "- 'v*.*.*'" "$release_workflow" || fail "release tag pattern is mis
 grep -Fq 'contents: write' "$release_workflow" || fail "release workflow cannot publish GitHub Releases"
 grep -Fq 'packages: write' "$release_workflow" || fail "release workflow cannot push GHCR"
 grep -Fq 'uses: ./.github/workflows/ci.yml' "$release_workflow" || fail "release does not run the CI quality gate"
-grep -Fq 'ghcr.io/zephyrleex/relayshelf:${VERSION}' "$release_workflow" || fail "release image is not the immutable project GHCR tag"
+grep -Fq 'ghcr.io/zephyrleex/relayshelf:${VERSION}' "$release_workflow" || fail "release image is not the exact project GHCR SemVer tag"
 grep -Fq 'sha256sum "${{ steps.version.outputs.bundle }}"' "$release_workflow" || fail "release checksum is not generated"
 grep -Fq 'gh release create' "$release_workflow" || fail "GitHub Release publication is missing"
+grep -Fq 'isDraft' "$release_workflow" || fail "release workflow does not distinguish draft and published releases"
+grep -Fq 'already published and immutable' "$release_workflow" || fail "published releases do not fail closed as immutable"
+! grep -Fq -- '--draft=true' "$release_workflow" || fail "a published release can be changed back to draft"
+guard_line=$(grep -n -- '- name: Check release immutability' "$release_workflow" | cut -d: -f1)
+build_line=$(grep -n 'build-release.sh' "$release_workflow" | cut -d: -f1)
 push_line=$(grep -n 'podman push' "$release_workflow" | cut -d: -f1)
-publish_line=$(grep -n 'gh release create' "$release_workflow" | cut -d: -f1)
-[ "$push_line" -lt "$publish_line" ] || fail "GitHub Release can be published before the image push"
+create_line=$(grep -n 'gh release create' "$release_workflow" | cut -d: -f1)
+upload_line=$(grep -n 'gh release upload' "$release_workflow" | cut -d: -f1)
+[ -n "$guard_line" ] && [ -n "$build_line" ] && [ -n "$push_line" ] && [ -n "$create_line" ] && [ -n "$upload_line" ] ||
+  fail "release workflow ordering markers are incomplete"
+[ "$guard_line" -lt "$build_line" ] && [ "$build_line" -lt "$push_line" ] &&
+  [ "$push_line" -lt "$create_line" ] && [ "$push_line" -lt "$upload_line" ] ||
+  fail "release guard/build/push/assets ordering is unsafe"
 
 for bundled_path in \
   scripts/relayshelf-upgrade \

@@ -54,12 +54,32 @@ exec 8>"$STATE_DIR/upgrade.lock"
 work_dir=
 cleanup() {
   [ -z "$work_dir" ] && return
-  case "${work_dir##*/}" in
-    relayshelf-upgrade.*) rm -rf -- "$work_dir" ;;
-    *) echo "ERROR: refusing to clean unexpected temporary path: $work_dir" >&2 ;;
+  cleanup_dir=$work_dir
+  work_dir=
+  case "${cleanup_dir##*/}" in
+    relayshelf-upgrade.*) rm -rf -- "$cleanup_dir" ;;
+    *) echo "ERROR: refusing to clean unexpected temporary path: $cleanup_dir" >&2 ;;
   esac
 }
-trap cleanup EXIT HUP INT TERM
+on_hup() {
+  cleanup
+  trap - EXIT
+  exit 129
+}
+on_int() {
+  cleanup
+  trap - EXIT
+  exit 130
+}
+on_term() {
+  cleanup
+  trap - EXIT
+  exit 143
+}
+trap cleanup EXIT
+trap on_hup HUP
+trap on_int INT
+trap on_term TERM
 work_dir=$("$MKTEMP_BIN" -d "$TEMP_PARENT/relayshelf-upgrade.XXXXXX")
 bundle_name=relayshelf-deploy-$version.tar.gz
 checksum_name=$bundle_name.sha256
