@@ -39,6 +39,7 @@ for target in \
   /etc/containers/systemd/relayshelf.network \
   /etc/containers/systemd/relayshelf-postgres.container \
   /etc/containers/systemd/relayshelf-app.container \
+  /usr/local/bin/relayshelf-upgrade \
   /usr/local/libexec/relayshelf-host-storage-check \
   /usr/local/libexec/relayshelf-storage-common \
   /usr/local/libexec/relayshelf-storage-recover \
@@ -50,6 +51,7 @@ done
 "$bundle_root/libexec/relayshelf-host-storage-check" /mnt/relayshelf
 
 install -d -m 0750 /etc/relayshelf /etc/containers/systemd /usr/local/libexec
+install -d -m 0755 /usr/local/bin
 install -d -m 0700 /var/lib/relayshelf/postgres
 install -d -m 0750 /var/lib/relayshelf/staging
 chown 999:999 /var/lib/relayshelf/postgres
@@ -61,6 +63,7 @@ install -m 0644 "$bundle_root/libexec/relayshelf-storage-common" /usr/local/libe
 install -m 0755 "$bundle_root/libexec/relayshelf-storage-recover" /usr/local/libexec/relayshelf-storage-recover
 install -m 0644 "$bundle_root/systemd/relayshelf-storage-recovery.service" /etc/systemd/system/relayshelf-storage-recovery.service
 install -m 0644 "$bundle_root/systemd/relayshelf-storage-recovery.timer" /etc/systemd/system/relayshelf-storage-recovery.timer
+install -m 0755 "$bundle_root/scripts/relayshelf-upgrade" /usr/local/bin/relayshelf-upgrade
 install -m 0644 "$bundle_root/quadlet/relayshelf.network" /etc/containers/systemd/relayshelf.network
 install -m 0644 "$bundle_root/quadlet/relayshelf-postgres.container" /etc/containers/systemd/relayshelf-postgres.container
 rendered=$(mktemp)

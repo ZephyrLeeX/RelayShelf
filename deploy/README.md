@@ -53,6 +53,7 @@ Podman `--internal` 的禁止外部访问语义混为一谈。
 /var/lib/relayshelf/postgres/      999:999   0700  虚拟机本地 PostgreSQL 数据
 /var/lib/relayshelf/staging/       65532     0750  虚拟机本地上传暂存区
 /mnt/relayshelf/                   65532     NAS   宿主机 NFSv4 挂载点
+/usr/local/bin/relayshelf-upgrade  root:root 0755  固定版本升级入口
 /usr/local/libexec/relayshelf-host-storage-check
 ```
 
@@ -102,8 +103,10 @@ sudo ./libexec/relayshelf-host-storage-check /mnt/relayshelf
 write/read/delete、启动应用并执行 `/relayshelf storage check`。网络超时、权限错误、
 ENOSPC/EDQUOT、普通 I/O 错误、挂载缺失或 source 不匹配都只记录诊断，不会卸载。
 
-恢复使用 `/run/relayshelf/storage-recovery.lock` 防并发，并从 recovery 开始执行
-5 分钟冷却，避免失败风暴。卸载、挂载、UID 探针或应用 storage check 失败时，
+恢复与正式升级共同竞争 `/run/relayshelf/operation.lock`，因此 watchdog 不会在
+升级 stop/start 应用期间进入 destructive recovery，升级也不会在 recovery 正在
+卸载/重挂 NFS 时启动。恢复自身从 recovery 开始执行 5 分钟冷却，避免失败风暴。
+卸载、挂载、UID 探针或应用 storage check 失败时，
 恢复返回失败；一旦应用已停止，失败路径会保持应用停止，避免在未验证存储上继续
 服务或形成 stop/start 循环，需运维人员诊断后手动启动。
 
@@ -157,10 +160,20 @@ URL 编码。主机名必须保持为 `relayshelf-postgres`，该名称仅在 Po
 
 ```bash
 sudo ./scripts/install.sh \
-  --image <registry>/relayshelf:<version> \
+  --image ghcr.io/zephyrleex/relayshelf:<version> \
   --listen-address <debian-vm-ip> \
   --app-env ./relayshelf.env \
   --postgres-env ./postgres.env
+```
+
+安装必须从对应 GitHub Release 的 `relayshelf-deploy-<version>.tar.gz` 完成，并在
+解压前核对同一 Release 中的 `.sha256`。安装成功后会以 `root:root 0755` 安装长期
+入口 `/usr/local/bin/relayshelf-upgrade`；此后生产机不需要保留 RelayShelf Git
+仓库，也不需要 `git`、Go、Node.js、pnpm 或 Make。
+
+```bash
+relayshelf-upgrade --help
+sudo ./scripts/verify.sh --installed
 ```
 
 常用生命周期命令：
@@ -250,13 +263,29 @@ OpenWrt 服务命令进行测试和重新加载。参考配置会：
 
 ## 升级
 
-创建 PostgreSQL 备份，并确认虚拟机外的加密密钥备份有效，然后运行：
+创建 PostgreSQL 备份，并确认虚拟机外的加密密钥备份有效，然后在交互式终端运行：
 
 ```bash
-sudo ./scripts/upgrade.sh \
-  --image <registry>/relayshelf:<new-version> \
-  --backup-confirmed
+sudo relayshelf-upgrade 1.2.3
 ```
+
+版本参数必须是明确的 SemVer，且不带 tag 使用的 `v`；不支持 `latest`、`stable`
+或自动查询最新版本。命令固定从 GitHub Release `v1.2.3` 下载 deployment bundle
+及 SHA256，校验归档路径、`RELEASE_SCHEMA`、版本、Git commit 和精确 GHCR image，
+然后提示运维人员输入 `YES` 确认 PostgreSQL 与加密密钥备份。非交互调用默认拒绝。
+`/run/relayshelf/upgrade.lock` 会让第二个 updater 立即失败，而不是并行或长时间等待。
+稳定版之间会进行数值 SemVer downgrade 检查；复杂 prerelease 的迁移方向仍由候选
+镜像现有的 `migrate status` 权威检查保护。
+
+即使应用已运行目标版本，命令也会继续 reconciliation，因为 Quadlet、host helper、
+recovery service/timer 和 updater 本身都是同一 release 的组成部分。下载、checksum、
+archive 或 metadata 验证失败均发生在 bundle `upgrade.sh` 被调用之前，不会停止应用、
+运行 migration 或修改 systemd。临时 bundle 仅放在私有的
+`/tmp/relayshelf-upgrade.XXXXXX`，成功或失败都会清理。
+
+bundle 内的 `scripts/upgrade.sh --image <exact-image> --backup-confirmed` 仍是生产预检、
+migration、Quadlet、watchdog 和健康检查的唯一执行 authority。直接调用该脚本只作为
+故障排查/内部运维接口，不是日常生产升级入口。
 
 预检会检查 NFS 身份和能力、本地可用磁盘、精确的候选镜像及其元数据、
 完整配置、数据库可达性和迁移方向，以及明确的备份确认。只有所有检查
@@ -318,8 +347,21 @@ sudo podman exec --env RELAYSHELF_HEALTHCHECK_URL=http://127.0.0.1:8080/health/r
 ```
 
 该脚本要求 Git 工作树干净，会注入版本、Git 提交和构建时间，验证运行中
-二进制的输出，并将 `RELEASE-METADATA` 写入归档。只有镜像仓库、签名和
-保留策略获批后，发布流程才应推送该精确镜像。
+二进制的输出，并将含 `RELEASE_SCHEMA=1` 的 `RELEASE-METADATA` 写入归档。
+
+正式发布由 tag 驱动：
+
+```bash
+git tag v1.2.3
+git push origin v1.2.3
+```
+
+Release workflow 首先以 reusable `CI` workflow 对该 tag commit 执行完整质量门，
+再构建并验证 `ghcr.io/zephyrleex/relayshelf:1.2.3` 和 deployment bundle，生成标准
+`sha256sum` 文件。只有精确 GHCR image push 成功后，才以 draft GitHub Release
+上传 bundle 与 checksum；两个 asset 均可见后才发布 Release。发布 asset 失败会使
+workflow 失败，draft 不会成为正常可见的生产 Release。生产升级始终绑定明确 tag、
+明确 asset 与 immutable SemVer image，不读取 `main`、raw script 或 mutable image tag。
 
 ## 故障排查
 

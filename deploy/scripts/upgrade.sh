@@ -32,6 +32,42 @@ reject_placeholders /etc/relayshelf/relayshelf.env
 [ -f /etc/containers/systemd/relayshelf.network ] || die "installed RelayShelf network authority is missing"
 [ -f /etc/containers/systemd/relayshelf-postgres.container ] || die "installed PostgreSQL unit is missing"
 
+state_dir=${RELAYSHELF_STATE_DIR:-/run/relayshelf}
+install -d -m 0755 "$state_dir"
+exec 9>"$state_dir/operation.lock"
+flock -n 9 || die "Another RelayShelf host operation is already running"
+
+rendered=
+updater_tmp=
+restart_recovery_timer=no
+cleanup() {
+  [ -z "$rendered" ] || rm -f "$rendered"
+  [ -z "$updater_tmp" ] || rm -f "$updater_tmp"
+  if [ "$restart_recovery_timer" = yes ]; then
+    systemctl start relayshelf-storage-recovery.timer >/dev/null 2>&1 ||
+      echo "WARNING: could not restart relayshelf-storage-recovery.timer" >&2
+  fi
+}
+trap cleanup EXIT HUP INT TERM
+
+# Stop the timer before replacing an older helper that may still use its legacy
+# private lock. Never interrupt an active destructive recovery; fail and let the
+# operator retry after it has completed.
+if systemctl is-active --quiet relayshelf-storage-recovery.timer; then
+  restart_recovery_timer=yes
+  systemctl stop relayshelf-storage-recovery.timer
+fi
+if systemctl is-active --quiet relayshelf-storage-recovery.service; then
+  die "RelayShelf storage recovery is active; retry the upgrade after it completes"
+fi
+
+# Replace the stable entry point atomically so this running invocation keeps its
+# already-open script while future invocations use the candidate release copy.
+install -d -m 0755 /usr/local/bin
+updater_tmp=/usr/local/bin/.relayshelf-upgrade.$$
+install -m 0755 "$bundle_root/scripts/relayshelf-upgrade" "$updater_tmp"
+mv -f "$updater_tmp" /usr/local/bin/relayshelf-upgrade
+
 # Host recovery authority is independent from the candidate container image.
 # Upgrade it idempotently without changing transient state or its cooldown.
 install -d -m 0755 /usr/local/libexec /etc/systemd/system
@@ -62,6 +98,12 @@ echo "$version_output" | grep -Fq "RelayShelf ${image_tag#v} (" || die "candidat
 echo "$version_output" | grep -q 'commit unknown' && die "candidate image has unknown Git commit metadata"
 echo "$version_output" | grep -q 'built unknown' && die "candidate image has unknown build time metadata"
 echo "$version_output" | grep -q 'RelayShelf development ' && die "candidate image has development version metadata"
+if [ -n "${RELAYSHELF_EXPECTED_GIT_COMMIT:-}" ] || [ -n "${RELAYSHELF_EXPECTED_BUILD_TIME:-}" ]; then
+  [ -n "${RELAYSHELF_EXPECTED_GIT_COMMIT:-}" ] && [ -n "${RELAYSHELF_EXPECTED_BUILD_TIME:-}" ] ||
+    die "both expected release commit and build time must be supplied together"
+  echo "$version_output" | grep -Fq "(commit $RELAYSHELF_EXPECTED_GIT_COMMIT, built $RELAYSHELF_EXPECTED_BUILD_TIME)" ||
+    die "candidate image build metadata does not match the deployment bundle"
+fi
 
 echo "PREFLIGHT 4/7: complete candidate configuration"
 podman run --rm --env-file /etc/relayshelf/relayshelf.env "$image_ref" config check
@@ -76,7 +118,6 @@ echo "PREFLIGHT 7/7: backup acknowledgement recorded for this invocation"
 echo "All upgrade preflight checks passed."
 
 rendered=$(mktemp)
-trap 'rm -f "$rendered"' EXIT HUP INT TERM
 listen_address=$(sed -n 's/^PublishPort=\([^:]*\):8080:8080$/\1/p' /etc/containers/systemd/relayshelf-app.container)
 [ -n "$listen_address" ] || die "installed app unit does not contain the expected LAN port binding"
 "$script_dir/render-quadlet.sh" "$image_ref" "$listen_address" "$rendered"
@@ -171,5 +212,6 @@ curl --fail --silent --show-error --max-time 10 "http://$listen_address:8080/hea
 postgres_ports=$(podman port relayshelf-postgres)
 [ -z "$postgres_ports" ] || die "PostgreSQL unexpectedly publishes a host port: $postgres_ports"
 systemctl enable --now relayshelf-storage-recovery.timer
+restart_recovery_timer=no
 
 echo "RelayShelf upgrade complete: $image_ref"

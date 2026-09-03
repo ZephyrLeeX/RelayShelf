@@ -14,6 +14,7 @@ expect_failure() {
 
 "$bundle_root/scripts/verify.sh"
 "$test_dir/storage-recovery-tests.sh"
+"$test_dir/relayshelf-upgrade-tests.sh"
 
 expect_failure sh -c '. "$1"; validate_image_ref relayshelf:1.2.3' sh "$bundle_root/scripts/common.sh"
 expect_failure sh -c '. "$1"; validate_image_ref docker.io/example/relayshelf:latest' sh "$bundle_root/scripts/common.sh"
@@ -75,6 +76,13 @@ for deployment_script in "$install_script" "$upgrade"; do
   grep -Fq 'relayshelf-storage-recovery.service' "$deployment_script" || fail "$deployment_script does not install the recovery service"
   grep -Fq 'systemctl enable --now relayshelf-storage-recovery.timer' "$deployment_script" || fail "$deployment_script does not enable the recovery timer"
 done
+grep -Fq '/usr/local/bin/relayshelf-upgrade' "$install_script" || fail "fresh install does not install relayshelf-upgrade"
+grep -Fq 'install -m 0755 "$bundle_root/scripts/relayshelf-upgrade"' "$install_script" || fail "fresh install does not set updater mode 0755"
+grep -Fq 'mv -f "$updater_tmp" /usr/local/bin/relayshelf-upgrade' "$upgrade" || fail "upgrade does not atomically self-update the updater"
+grep -Fq 'operation.lock' "$upgrade" || fail "upgrade does not take the shared host operation lock"
+grep -Fq 'systemctl stop relayshelf-storage-recovery.timer' "$upgrade" || fail "upgrade does not quiesce a legacy recovery timer"
+grep -Fq 'systemctl is-active --quiet relayshelf-storage-recovery.service' "$upgrade" || fail "upgrade does not reject an active recovery operation"
+grep -Fq 'could not restart relayshelf-storage-recovery.timer' "$upgrade" || fail "upgrade failure cannot restore the recovery timer"
 grep -Fq '"$script_dir/render-quadlet.sh" "$image_ref" "$listen_address" "$rendered"' "$upgrade" ||
   fail "upgrade does not render the candidate unit from the deployment authority"
 grep -Fq 'install -m 0644 "$bundle_root/quadlet/relayshelf.network" /etc/containers/systemd/relayshelf.network' "$upgrade" ||
@@ -98,5 +106,33 @@ grep -Fq 'restore_old_network' "$upgrade" || fail "pre-migration network failure
 grep -Fq 'http://$listen_address:8080/health/live' "$upgrade" || fail "upgrade does not test the published endpoint"
 grep -Fq 'http://$listen_address:8080/health/ready' "$upgrade" || fail "upgrade does not test published readiness"
 grep -Fq 'podman port relayshelf-postgres' "$upgrade" || fail "upgrade does not check PostgreSQL host exposure"
+grep -Fq 'candidate image build metadata does not match the deployment bundle' "$upgrade" || fail "upgrade does not bind image metadata to the release bundle"
+
+# Release publication must be gated by the same CI, push the immutable image
+# first, then publish both checksum-protected deployment assets.
+release_workflow=$bundle_root/../.github/workflows/release.yml
+ci_workflow=$bundle_root/../.github/workflows/ci.yml
+grep -Fq 'workflow_call:' "$ci_workflow" || fail "CI is not reusable as the release quality gate"
+grep -Fq -- "- 'v*.*.*'" "$release_workflow" || fail "release tag pattern is missing"
+grep -Fq 'contents: write' "$release_workflow" || fail "release workflow cannot publish GitHub Releases"
+grep -Fq 'packages: write' "$release_workflow" || fail "release workflow cannot push GHCR"
+grep -Fq 'uses: ./.github/workflows/ci.yml' "$release_workflow" || fail "release does not run the CI quality gate"
+grep -Fq 'ghcr.io/zephyrleex/relayshelf:${VERSION}' "$release_workflow" || fail "release image is not the immutable project GHCR tag"
+grep -Fq 'sha256sum "${{ steps.version.outputs.bundle }}"' "$release_workflow" || fail "release checksum is not generated"
+grep -Fq 'gh release create' "$release_workflow" || fail "GitHub Release publication is missing"
+push_line=$(grep -n 'podman push' "$release_workflow" | cut -d: -f1)
+publish_line=$(grep -n 'gh release create' "$release_workflow" | cut -d: -f1)
+[ "$push_line" -lt "$publish_line" ] || fail "GitHub Release can be published before the image push"
+
+for bundled_path in \
+  scripts/relayshelf-upgrade \
+  scripts/upgrade.sh \
+  libexec/relayshelf-storage-recover \
+  systemd/relayshelf-storage-recovery.service \
+  systemd/relayshelf-storage-recovery.timer \
+  quadlet/relayshelf-app.container.in; do
+  [ -e "$bundle_root/$bundled_path" ] || fail "release bundle source is missing $bundled_path"
+done
+grep -Fq 'RELEASE_SCHEMA=1' "$bundle_root/scripts/build-release.sh" || fail "release metadata schema is missing"
 
 echo "RelayShelf deployment failure-policy tests: PASS"

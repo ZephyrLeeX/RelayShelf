@@ -13,6 +13,12 @@ require_root() {
   [ "$(id -u)" -eq 0 ] || die "this command must run as root"
 }
 
+validate_release_version() {
+  release_version=$1
+  printf '%s\n' "$release_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$' ||
+    die "RelayShelf release version must be SemVer without a leading v: $release_version"
+}
+
 validate_image_ref() {
   image_ref=$1
   case "$image_ref" in

@@ -10,9 +10,10 @@ repo_root=$(CDPATH= cd -- "$bundle_root/.." && pwd)
 version=$1
 image_ref=$2
 output=$3
+validate_release_version "$version"
 validate_image_ref "$image_ref"
 image_tag=${image_ref##*:}
-[ "${image_tag#v}" = "${version#v}" ] || die "version $version and image tag $image_tag must match"
+[ "$image_tag" = "$version" ] || die "version $version and image tag $image_tag must match"
 
 require_command podman
 require_command git
@@ -34,6 +35,7 @@ stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT HUP INT TERM
 cp -R "$bundle_root" "$stage/relayshelf-deploy-${version#v}"
 cat >"$stage/relayshelf-deploy-${version#v}/RELEASE-METADATA" <<EOF
+RELEASE_SCHEMA=1
 VERSION=${version#v}
 GIT_COMMIT=$git_commit
 BUILD_TIME=$build_time
@@ -41,4 +43,3 @@ IMAGE=$image_ref
 EOF
 tar -C "$stage" -czf "$output" "relayshelf-deploy-${version#v}"
 echo "Release bundle created: $output"
-

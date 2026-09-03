@@ -1,0 +1,209 @@
+#!/bin/sh
+set -eu
+export LC_ALL=C
+
+RELEASE_BASE_URL=https://github.com/ZephyrLeeX/RelayShelf/releases/download
+IMAGE_REPOSITORY=ghcr.io/zephyrleex/relayshelf
+RELEASE_SCHEMA=1
+
+die() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+usage() {
+  cat <<'EOF'
+Usage:
+  relayshelf-upgrade VERSION
+
+Example:
+  sudo relayshelf-upgrade 1.2.3
+EOF
+}
+
+[ "$#" -eq 1 ] || { usage >&2; exit 2; }
+case "$1" in
+  -h|--help) usage; exit 0 ;;
+  v*) die "pass the release version without a leading v (for example: 1.2.3)" ;;
+esac
+version=$1
+printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$' ||
+  die "RelayShelf release version must be SemVer without a leading v: $version"
+
+ID_BIN=${RELAYSHELF_ID_BIN:-id}
+CURL_BIN=${RELAYSHELF_CURL_BIN:-curl}
+TAR_BIN=${RELAYSHELF_TAR_BIN:-tar}
+SHA256SUM_BIN=${RELAYSHELF_SHA256SUM_BIN:-sha256sum}
+MKTEMP_BIN=${RELAYSHELF_MKTEMP_BIN:-mktemp}
+INSTALL_BIN=${RELAYSHELF_INSTALL_BIN:-install}
+FLOCK_BIN=${RELAYSHELF_FLOCK_BIN:-flock}
+PODMAN_BIN=${RELAYSHELF_PODMAN_BIN:-podman}
+SYSTEMCTL_BIN=${RELAYSHELF_SYSTEMCTL_BIN:-systemctl}
+STATE_DIR=${RELAYSHELF_STATE_DIR:-/run/relayshelf}
+TEMP_PARENT=${RELAYSHELF_UPGRADE_TMPDIR:-/tmp}
+
+[ "$($ID_BIN -u)" -eq 0 ] || die "relayshelf-upgrade must be run as root"
+for command_path in "$CURL_BIN" "$TAR_BIN" "$SHA256SUM_BIN" "$MKTEMP_BIN" "$INSTALL_BIN" "$FLOCK_BIN" "$PODMAN_BIN" "$SYSTEMCTL_BIN" awk find grep mkdir rm sed; do
+  command -v "$command_path" >/dev/null 2>&1 || die "required command not found: $command_path"
+done
+
+"$INSTALL_BIN" -d -m 0755 "$STATE_DIR"
+exec 8>"$STATE_DIR/upgrade.lock"
+"$FLOCK_BIN" -n 8 || die "Another RelayShelf upgrade is already running"
+
+work_dir=
+cleanup() {
+  [ -z "$work_dir" ] && return
+  case "${work_dir##*/}" in
+    relayshelf-upgrade.*) rm -rf -- "$work_dir" ;;
+    *) echo "ERROR: refusing to clean unexpected temporary path: $work_dir" >&2 ;;
+  esac
+}
+trap cleanup EXIT HUP INT TERM
+work_dir=$("$MKTEMP_BIN" -d "$TEMP_PARENT/relayshelf-upgrade.XXXXXX")
+bundle_name=relayshelf-deploy-$version.tar.gz
+checksum_name=$bundle_name.sha256
+bundle_path=$work_dir/$bundle_name
+checksum_path=$work_dir/$checksum_name
+extract_dir=$work_dir/extracted
+expected_root=relayshelf-deploy-$version
+image_ref=$IMAGE_REPOSITORY:$version
+asset_base=$RELEASE_BASE_URL/v$version
+
+echo "RelayShelf upgrade"
+current_output=$($PODMAN_BIN exec relayshelf-app /relayshelf version 2>&1 || true)
+current_version=$(printf '%s\n' "$current_output" | sed -n 's/^RelayShelf \([^ ][^ ]*\) (.*/\1/p' | sed -n '1p')
+if [ -n "$current_version" ]; then
+  echo "Current version: $current_version"
+else
+  echo "Current version: unavailable (continuing)"
+fi
+echo "Target version: $version"
+echo
+
+echo "[1/5] Downloading deployment bundle"
+curl_download() {
+  "$CURL_BIN" --fail --location --show-error --silent \
+    --retry 3 --retry-delay 1 --retry-connrefused \
+    --connect-timeout 15 --max-time 300 \
+    --output "$2" "$1"
+}
+curl_download "$asset_base/$bundle_name" "$bundle_path" ||
+  die "could not download RelayShelf deployment bundle for v$version"
+curl_download "$asset_base/$checksum_name" "$checksum_path" ||
+  die "could not download RelayShelf deployment bundle checksum for v$version"
+
+echo "[2/5] Verifying SHA256"
+checksum_lines=$(awk 'END { print NR }' "$checksum_path")
+[ "$checksum_lines" -eq 1 ] || die "RelayShelf deployment bundle checksum is malformed"
+expected_checksum=$(awk -v file="$bundle_name" '
+  length($0) == 66 + length(file) &&
+  substr($0, 1, 64) ~ /^[0-9A-Fa-f]+$/ &&
+  substr($0, 65, 2) == "  " &&
+  substr($0, 67) == file { print tolower(substr($0, 1, 64)); ok=1 }
+  END { if (!ok) exit 1 }
+' "$checksum_path") || die "RelayShelf deployment bundle checksum is malformed"
+actual_checksum=$("$SHA256SUM_BIN" "$bundle_path" | awk '{print $1}')
+[ "$actual_checksum" = "$expected_checksum" ] ||
+  die "RelayShelf deployment bundle checksum verification failed"
+
+echo "[3/5] Verifying archive and release metadata"
+archive_list=$work_dir/archive.list
+"$TAR_BIN" --quoting-style=literal -tzf "$bundle_path" >"$archive_list" ||
+  die "RelayShelf deployment bundle archive is malformed"
+[ -s "$archive_list" ] || die "RelayShelf deployment bundle archive is empty"
+while IFS= read -r member; do
+  case "$member" in
+    /*) die "RelayShelf deployment bundle contains an absolute path: $member" ;;
+  esac
+  case "$member" in
+    "$expected_root"|"$expected_root/"|"$expected_root/"*) ;;
+    *) die "RelayShelf deployment bundle has an unexpected top-level path: $member" ;;
+  esac
+  case "/$member/" in
+    */../*|*/./*) die "RelayShelf deployment bundle contains an unsafe path: $member" ;;
+  esac
+done <"$archive_list"
+
+mkdir "$extract_dir"
+"$TAR_BIN" --no-same-owner --no-same-permissions -xzf "$bundle_path" -C "$extract_dir" ||
+  die "RelayShelf deployment bundle extraction failed"
+bundle_root=$extract_dir/$expected_root
+[ -d "$bundle_root" ] || die "RelayShelf deployment bundle root is missing"
+if find "$bundle_root" ! -type d ! -type f -print | grep -q .; then
+  die "RelayShelf deployment bundle contains unsupported links or special files"
+fi
+metadata=$bundle_root/RELEASE-METADATA
+[ -f "$metadata" ] || die "RelayShelf deployment bundle is missing RELEASE-METADATA"
+metadata_value() {
+  key=$1
+  count=$(grep -c "^$key=" "$metadata" || true)
+  [ "$count" -eq 1 ] || die "RELEASE-METADATA must contain exactly one $key field"
+  sed -n "s/^$key=//p" "$metadata"
+}
+metadata_schema=$(metadata_value RELEASE_SCHEMA)
+metadata_version=$(metadata_value VERSION)
+metadata_commit=$(metadata_value GIT_COMMIT)
+metadata_build_time=$(metadata_value BUILD_TIME)
+metadata_image=$(metadata_value IMAGE)
+[ "$metadata_schema" = "$RELEASE_SCHEMA" ] || die "unsupported RelayShelf release bundle schema: $metadata_schema"
+[ "$metadata_version" = "$version" ] || die "RELEASE-METADATA VERSION does not match requested version $version"
+[ "$metadata_image" = "$image_ref" ] || die "RELEASE-METADATA IMAGE does not match the pinned RelayShelf image $image_ref"
+printf '%s\n' "$metadata_commit" | grep -Eq '^[0-9A-Fa-f]{7,64}$' || die "RELEASE-METADATA GIT_COMMIT is malformed"
+[ "$metadata_commit" != unknown ] || die "RELEASE-METADATA GIT_COMMIT is malformed"
+printf '%s\n' "$metadata_build_time" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' ||
+  die "RELEASE-METADATA BUILD_TIME is malformed"
+upgrade_script=$bundle_root/scripts/upgrade.sh
+[ -f "$upgrade_script" ] && [ -x "$upgrade_script" ] || die "deployment bundle upgrade.sh is missing or not executable"
+
+is_stable_version() {
+  printf '%s\n' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+}
+version_less_than() {
+  awk -v left="$1" -v right="$2" 'BEGIN {
+    split(left, l, "."); split(right, r, ".")
+    for (i = 1; i <= 3; i++) {
+      if ((l[i] + 0) < (r[i] + 0)) exit 0
+      if ((l[i] + 0) > (r[i] + 0)) exit 1
+    }
+    exit 1
+  }'
+}
+if [ -n "$current_version" ] && is_stable_version "$current_version" && is_stable_version "$version" && version_less_than "$version" "$current_version"; then
+  die "Refusing to downgrade RelayShelf from $current_version to $version"
+fi
+if [ "$current_version" = "$version" ]; then
+  echo "Application is already $version; reconciling deployment components."
+fi
+
+[ -t 0 ] || die "backup confirmation requires an interactive terminal"
+cat <<EOF
+
+RelayShelf $version will be installed.
+
+Before continuing, confirm that:
+- PostgreSQL backup is current.
+- RelayShelf encryption keys are backed up.
+
+Type YES to continue:
+EOF
+IFS= read -r confirmation || die "backup confirmation was not provided"
+[ "$confirmation" = YES ] || die "upgrade cancelled; backup confirmation was not YES"
+
+echo "[4/5] Running production preflight and upgrade"
+RELAYSHELF_EXPECTED_GIT_COMMIT=$metadata_commit \
+RELAYSHELF_EXPECTED_BUILD_TIME=$metadata_build_time \
+  "$upgrade_script" --image "$image_ref" --backup-confirmed
+
+echo "[5/5] Verifying installed version"
+"$SYSTEMCTL_BIN" is-active --quiet relayshelf-app.service || die "RelayShelf application service is not active after upgrade"
+"$SYSTEMCTL_BIN" is-enabled --quiet relayshelf-storage-recovery.timer || die "RelayShelf storage recovery timer is not enabled after upgrade"
+"$SYSTEMCTL_BIN" is-active --quiet relayshelf-storage-recovery.timer || die "RelayShelf storage recovery timer is not active after upgrade"
+installed_output=$($PODMAN_BIN exec relayshelf-app /relayshelf version 2>&1) || die "could not read the installed RelayShelf version"
+printf '%s\n' "$installed_output" | grep -Fq "RelayShelf $version (" ||
+  die "installed RelayShelf version does not match requested version $version"
+printf '%s\n' "$installed_output" | grep -Fq "(commit $metadata_commit, built $metadata_build_time)" ||
+  die "installed RelayShelf build metadata does not match the deployment bundle"
+
+echo
+echo "RelayShelf upgrade completed successfully: $version"

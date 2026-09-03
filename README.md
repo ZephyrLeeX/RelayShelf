@@ -41,6 +41,12 @@ RelayShelf 不是聊天软件、传统目录式网盘或多端文件同步盘。
 PostgreSQL 5432。详细约束参见[架构文档](docs/ARCHITECTURE.md)和
 [中文生产部署指南](deploy/README.md)。
 
+生产安装完成后的标准升级入口不依赖源码仓库：
+
+```bash
+sudo relayshelf-upgrade 1.2.3
+```
+
 ## 环境要求
 
 项目工具版本由 `mise.toml` 固定：

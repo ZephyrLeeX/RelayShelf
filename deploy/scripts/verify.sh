@@ -5,6 +5,13 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 bundle_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 . "$script_dir/common.sh"
 
+installed_check=no
+case "${1:-}" in
+  '') ;;
+  --installed) installed_check=yes ;;
+  *) die "usage: $0 [--installed]" ;;
+esac
+
 minimum_quadlet_version=5.2.0
 
 version_at_least() {
@@ -18,9 +25,11 @@ version_at_least() {
   }'
 }
 
-for script in "$script_dir"/*.sh "$bundle_root/tests"/*.sh "$bundle_root/libexec/relayshelf-host-storage-check" "$bundle_root/libexec/relayshelf-storage-common" "$bundle_root/libexec/relayshelf-storage-recover"; do
+for script in "$script_dir"/*.sh "$script_dir/relayshelf-upgrade" "$bundle_root/tests"/*.sh "$bundle_root/libexec/relayshelf-host-storage-check" "$bundle_root/libexec/relayshelf-storage-common" "$bundle_root/libexec/relayshelf-storage-recover"; do
   sh -n "$script"
 done
+
+[ -x "$script_dir/relayshelf-upgrade" ] || die "bundled relayshelf-upgrade is not executable"
 
 postgres_unit=$bundle_root/quadlet/relayshelf-postgres.container
 app_template=$bundle_root/quadlet/relayshelf-app.container.in
@@ -107,5 +116,14 @@ grep -Fq 'podman network create --ignore --driver bridge relayshelf' "$generated
 publish_count=$(grep -o -- '--publish ' "$generated" | wc -l | tr -d ' ')
 [ "$publish_count" -eq 1 ] || die "generated units must contain exactly one published port (found $publish_count)"
 echo "Quadlet generator verification: PASS"
+
+if [ "$installed_check" = yes ]; then
+  [ -x /usr/local/bin/relayshelf-upgrade ] || die "/usr/local/bin/relayshelf-upgrade is not executable"
+  [ -x /usr/local/libexec/relayshelf-host-storage-check ] || die "installed recovery check helper is not executable"
+  [ -x /usr/local/libexec/relayshelf-storage-recover ] || die "installed recovery helper is not executable"
+  [ -f /etc/systemd/system/relayshelf-storage-recovery.timer ] || die "installed recovery timer is missing"
+  systemctl is-enabled --quiet relayshelf-storage-recovery.timer || die "installed recovery timer is not enabled"
+  echo "RelayShelf installed deployment verification: PASS"
+fi
 
 echo "RelayShelf deployment policy verification: PASS"

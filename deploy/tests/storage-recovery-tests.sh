@@ -79,6 +79,7 @@ echo "podman \$*" >>'$dir/calls'
 EOF
   cat >"$dir/bin/flock" <<EOF
 #!/bin/sh
+echo "flock \$*" >>'$dir/calls'
 [ '$case_name' != lock-busy ]
 EOF
   chmod +x "$dir/bin/"*
@@ -133,7 +134,9 @@ assert_has "$root/storage-fail/calls" 'systemctl stop relayshelf-app.service'
 run_case lock-busy
 [ "$status" -eq 0 ] || fail "lock-busy returned $status"
 assert_has "$root/lock-busy/output" 'event=lock_busy'
+assert_has "$root/lock-busy/output" 'detail=another_host_operation'
 assert_lacks "$root/lock-busy/calls" 'systemctl stop'
+[ -f "$root/lock-busy/state/operation.lock" ] || fail "recovery did not use the shared host operation lock"
 
 make_mocks cooldown
 echo 900 >"$root/cooldown/state/storage-recovery.last"

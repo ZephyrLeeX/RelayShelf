@@ -36,11 +36,11 @@ fail() { log_event recovery_failed "reason=$1" >&2; exit 1; }
 
 [ "$($ID_BIN -u)" -eq 0 ] || fail requires_root
 "$INSTALL_BIN" -d -m 0755 "$STATE_DIR"
-lock_file=$STATE_DIR/storage-recovery.lock
+lock_file=$STATE_DIR/operation.lock
 cooldown_file=$STATE_DIR/storage-recovery.last
 exec 9>"$lock_file"
 if ! "$FLOCK_BIN" -n 9; then
-  log_event lock_busy
+  log_event lock_busy detail=another_host_operation
   exit 0
 fi
 

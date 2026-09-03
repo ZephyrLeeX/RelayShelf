@@ -7,11 +7,17 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
+  quality-gate:
+    uses: ./.github/workflows/ci.yml
+
   release:
+    needs: quality-gate
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: write
 
     steps:
       - name: Checkout repository
@@ -35,10 +41,12 @@ jobs:
           VERSION="${TAG#v}"
           IMAGE="ghcr.io/zephyrleex/relayshelf:${VERSION}"
           BUNDLE="relayshelf-deploy-${VERSION}.tar.gz"
+          CHECKSUM="${BUNDLE}.sha256"
 
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
           echo "bundle=${BUNDLE}" >> "$GITHUB_OUTPUT"
+          echo "checksum=${CHECKSUM}" >> "$GITHUB_OUTPUT"
 
       - name: Install Podman
         run: |
@@ -58,6 +66,9 @@ jobs:
             ./deploy/scripts/verify-image.sh \
             "${{ steps.version.outputs.image }}"
 
+      - name: Generate deployment bundle checksum
+        run: sha256sum "${{ steps.version.outputs.bundle }}" > "${{ steps.version.outputs.checksum }}"
+
       - name: Login to GHCR
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" |
@@ -69,9 +80,24 @@ jobs:
         run: |
           podman push "${{ steps.version.outputs.image }}"
 
-      - name: Upload deployment bundle
-        uses: actions/upload-artifact@v7
-        with:
-          name: relayshelf-deploy-${{ steps.version.outputs.version }}
-          path: ${{ steps.version.outputs.bundle }}
-          if-no-files-found: error
+      - name: Publish immutable GitHub Release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          bundle="${{ steps.version.outputs.bundle }}"
+          checksum="${{ steps.version.outputs.checksum }}"
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --draft=true
+            gh release upload "$tag" "$bundle" "$checksum" --clobber
+          else
+            gh release create "$tag" "$bundle" "$checksum" \
+              --draft --verify-tag --title "RelayShelf ${{ steps.version.outputs.version }}" --generate-notes
+          fi
+
+          asset_names=$(gh release view "$tag" --json assets --jq '.assets[].name')
+          grep -Fxq "$bundle" <<<"$asset_names"
+          grep -Fxq "$checksum" <<<"$asset_names"
+          gh release edit "$tag" --draft=false
