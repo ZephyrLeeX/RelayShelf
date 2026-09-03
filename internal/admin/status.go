@@ -94,8 +94,16 @@ func (s *StatusService) Storage(ctx context.Context) StorageStatus {
 		err   error
 	}
 	nasDone, stagingDone := make(chan nasResult, 1), make(chan stagingResult, 1)
-	if s.monitor != nil && !s.monitor.Healthy() {
-		nasDone <- nasResult{err: monitorHealthError{s.monitor.Reason()}}
+	if s.monitor != nil {
+		snapshot := s.monitor.Snapshot()
+		if !snapshot.Healthy {
+			nasDone <- nasResult{err: monitorHealthError{snapshot.Reason}}
+		} else {
+			go func() {
+				value, err := boundedProbe(ctx, s.probeTimeout, s.nasGate, func() (storage.Space, error) { return s.storage.Space(context.Background()) })
+				nasDone <- nasResult{value, err}
+			}()
+		}
 	} else {
 		go func() {
 			value, err := boundedProbe(ctx, s.probeTimeout, s.nasGate, func() (storage.Space, error) { return s.storage.Space(context.Background()) })

@@ -1,5 +1,4 @@
 import { ApiError } from '@/api/generated'
-import { notifyStorageUnavailable } from '@/features/storage/runtime'
 
 export const apiCodes = {
   authRequired: 'AUTH_REQUIRED',
@@ -35,7 +34,6 @@ export function toApiError(error: unknown): AppApiError {
       message: typeof value.message === 'string' ? value.message : '',
       traceId: typeof value.traceId === 'string' ? value.traceId : undefined,
     }
-    if (adapted.code === apiCodes.storageUnavailable) notifyStorageUnavailable()
     return adapted
   }
   if (error instanceof ApiError) {
@@ -46,7 +44,6 @@ export function toApiError(error: unknown): AppApiError {
       message: typeof body.message === 'string' ? body.message : error.statusText,
       traceId: typeof body.traceId === 'string' ? body.traceId : undefined,
     }
-    if (adapted.code === apiCodes.storageUnavailable) notifyStorageUnavailable()
     return adapted
   }
   return { status: 0, code: 'NETWORK_ERROR', message: '无法连接服务器，请检查网络后重试。' }

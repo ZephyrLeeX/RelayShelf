@@ -22,6 +22,7 @@ const {
   detail, mutation, tags, message, revealPending, editing, editBody, editContentType, selectedTags,
   error, forwardRecipient, forwardOpen, notice, attachmentInput, detailUploads, detailUploadsReady,
   restorableUploads, attachmentMutationPending, viewerId, currentSensitiveBody,
+  storageAvailable,
   clearRevealedBody, reveal, copy, run, forward, startEdit, saveBody, removeForever,
   openViewer, closeViewer, selectViewer, chooseDetailFiles, addAttachments, addRestored, removeAttachment,
 } = useMessageDetailController(() => props.id)
@@ -234,6 +235,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
             type="button"
             aria-label="添加附件"
             title="添加附件"
+            :disabled="!storageAvailable"
             @click="attachmentInput?.click()"
           >
             <Paperclip aria-hidden="true" />
@@ -243,6 +245,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
             class="sr-only"
             type="file"
             multiple
+            :disabled="!storageAvailable"
             @change="chooseDetailFiles"
           >
         </div>
@@ -282,7 +285,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
           </button>
         </div>
         <details
-          v-if="!message.trashedAt && restorableUploads.length"
+          v-if="!message.trashedAt && storageAvailable && restorableUploads.length"
           class="restored compact-popover"
         >
           <summary>已完成的上传 ({{ restorableUploads.length }})</summary>

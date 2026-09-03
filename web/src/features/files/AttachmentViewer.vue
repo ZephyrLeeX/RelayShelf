@@ -11,15 +11,38 @@ const props = defineProps<{ files: AttachmentSummary[]; currentId: string }>()
 const emit = defineEmits<{ close: []; select: [id: string] }>()
 const zoom = ref(1)
 const fileError = ref('')
+const previewReady = ref(false)
 const viewer = ref<HTMLElement>()
 let returnFocusTo: HTMLElement | null = null
+let previewController: AbortController | undefined
 const current = computed(() => props.files.find((file) => file.id === props.currentId))
 const images = computed(() => props.files.filter((file) => safeRasterMIMEs.has(file.detectedMime)))
 const imageIndex = computed(() => images.value.findIndex((file) => file.id === props.currentId))
-watch(() => props.currentId, () => { fileError.value = '' })
+watch(() => [props.currentId, current.value?.detectedMime] as const, async () => {
+  previewController?.abort()
+  previewController = new AbortController()
+  fileError.value = ''
+  previewReady.value = false
+  if (!current.value || !['image', 'pdf', 'audio', 'video'].includes(previewKind(current.value))) return
+  try {
+    const response = await fetch(previewURL(current.value.id), {
+      credentials: 'include', headers: { Range: 'bytes=0-0' }, signal: previewController.signal,
+    })
+    if (!response.ok && response.status !== 206) {
+      const error = await apiErrorFromResponse(response)
+      if (isStorageUnavailable(error)) { storageFailed(); return }
+      throw error
+    }
+    await response.body?.cancel()
+    previewReady.value = true
+  } catch (cause) {
+    if (cause instanceof DOMException && cause.name === 'AbortError') return
+    if (isStorageUnavailable(cause)) storageFailed()
+    else mediaFailed()
+  }
+}, { immediate: true })
 function mediaFailed() {
   fileError.value = '文件预览暂不可用，请稍后重试。'
-  notifyStorageUnavailable()
 }
 function storageFailed() {
   fileError.value = '存储服务当前不可用，请在服务恢复后重试。'
@@ -64,6 +87,7 @@ onMounted(async () => {
   viewer.value?.focus()
 })
 onUnmounted(() => {
+  previewController?.abort()
   document.removeEventListener('keydown', key)
   returnFocusTo?.focus()
 })
@@ -124,7 +148,7 @@ onUnmounted(() => {
           <strong>文件暂时无法读取</strong><p>{{ fileError }}</p>
         </section>
         <img
-          v-else-if="previewKind(current) === 'image'"
+          v-else-if="previewReady && previewKind(current) === 'image'"
           class="original"
           :src="previewURL(current.id)"
           :alt="current.originalFilename"
@@ -132,20 +156,20 @@ onUnmounted(() => {
           @error="mediaFailed"
         >
         <iframe
-          v-else-if="previewKind(current) === 'pdf'"
+          v-else-if="previewReady && previewKind(current) === 'pdf'"
           :src="previewURL(current.id)"
           title="PDF 预览"
           @error="mediaFailed"
         />
         <audio
-          v-else-if="previewKind(current) === 'audio'"
+          v-else-if="previewReady && previewKind(current) === 'audio'"
           controls
           preload="metadata"
           :src="previewURL(current.id)"
           @error="mediaFailed"
         />
         <video
-          v-else-if="previewKind(current) === 'video'"
+          v-else-if="previewReady && previewKind(current) === 'video'"
           controls
           preload="metadata"
           :src="previewURL(current.id)"

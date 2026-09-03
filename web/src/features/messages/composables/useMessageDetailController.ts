@@ -6,6 +6,7 @@ import { displayError } from '@/shared/api/errors'
 import { useTagsQuery } from '@/features/tags/queries'
 import { uploadManager } from '@/features/uploads/manager'
 import { visibleUploads } from '@/features/uploads/store'
+import { storageAvailable } from '@/features/storage/runtime'
 import { parseStoredContent, serializeContent, unwrapSingleFencedCode, type ContentTypeId } from '../content/contentFormat'
 import { invalidateMessageTruth, mutationErrorMessage, useMessageMutation } from '../mutations'
 import { useMessageDetail } from '../queries'
@@ -43,7 +44,7 @@ export function useMessageDetailController(messageId: MaybeRefOrGetter<string>) 
     return item ? [item] : []
   }))
   const completedDetailUploads = computed(() => detailUploads.value.flatMap((item) => item.status === 'COMPLETED' ? [item.serverUploadId] : []))
-  const detailUploadsReady = computed(() => detailUploads.value.length > 0 && detailUploads.value.every((item) => item.status === 'COMPLETED'))
+  const detailUploadsReady = computed(() => storageAvailable.value && detailUploads.value.length > 0 && detailUploads.value.every((item) => item.status === 'COMPLETED'))
   // The controller, not UploadManager, owns which completed uploads are
   // selected for this message.
   const restorableUploads = computed(() => visibleUploads.value.filter((item) => item.status === 'COMPLETED' && !detailUploadClients.value.includes(item.clientId)))
@@ -211,6 +212,10 @@ export function useMessageDetailController(messageId: MaybeRefOrGetter<string>) 
   }
 
   function addRestored(clientId: string) {
+    if (!storageAvailable.value) {
+      error.value = '存储服务暂时不可用，恢复后即可添加附件。'
+      return
+    }
     if (!detailUploadClients.value.includes(clientId)) detailUploadClients.value.push(clientId)
   }
 
@@ -231,7 +236,7 @@ export function useMessageDetailController(messageId: MaybeRefOrGetter<string>) 
     error, forwardRecipient, forwardOpen, notice, attachmentInput, detailUploads, detailUploadsReady,
     restorableUploads, attachmentMutationPending, viewerId, currentSensitiveBody,
     clearRevealedBody, reveal, copy, run, forward, startEdit, saveBody, removeForever,
-    openViewer, closeViewer, selectViewer, chooseDetailFiles, addAttachments, addRestored,
+    openViewer, closeViewer, selectViewer, chooseDetailFiles, addAttachments, addRestored, storageAvailable,
     removeAttachment,
   }
 }

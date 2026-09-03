@@ -1,7 +1,7 @@
 import { DefaultService, type UploadSession } from '@/api/generated'
 import { notifyAuthExpired } from '@/shared/api/authExpiry'
 import { getCsrfToken } from '@/shared/api/configure'
-import { storageAvailable } from '@/features/storage/runtime'
+import { refreshStorageRuntimeStatus, storageAvailable } from '@/features/storage/runtime'
 import { fingerprintFile } from './fingerprint'
 import { uploadError } from './errors'
 import { MAX_CHUNK_ATTEMPTS, retryDelay, waitForRetry } from './retry'
@@ -307,6 +307,7 @@ export class UploadManager {
       const session = await this.api.complete(item.serverUploadId)
       this.markCompleted(clientId, session)
     } catch (cause) {
+      if (uploadError(cause).code === 'UPLOAD_FINALIZE_RETRYABLE') void refreshStorageRuntimeStatus()
       try {
         item = this.getItem(clientId)
         if (!item?.serverUploadId) return

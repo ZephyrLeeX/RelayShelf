@@ -3,6 +3,7 @@ import { onBeforeUnmount, ref, watch } from 'vue'
 import type { AttachmentSummary } from '@/api/generated'
 import { downloadURL } from './preview'
 import { apiErrorFromResponse } from '@/shared/api/errors'
+import { notifyStorageUnavailable } from '@/features/storage/runtime'
 
 const props = defineProps<{ file: AttachmentSummary }>()
 const content = ref('')
@@ -21,7 +22,9 @@ watch(() => props.file.id, async () => {
     truncated.value = response.status === 206 || props.file.sizeBytes > bytes.byteLength
   } catch (cause) {
     if (!(cause instanceof DOMException && cause.name === 'AbortError')) {
-      error.value = cause && typeof cause === 'object' && 'code' in cause && cause.code === 'STORAGE_UNAVAILABLE'
+      const storageUnavailable = cause && typeof cause === 'object' && 'code' in cause && cause.code === 'STORAGE_UNAVAILABLE'
+      if (storageUnavailable) notifyStorageUnavailable()
+      error.value = storageUnavailable
         ? '文件暂时无法读取。存储服务当前不可用，请在恢复后重试。'
         : '文本预览暂不可用，请下载后查看。'
     }

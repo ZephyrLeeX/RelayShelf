@@ -8,6 +8,7 @@ import { uploadState } from './store'
 import { fingerprintFile } from './fingerprint'
 import type { ChunkRequest, ChunkTransport, UploadItem } from './types'
 import { setStorageRuntimeStatus } from '@/features/storage/runtime'
+import { queryClient } from '@/app/queryClient'
 
 // jsdom's Blob lacks arrayBuffer(); the production fingerprint stays intact
 // while tests substitute a deterministic content-sensitive stub via FileReader.
@@ -420,6 +421,21 @@ describe('UploadManager', () => {
     expect(asFailed(manager.items[0]).errorCode).toBe('UPLOAD_FINALIZE_RETRYABLE')
     expect(asFailed(manager.items[0]).retryable).toBe(true)
     expect(transport.requests).toHaveLength(1)
+  })
+
+  it('refreshes runtime storage status once when Complete reports finalize retryable', async () => {
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries').mockResolvedValue()
+    const transport = new ControlledTransport()
+    const onePart = { chunkSize: 9, partCount: 1, expectedSize: 9 }
+    const api = {
+      create: vi.fn().mockResolvedValue(session(onePart)),
+      get: vi.fn().mockResolvedValue(session({ ...onePart, status: UploadStatus.COMPLETING, completedParts: [0] })),
+      complete: vi.fn().mockRejectedValue({ status: 503, code: 'UPLOAD_FINALIZE_RETRYABLE', message: 'retry' }),
+    }
+    const manager = new UploadManager(api, transport)
+    await manager.addFiles([file9()]); await flush(); transport.resolvers[0](); await flush()
+    expect(invalidate).toHaveBeenCalledTimes(1)
+    expect(manager.items[0].status).toBe('FAILED')
   })
 
   it('treats a server FAILED session as terminal on resume: no parts, no Complete loop, an explicit re-upload action', async () => {

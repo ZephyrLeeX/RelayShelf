@@ -35,6 +35,18 @@ describe('admin operations', () => {
     wrapper.unmount()
   })
 
+  it('localizes a full NAS degradation reason', async () => {
+    vi.spyOn(DefaultService, 'getStorageStatus').mockResolvedValue({
+      ...operationalStatus.storage, state: HealthState.DEGRADED, degradedReasons: ['NAS_FULL'],
+    })
+    const wrapper = await render()
+    await wrapper.findAll('.admin-tabs button')[1].trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('NAS 空间已满')
+    expect(wrapper.text()).not.toContain('NAS_FULL')
+    wrapper.unmount()
+  })
+
   it('requires the exact username before permanent deletion', async () => {
     const remove = vi.spyOn(DefaultService, 'deleteAdminUser').mockResolvedValue(undefined)
     const wrapper = await render()

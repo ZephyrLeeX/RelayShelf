@@ -85,7 +85,7 @@ function filesChanged(event: Event) {
       </button>
 
       <details
-        v-if="composer.restorableUploads.value.length"
+        v-if="composer.storageAvailable.value && composer.restorableUploads.value.length"
         class="popover restored-menu"
       >
         <summary

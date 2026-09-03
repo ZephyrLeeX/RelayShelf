@@ -71,10 +71,12 @@ describe('MessageComposer', () => {
     vi.stubGlobal('crypto', { randomUUID: vi.fn().mockReturnValueOnce('key-a').mockReturnValueOnce('key-b') })
   })
   it('disables only attachments while degraded and still sends text', async () => {
+    uploadState.items.push(uploadItem('completed', 'COMPLETED', uploadSession({ id: 'upload-completed', status: UploadStatus.COMPLETED })))
     setStorageRuntimeStatus({ healthy: false, reason: StorageRuntimeStatus.reason.NAS_TIMEOUT, lastCheckedAt: null, changedAt: '2026-09-03T00:00:00Z' })
     const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
     const wrapper = mountComposer()
     expect(wrapper.get('button[aria-label="附件"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.restored-menu').exists()).toBe(false)
     await wrapper.get('textarea').setValue('text still works')
     await sendByKeyboard(wrapper)
     await flushPromises()

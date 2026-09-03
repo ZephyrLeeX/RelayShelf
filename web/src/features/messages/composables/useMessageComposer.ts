@@ -268,6 +268,10 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
   }
 
   function addRestored(clientId: string) {
+    if (!storageAvailable.value) {
+      error.value = '存储服务暂时不可用，恢复后即可添加附件。'
+      return
+    }
     if (!selectedUploadClients.value.includes(clientId)) selectedUploadClients.value.push(clientId)
   }
 

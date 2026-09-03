@@ -87,7 +87,7 @@ function thresholdLabel(value: string) {
 function userStatusLabel(value: string) { return value === 'ACTIVE' ? '正常' : '已禁用' }
 function degradedReasonLabel(value: string) {
   return ({
-    NAS_UNAVAILABLE: 'NAS 不可用', NAS_TIMEOUT: 'NAS 响应超时', LOGICAL_THRESHOLD_WARNING: '逻辑容量接近阈值',
+    NAS_UNAVAILABLE: 'NAS 不可用', NAS_TIMEOUT: 'NAS 响应超时', NAS_FULL: 'NAS 空间已满', LOGICAL_THRESHOLD_WARNING: '逻辑容量接近阈值',
     LOGICAL_THRESHOLD_EXCEEDED: '逻辑容量已超出阈值', STAGING_UNAVAILABLE: '暂存空间不可用', DATABASE_UNAVAILABLE: '数据库不可用',
   } as Record<string, string>)[value] ?? value
 }
