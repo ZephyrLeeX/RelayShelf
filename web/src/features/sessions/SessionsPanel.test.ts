@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import QRCode from 'qrcode'
 import { ApiError, DefaultService, TOTPEnrollmentPending } from '@/api/generated'
 import { useAuthStore } from '@/features/auth/store'
+import { toast } from '@/shared/ui/toast'
 import SessionsPanel from './SessionsPanel.vue'
 
 async function render() {
@@ -22,6 +23,7 @@ async function render() {
 
 describe('TOTP enrollment re-authentication', () => {
   beforeEach(() => {
+    toast.clear()
     vi.spyOn(QRCode, 'toCanvas').mockResolvedValue(undefined)
     vi.spyOn(DefaultService, 'getTotpStatus').mockResolvedValue({ enabled: false })
     vi.spyOn(DefaultService, 'listSessions').mockResolvedValue([])
@@ -38,6 +40,7 @@ describe('TOTP enrollment re-authentication', () => {
       algorithm: TOTPEnrollmentPending.algorithm.SHA1,
     })
     const wrapper = await render()
+    await wrapper.get('[aria-controls="totp-form"]').trigger('click')
     const passwordInputs = wrapper.findAll('input[type="password"]')
     const input = passwordInputs.at(-1)
     if (!input) throw new Error('TOTP enrollment password input missing')
@@ -50,7 +53,7 @@ describe('TOTP enrollment re-authentication', () => {
     await flushPromises()
     expect(start).toHaveBeenCalledWith({ currentPassword: 'TOTP_ENROLL_PASSWORD_SENTINEL' })
     expect((wrapper.vm as unknown as { enrollmentPassword: string }).enrollmentPassword).toBe('')
-    expect(wrapper.findAll('input[type="password"]')).toHaveLength(2)
+    expect(wrapper.findAll('input[type="password"]')).toHaveLength(0)
     expect(wrapper.get('[aria-label="TOTP enrollment 二维码"]').element).toBeInstanceOf(HTMLCanvasElement)
     expect(QRCode.toCanvas).toHaveBeenCalledWith(expect.any(HTMLCanvasElement), provisioningUri, expect.objectContaining({ errorCorrectionLevel: 'M' }))
     wrapper.unmount()
@@ -68,6 +71,7 @@ describe('TOTP enrollment re-authentication', () => {
       algorithm: TOTPEnrollmentPending.algorithm.SHA1,
     })
     const wrapper = await render()
+    await wrapper.get('[aria-controls="totp-form"]').trigger('click')
     const passwordInput = wrapper.findAll('input[type="password"]').at(-1)!
     await passwordInput.setValue('TOTP_ENROLL_PASSWORD_SENTINEL')
     await wrapper.findAll('button').find((item) => item.text().includes('开始启用'))!.trigger('click')
@@ -95,6 +99,7 @@ describe('TOTP enrollment re-authentication', () => {
       'Conflict',
     ))
     const wrapper = await render()
+    await wrapper.get('[aria-controls="totp-form"]').trigger('click')
     const passwordInput = wrapper.findAll('input[type="password"]').at(-1)
     if (!passwordInput) throw new Error('TOTP enrollment password input missing')
     await passwordInput.setValue('TOTP_ENROLL_PASSWORD_SENTINEL')
@@ -110,7 +115,47 @@ describe('TOTP enrollment re-authentication', () => {
     expect(state.totpCode).toBe('')
     expect(state.enrollmentPassword).toBe('')
     expect(wrapper.text()).toContain('两步验证设置已更新，请重新开始启用。')
-    expect(wrapper.findAll('input[type="password"]')).toHaveLength(3)
+    expect(wrapper.findAll('input[type="password"]')).toHaveLength(1)
+    expect(toast.items.value.at(-1)).toMatchObject({ type: 'error', message: '两步验证设置已更新，请重新开始启用。' })
+    wrapper.unmount()
+  })
+
+  it('keeps security forms collapsed until requested and preserves device, session, and password mutations', async () => {
+    vi.spyOn(DefaultService, 'listDevices').mockResolvedValue([
+      { id: 'device-1', name: 'Browser', userAgent: 'Desktop', firstSeenAt: '2026-08-29T00:00:00Z', lastSeenAt: '2026-08-29T00:00:00Z' },
+      { id: 'device-2', name: 'Phone', userAgent: 'Mobile', firstSeenAt: '2026-08-28T00:00:00Z', lastSeenAt: '2026-08-29T00:00:00Z' },
+    ])
+    vi.spyOn(DefaultService, 'listSessions').mockResolvedValue([
+      { id: 'session-1', deviceId: 'device-1', createdAt: '2026-08-29T00:00:00Z', lastSeenAt: '2026-08-29T00:00:00Z', expiresAt: '2026-08-30T00:00:00Z', absoluteExpiresAt: '2026-09-29T00:00:00Z', lastIp: '', current: true },
+      { id: 'session-2', deviceId: 'device-2', createdAt: '2026-08-28T00:00:00Z', lastSeenAt: '2026-08-29T00:00:00Z', expiresAt: '2026-08-30T00:00:00Z', absoluteExpiresAt: '2026-09-29T00:00:00Z', lastIp: '', current: false },
+    ])
+    const rename = vi.spyOn(DefaultService, 'renameDevice').mockResolvedValue({ id: 'device-1', name: 'Work laptop', userAgent: 'Desktop', firstSeenAt: '2026-08-29T00:00:00Z', lastSeenAt: '2026-08-29T00:00:00Z' })
+    const revoke = vi.spyOn(DefaultService, 'revokeSession').mockResolvedValue(undefined)
+    const changePassword = vi.spyOn(DefaultService, 'changePassword').mockResolvedValue(undefined)
+    const wrapper = await render()
+
+    expect(wrapper.find('#password-form').exists()).toBe(false)
+    expect(wrapper.find('#totp-form').exists()).toBe(false)
+    expect(wrapper.text()).toContain('当前会话')
+    await wrapper.findAll('button').find((item) => item.text().includes('重命名'))!.trigger('click')
+    await wrapper.get('input[maxlength="100"]').setValue('Work laptop')
+    await wrapper.get('.inline-form').trigger('submit')
+    await flushPromises()
+    expect(rename).toHaveBeenCalledWith('device-1', { name: 'Work laptop' })
+
+    await wrapper.findAll('button').find((item) => item.text() === '撤销')!.trigger('click')
+    await flushPromises()
+    expect(revoke).toHaveBeenCalledWith('session-2')
+
+    await wrapper.get('[aria-controls="password-form"]').trigger('click')
+    const passwordInputs = wrapper.findAll('#password-form input')
+    await passwordInputs[0]!.setValue('current-pass')
+    await passwordInputs[1]!.setValue('new-password-123')
+    await wrapper.get('#password-form').trigger('submit')
+    await flushPromises()
+    expect(changePassword).toHaveBeenCalledWith({ currentPassword: 'current-pass', newPassword: 'new-password-123' })
+    expect(wrapper.find('#password-form').exists()).toBe(false)
+    expect(toast.items.value.some((item) => item.type === 'success')).toBe(true)
     wrapper.unmount()
   })
 })

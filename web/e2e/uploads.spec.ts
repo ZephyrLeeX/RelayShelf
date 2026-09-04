@@ -153,6 +153,7 @@ test.describe('TOTP journey', () => {
     await page.getByRole('button', { name: alice.username, exact: true }).click()
     const drawer = page.getByRole('dialog', { name: '设备与会话' })
     await expect(drawer).toBeVisible()
+    await drawer.getByRole('button', { name: /两步验证/ }).click()
     await drawer.getByLabel('当前密码').last().fill(alice.password)
     await drawer.getByRole('button', { name: '开始启用' }).click()
 
@@ -164,7 +165,7 @@ test.describe('TOTP journey', () => {
 
     await drawer.getByLabel('验证码').fill(totpCode(secret))
     await drawer.getByRole('button', { name: '确认并启用' }).click()
-    await expect(drawer.getByText('已启用。输入当前验证码可关闭两步验证。')).toBeVisible()
+    await expect(drawer.getByText('已启用', { exact: true })).toBeVisible()
 
     // Logout, then password-only login is challenged. The confirming step is
     // already consumed by replay protection, so use the next time step.
@@ -187,10 +188,11 @@ test.describe('TOTP journey', () => {
     await page.getByRole('button', { name: alice.username, exact: true }).click()
     const cleanup = page.getByRole('dialog', { name: '设备与会话' })
     await expect(cleanup).toBeVisible()
+    await cleanup.getByRole('button', { name: /两步验证/ }).click()
     await waitForNextStep()
     await cleanup.getByLabel('验证码').fill(totpCode(secret))
     await cleanup.getByRole('button', { name: '关闭两步验证' }).click()
-    await expect(cleanup.getByRole('button', { name: '开始启用' })).toBeVisible()
+    await expect(cleanup.getByText('建议启用', { exact: true })).toBeVisible()
   })
 })
 
