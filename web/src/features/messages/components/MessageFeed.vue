@@ -15,8 +15,11 @@ const items = computed(() => {
   const seen = new Set<string>()
   return (query.data.value?.pages.flatMap((page) => page.items) ?? []).filter((item: MessageSummary) => !seen.has(item.id) && Boolean(seen.add(item.id)))
 })
-watch(() => query.isFetching.value && !query.isPending.value && !query.isFetchingNextPage.value, (syncing, wasSyncing) => {
-  if (syncing && !wasSyncing) toast.info('正在同步最新内容…', 1_600)
+const isRefreshing = computed(() => query.isFetching.value && !query.isPending.value && !query.isFetchingNextPage.value)
+watch(() => query.errorUpdateCount.value, (count, previousCount) => {
+  if (count > previousCount && query.isRefetchError.value && items.value.length) {
+    toast.error('同步失败，当前显示的是已有内容')
+  }
 })
 onMounted(() => {
   observer = new IntersectionObserver((entries) => {
@@ -34,7 +37,10 @@ onUnmounted(() => observer?.disconnect())
   >
     <div class="feed-toolbar">
       <strong>内容流</strong>
-      <span>当前分区的全部内容</span>
+      <span
+        role="status"
+        aria-live="polite"
+      >{{ isRefreshing ? '正在同步最新内容…' : '当前分区的全部内容' }}</span>
     </div>
     <div
       v-if="query.isPending.value"
