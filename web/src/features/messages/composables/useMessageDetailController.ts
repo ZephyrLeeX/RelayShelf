@@ -7,6 +7,8 @@ import { useTagsQuery } from '@/features/tags/queries'
 import { uploadManager } from '@/features/uploads/manager'
 import { visibleUploads } from '@/features/uploads/store'
 import { storageAvailable } from '@/features/storage/runtime'
+import { useClipboardFeedback } from '@/shared/composables/useClipboardFeedback'
+import { toast } from '@/shared/ui/toast'
 import { parseStoredContent, serializeContent, unwrapSingleFencedCode, type ContentTypeId } from '../content/contentFormat'
 import { invalidateMessageTruth, mutationErrorMessage, useMessageMutation } from '../mutations'
 import { useMessageDetail } from '../queries'
@@ -24,6 +26,7 @@ export function useMessageDetailController(messageId: MaybeRefOrGetter<string>) 
   const mutation = useMessageMutation()
   const tags = useTagsQuery()
   const queryClient = useQueryClient()
+  const { copied, copyText } = useClipboardFeedback()
   const revealedBody = ref<RevealedBody | null>(null)
   const revealPending = ref(false)
   let revealRequest = 0
@@ -102,7 +105,10 @@ export function useMessageDetailController(messageId: MaybeRefOrGetter<string>) 
         revealedBody.value = { messageId: requestedMessageId, version: response.version, body: response.body }
       }
     } catch (cause) {
-      if (request === revealRequest) error.value = displayError(cause)
+      if (request === revealRequest) {
+        error.value = displayError(cause)
+        toast.error(error.value)
+      }
     } finally {
       if (request === revealRequest) revealPending.value = false
     }
@@ -112,19 +118,23 @@ export function useMessageDetailController(messageId: MaybeRefOrGetter<string>) 
     if (!message.value) return
     if (message.value.sensitive && currentSensitiveBody.value === null) await reveal()
     if (message.value.sensitive) {
-      if (currentSensitiveBody.value !== null) await navigator.clipboard.writeText(currentSensitiveBody.value)
+      if (currentSensitiveBody.value !== null) await copyText(currentSensitiveBody.value)
       return
     }
     // A body that is exactly one fenced code block copies as bare code.
     const body = unwrapSingleFencedCode(message.value.body) ?? message.value.body
-    if (body !== null) await navigator.clipboard.writeText(body)
+    if (body !== null) await copyText(body)
+  }
+
+  function commandSuccess(type: Parameters<typeof mutation.mutate>[0]['type']) {
+    return ({ permanent: '已转为长期内容', extend: '有效期已延长', favorite: '收藏状态已更新', trash: '已移至回收站', restore: '内容已恢复', delete: '内容已永久删除', sensitive: '敏感状态已更新', edit: '正文已保存', editSensitive: '正文已保存', tags: '标签已更新', forward: '已转发' } as const)[type]
   }
 
   function run(command: Parameters<typeof mutation.mutate>[0], success?: () => void) {
     error.value = ''
     mutation.mutate(command, {
-      onSuccess: () => { clearRevealedBody(); success?.() },
-      onError: (cause) => { error.value = mutationErrorMessage(cause) },
+      onSuccess: () => { clearRevealedBody(); toast.success(commandSuccess(command.type)); success?.() },
+      onError: (cause) => { error.value = mutationErrorMessage(cause); toast.error(error.value) },
     })
   }
 
@@ -133,8 +143,8 @@ export function useMessageDetailController(messageId: MaybeRefOrGetter<string>) 
     error.value = ''
     notice.value = ''
     mutation.mutate({ type: 'forward', message: message.value, recipientUserId: forwardRecipient.value.id }, {
-      onSuccess: () => { notice.value = '已转发'; forwardRecipient.value = null; forwardOpen.value = false },
-      onError: (cause) => { error.value = mutationErrorMessage(cause) },
+      onSuccess: () => { notice.value = '已转发'; toast.success('已转发'); forwardRecipient.value = null; forwardOpen.value = false },
+      onError: (cause) => { error.value = mutationErrorMessage(cause); toast.error(error.value) },
     })
   }
 
@@ -157,6 +167,7 @@ export function useMessageDetailController(messageId: MaybeRefOrGetter<string>) 
     if (message.value.sensitive && currentSensitiveBody.value === null) {
       editing.value = false
       error.value = '内容版本已更新，请重新显示正文后再编辑。'
+      toast.warning(error.value)
       return
     }
     // Sensitive edits keep their existing format contract (body only);
@@ -203,8 +214,10 @@ export function useMessageDetailController(messageId: MaybeRefOrGetter<string>) 
       detailUploadClients.value = detailUploadClients.value.filter((clientId) => !consumedClients.includes(clientId))
       uploadManager.retireUploadIds(uploadIds)
       invalidateMessageTruth(currentMessageId, queryClient)
+      toast.success('附件已添加')
     } catch (cause) {
       error.value = mutationErrorMessage(cause)
+      toast.error(error.value)
       invalidateMessageTruth(currentMessageId, queryClient)
     } finally {
       attachmentMutationPending.value = false
@@ -214,6 +227,7 @@ export function useMessageDetailController(messageId: MaybeRefOrGetter<string>) 
   function addRestored(clientId: string) {
     if (!storageAvailable.value) {
       error.value = '存储服务暂时不可用，恢复后即可添加附件。'
+      toast.warning(error.value)
       return
     }
     if (!detailUploadClients.value.includes(clientId)) detailUploadClients.value.push(clientId)
@@ -225,14 +239,16 @@ export function useMessageDetailController(messageId: MaybeRefOrGetter<string>) 
     try {
       await DefaultService.removeMessageAttachment(message.value.id, id, { expectedVersion: message.value.version })
       invalidateMessageTruth(message.value.id, queryClient)
+      toast.success('附件已移除')
     } catch (cause) {
       error.value = mutationErrorMessage(cause)
+      toast.error(error.value)
       invalidateMessageTruth(message.value.id, queryClient)
     }
   }
 
   return {
-    detail, mutation, tags, message, revealPending, editing, editBody, editContentType, selectedTags,
+    detail, mutation, tags, message, revealPending, editing, editBody, editContentType, selectedTags, copied,
     error, forwardRecipient, forwardOpen, notice, attachmentInput, detailUploads, detailUploadsReady,
     restorableUploads, attachmentMutationPending, viewerId, currentSensitiveBody,
     clearRevealedBody, reveal, copy, run, forward, startEdit, saveBody, removeForever,

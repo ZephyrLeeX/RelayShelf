@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { Search, SlidersHorizontal } from '@lucide/vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Lifecycle } from '@/api/generated'
 import MessageFeed from '@/features/messages/components/MessageFeed.vue'
@@ -60,30 +61,45 @@ watch(() => route.query, () => {
       class="filters panel"
       @submit.prevent="submit"
     >
-      <label class="field main">搜索词<input
-        v-model="q"
-        placeholder="至少 2 个 Unicode 字符"
-      ></label>
-      <label class="field">区域<select v-model="lifecycle"><option value="">全部</option><option :value="Lifecycle.TEMPORARY">临时区</option><option :value="Lifecycle.PERMANENT">长期区</option></select></label>
-      <label class="field">时间<select v-model="time"><option value="all">全部</option><option value="24h">24 小时</option><option value="7d">7 天</option><option value="30d">30 天</option></select></label>
-      <label class="toggle"><input
-        v-model="favorite"
-        type="checkbox"
-      > 仅收藏</label>
+      <label class="main-search">
+        <span class="sr-only">搜索词</span>
+        <Search aria-hidden="true" />
+        <input
+          v-model="q"
+          placeholder="搜索内容、文件名或标签"
+          autocomplete="off"
+        >
+      </label>
+      <div class="filter-row">
+        <label class="field">区域<select v-model="lifecycle"><option value="">全部</option><option :value="Lifecycle.TEMPORARY">临时区</option><option :value="Lifecycle.PERMANENT">长期区</option></select></label>
+        <label class="field">时间<select v-model="time"><option value="all">全部</option><option value="24h">24 小时</option><option value="7d">7 天</option><option value="30d">30 天</option></select></label>
+        <label class="toggle"><input
+          v-model="favorite"
+          type="checkbox"
+        > 仅收藏</label>
+        <button
+          class="button primary submit"
+          type="submit"
+        >
+          搜索
+        </button>
+      </div>
       <details>
-        <summary>更多筛选</summary><label class="field">精确内容类型<input
-          v-model="type"
-          placeholder="例如 CODE"
-        ></label><fieldset>
-          <legend>标签</legend><label
-            v-for="tag in tags.data.value"
-            :key="tag.id"
-          ><input
-            v-model="selectedTags"
-            type="checkbox"
-            :value="tag.id"
-          > {{ tag.name }}</label>
-        </fieldset>
+        <summary><SlidersHorizontal aria-hidden="true" />更多筛选</summary><div class="advanced">
+          <label class="field">精确内容类型<input
+            v-model="type"
+            placeholder="例如 CODE"
+          ></label><fieldset>
+            <legend>标签</legend><label
+              v-for="tag in tags.data.value"
+              :key="tag.id"
+            ><input
+              v-model="selectedTags"
+              type="checkbox"
+              :value="tag.id"
+            > {{ tag.name }}</label>
+          </fieldset>
+        </div>
       </details>
       <p
         v-if="validation"
@@ -92,12 +108,6 @@ watch(() => route.query, () => {
       >
         {{ validation }}
       </p>
-      <button
-        class="button primary"
-        type="submit"
-      >
-        应用搜索
-      </button>
     </form>
     <MessageFeed
       :filters="filters"
@@ -108,6 +118,7 @@ watch(() => route.query, () => {
 </template>
 
 <style scoped>
-.search-page{display:grid;gap:1rem}h1,p{margin:.2rem 0}.filters{padding:1rem;display:grid;grid-template-columns:2fr 1fr 1fr;gap:.8rem;align-items:end}.toggle{align-self:center}.filters details,.filters .error{grid-column:1/-1}.filters details[open]{display:grid;grid-template-columns:1fr 2fr;gap:1rem}.filters summary{grid-column:1/-1;cursor:pointer}.filters fieldset{display:flex;gap:.7rem;flex-wrap:wrap;border:1px solid var(--border);border-radius:var(--radius-sm)}.filters .button{justify-self:end}
-@media(max-width:650px){.filters{grid-template-columns:1fr}.filters details[open]{grid-template-columns:1fr}.filters .button{justify-self:stretch}}
+.search-page{container-type:inline-size;display:grid;gap:1rem;min-width:0}h1,p{margin:.2rem 0}.filters{display:grid;gap:.85rem;min-width:0;padding:1rem}.main-search{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:.65rem;min-width:0;min-height:48px;padding:0 .9rem;border:1px solid var(--border-default);border-radius:12px;background:var(--surface-soft);color:var(--text-tertiary)}.main-search:focus-within{border-color:var(--accent-primary);box-shadow:0 0 0 3px var(--accent-primary-soft)}.main-search svg{width:1.05rem;height:1.05rem}.main-search input{min-width:0;width:100%;border:0;outline:0;background:transparent;color:var(--text-primary)}.main-search input::placeholder{color:var(--text-tertiary)}.filter-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto auto;align-items:end;gap:.75rem;min-width:0}.toggle{display:flex;align-items:center;gap:.35rem;min-height:42px;white-space:nowrap}.submit{min-width:82px}.filters details,.filters .error{min-width:0}.filters summary{display:inline-flex;align-items:center;gap:.4rem;cursor:pointer;color:var(--text-secondary);font-size:.8rem;font-weight:650}.filters summary svg{width:.9rem;height:.9rem}.advanced{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:1rem;margin-top:.8rem}.filters fieldset{display:flex;min-width:0;gap:.7rem;flex-wrap:wrap;border:1px solid var(--border-default);border-radius:var(--radius-sm)}.filters .error{margin:0;font-size:.78rem}
+@container(max-width:650px){.filters{padding:.8rem}.main-search{min-height:46px;padding-inline:.75rem}.filter-row{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.toggle{min-height:40px}.submit{width:100%}.advanced{grid-template-columns:minmax(0,1fr)}}
+@container(max-width:390px){.filter-row{grid-template-columns:minmax(0,1fr)}.toggle{min-height:auto}.submit{margin-top:.1rem}}
 </style>

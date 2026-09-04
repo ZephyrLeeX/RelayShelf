@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Archive, CalendarPlus, Copy, Forward, LockKeyhole, MoreHorizontal, Paperclip, Pencil, Star, Trash2, X } from '@lucide/vue'
+import { Archive, CalendarPlus, Check, Copy, Forward, LockKeyhole, MoreHorizontal, Paperclip, Pencil, Star, Trash2, X } from '@lucide/vue'
 import { defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
 import { BodyFormat } from '@/api/generated'
 import { formatBytes } from '@/shared/utils/bytes'
@@ -19,7 +19,7 @@ const tagEditing = ref(false)
 const extendOpen = ref(false)
 const moreOpen = ref(false)
 const {
-  detail, mutation, tags, message, revealPending, editing, editBody, editContentType, selectedTags,
+  detail, mutation, tags, message, revealPending, editing, editBody, editContentType, selectedTags, copied,
   error, forwardRecipient, forwardOpen, notice, attachmentInput, detailUploads, detailUploadsReady,
   restorableUploads, attachmentMutationPending, viewerId, currentSensitiveBody,
   storageAvailable,
@@ -356,10 +356,16 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
           <button
             class="button action-button"
             type="button"
-            title="复制正文"
+            :title="copied ? '已复制' : '复制正文'"
             @click="copy"
           >
-            <Copy aria-hidden="true" />复制
+            <Check
+              v-if="copied"
+              aria-hidden="true"
+            /><Copy
+              v-else
+              aria-hidden="true"
+            />{{ copied ? '已复制' : '复制' }}
           </button>
           <button
             class="button action-button"
@@ -470,7 +476,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
 </template>
 
 <style scoped>
-.message-inspector{display:grid;align-content:start;gap:0;min-height:100%;padding:1.15rem 1.2rem 5.25rem;color:var(--text-primary)}.detail-header{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;position:sticky;top:-1.15rem;z-index:5;margin:-1.15rem -1.2rem 0;padding:1.15rem 1.2rem .9rem;background:color-mix(in srgb,var(--surface-raised) 94%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--border-default)}h1,h2,p{margin:.2rem 0}h1{font-size:1.12rem}h2{font-size:.78rem}.detail-header p{font-size:.7rem}.icon-button{display:inline-grid;place-items:center;flex:0 0 auto;width:34px;height:34px;padding:0;border:0;border-radius:9px;background:transparent;color:var(--text-secondary)}.icon-button:hover{background:var(--surface-soft);color:var(--text-primary)}.icon-button svg,.action-button svg,.compact-action svg,.sensitive-title svg{width:1rem;height:1rem}
+.message-inspector{display:grid;align-content:start;gap:0;min-width:0;min-height:100%;padding:1.15rem 1.2rem 5.25rem;color:var(--text-primary)}.message-inspector>*{min-width:0}.detail-header{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;position:sticky;top:-1.15rem;z-index:5;min-width:0;margin:-1.15rem -1.2rem 0;padding:1.15rem 1.2rem .9rem;background:color-mix(in srgb,var(--surface-raised) 94%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--border-default)}h1,h2,p{margin:.2rem 0}h1{font-size:1.12rem}h2{font-size:.78rem}.detail-header p{font-size:.7rem;overflow-wrap:anywhere}.icon-button{display:inline-grid;place-items:center;flex:0 0 auto;width:34px;height:34px;padding:0;border:0;border-radius:9px;background:transparent;color:var(--text-secondary)}.icon-button:hover{background:var(--surface-soft);color:var(--text-primary)}.icon-button svg,.action-button svg,.compact-action svg,.sensitive-title svg{width:1rem;height:1rem}
 .body-section{padding:1.15rem 0 1.25rem}.body-section pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.65}.code{font-family:var(--font-mono);background:var(--surface-soft);padding:.9rem;border-radius:var(--radius)}.sensitive{display:grid;gap:.75rem;padding:1rem;box-shadow:none}.sensitive-title{display:inline-flex;align-items:center;gap:.4rem}.sensitive .button{justify-self:start}.edit{display:grid;gap:.7rem}.edit-toolbar{display:flex;align-items:center;gap:.55rem;flex-wrap:wrap}.edit-toolbar small{color:var(--text-tertiary);font-size:.72rem}.edit textarea{resize:vertical}.edit textarea.code{font-family:var(--font-mono);color:var(--content-code)}.edit>div{display:flex;gap:.45rem}
 .compact-section{position:relative;padding:.8rem 0;border-top:1px solid var(--border-default)}.section-heading{display:flex;align-items:center;justify-content:space-between;gap:.75rem;min-height:34px}.tags{display:flex;flex-wrap:wrap;gap:.35rem}.empty-inline{color:var(--text-tertiary);font-size:.75rem}.compact-popover{margin-top:.55rem;padding:.65rem;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--surface-soft)}.tag-editor{display:grid;gap:.55rem}.tag-picker{display:flex;flex-wrap:wrap;gap:.4rem}.tag-picker label{padding:.25rem .4rem;border-radius:.4rem;background:var(--surface-raised);font-size:.76rem}.tag-editor .button{justify-self:end}
 .files{display:grid}.files :deep(.attachment-list){margin-top:.45rem}.files :deep(.attachment){grid-template-columns:34px minmax(0,1fr);padding:.4rem;border:0;background:transparent}.files :deep(.attachment img),.files :deep(.attachment .file-icon){width:34px;height:32px}.files :deep(.remove){min-height:30px;padding:.25rem .4rem;font-size:.7rem}.add-files{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.35rem .6rem}.upload-row{grid-column:1;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.5rem;font-size:.76rem}.upload-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.upload-row small{color:var(--text-tertiary)}.add-files>.button{grid-column:2;grid-row:1/-1;align-self:center}.restored summary{cursor:pointer;font-size:.76rem;font-weight:650}.restored ul{list-style:none;margin:.55rem 0 0;padding:0;display:grid;gap:.35rem}.restored li{display:flex;align-items:center;justify-content:space-between;gap:.6rem;font-size:.74rem}.restored li span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

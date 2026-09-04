@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { MessageSummary } from '@/api/generated'
 import type { MessageFilters } from '@/shared/api/queryKeys'
 import InlineError from '@/shared/ui/InlineError.vue'
 import MessageCard from './MessageCard.vue'
 import { useMessageFeed } from '../queries'
+import { toast } from '@/shared/ui/toast'
 
 const props = withDefaults(defineProps<{ filters: MessageFilters; emptyText: string; enabled?: boolean }>(), { enabled: true })
 const query = useMessageFeed(() => props.filters, () => props.enabled)
@@ -13,6 +14,9 @@ let observer: IntersectionObserver | undefined
 const items = computed(() => {
   const seen = new Set<string>()
   return (query.data.value?.pages.flatMap((page) => page.items) ?? []).filter((item: MessageSummary) => !seen.has(item.id) && Boolean(seen.add(item.id)))
+})
+watch(() => query.isFetching.value && !query.isPending.value && !query.isFetchingNextPage.value, (syncing, wasSyncing) => {
+  if (syncing && !wasSyncing) toast.info('正在同步最新内容…', 1_600)
 })
 onMounted(() => {
   observer = new IntersectionObserver((entries) => {
@@ -32,12 +36,6 @@ onUnmounted(() => observer?.disconnect())
       <strong>内容流</strong>
       <span>当前分区的全部内容</span>
     </div>
-    <p
-      v-if="query.isFetching.value && !query.isPending.value"
-      class="refresh muted"
-    >
-      正在同步…
-    </p>
     <div
       v-if="query.isPending.value"
       class="loading"
@@ -87,5 +85,5 @@ onUnmounted(() => observer?.disconnect())
 </template>
 
 <style scoped>
-.feed { display:grid; gap:.65rem; }.feed-toolbar{display:flex;align-items:baseline;justify-content:space-between;gap:1rem;padding:.1rem .15rem .3rem;border-bottom:1px solid var(--border-default)}.feed-toolbar strong{font-size:.82rem}.feed-toolbar span{color:var(--text-tertiary);font-size:.7rem}.refresh { margin:0; text-align:right; font-size:.8rem; }.loading,.empty,.end { padding:1.5rem; text-align:center; }.empty { color:var(--muted); }.spinner { display:inline-block; width:1rem; height:1rem; margin-right:.5rem; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin .7s linear infinite; }.sentinel { height:1px; } @keyframes spin { to { transform:rotate(360deg); } } @media(prefers-reduced-motion:reduce){.spinner{animation:none}}
+.feed { display:grid;min-width:0;gap:.65rem; }.feed-toolbar{display:flex;align-items:baseline;justify-content:space-between;gap:1rem;padding:.1rem .15rem .3rem;border-bottom:1px solid var(--border-default)}.feed-toolbar strong{font-size:.82rem}.feed-toolbar span{color:var(--text-tertiary);font-size:.7rem;text-align:right}.loading,.empty,.end { padding:1.5rem; text-align:center; }.empty { color:var(--muted); }.spinner { display:inline-block; width:1rem; height:1rem; margin-right:.5rem; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin .7s linear infinite; }.sentinel { height:1px; } @keyframes spin { to { transform:rotate(360deg); } } @media(prefers-reduced-motion:reduce){.spinner{animation:none}}
 </style>

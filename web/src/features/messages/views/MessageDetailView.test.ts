@@ -9,6 +9,7 @@ import { uploadManager } from '@/features/uploads/manager'
 import { uploadState } from '@/features/uploads/store'
 import type { UploadItem } from '@/features/uploads/types'
 import MessageDetailView from './MessageDetailView.vue'
+import { toast } from '@/shared/ui/toast'
 
 async function mountDetail(getMessage: (id: string) => ReturnType<typeof messageFixture>, id = 'message-1', recipients: RecipientUser[] = []) {
   vi.spyOn(DefaultService, 'getMessage').mockImplementation((messageId) => Promise.resolve(getMessage(messageId)) as never)
@@ -129,6 +130,22 @@ describe('compact detail inspector', () => {
     expect(wrapper.get('button[aria-label="添加附件"]').attributes('title')).toBe('添加附件')
     expect(wrapper.get('button[aria-label="更多操作"]').attributes('title')).toBe('更多操作')
     wrapper.unmount()
+  })
+})
+
+describe('detail copy feedback', () => {
+  it('shows the same copied state as the feed quick-copy action', async () => {
+    const { wrapper } = await mountDetail(() => messageFixture({ body: 'copy me' }))
+    const copy = wrapper.get('button[title="复制正文"]')
+    await copy.trigger('click')
+    await flushPromises()
+
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('copy me')
+    expect(copy.text()).toBe('已复制')
+    expect(copy.attributes('title')).toBe('已复制')
+    expect(toast.items.value.at(-1)).toMatchObject({ type: 'success' })
+    wrapper.unmount()
+    toast.clear()
   })
 })
 

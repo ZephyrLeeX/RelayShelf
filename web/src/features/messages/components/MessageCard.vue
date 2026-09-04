@@ -10,6 +10,7 @@ import AttachmentGrid from './attachments/AttachmentGrid.vue'
 import LinkifiedText from './LinkifiedText.vue'
 import QuickCopyButton from './QuickCopyButton.vue'
 import SafeMarkdown from './SafeMarkdown.vue'
+import { toast } from '@/shared/ui/toast'
 
 const props = defineProps<{ message: MessageSummary; trash?: boolean }>()
 const { selectedMessageId, openDetail: openSelectedDetail } = useDetailSelection()
@@ -62,7 +63,10 @@ function onCardClick(event: MouseEvent) {
 }
 function run(command: Parameters<typeof mutation.mutate>[0]) {
   error.value = ''
-  mutation.mutate(command, { onError: (cause) => { error.value = mutationErrorMessage(cause) } })
+  mutation.mutate(command, {
+    onSuccess: () => toast.success('操作已完成'),
+    onError: (cause) => { error.value = mutationErrorMessage(cause); toast.error(error.value) },
+  })
 }
 function removeForever() {
   if (window.confirm('永久删除后无法恢复。确定继续吗？')) run({ type: 'delete', message: props.message })
@@ -228,7 +232,7 @@ function relativeExpiry(value?: string | null) {
 </template>
 
 <style scoped>
-.message-card{position:relative;display:grid;gap:.65rem;padding:.82rem .9rem;cursor:pointer;transition:border-color .15s ease,background .15s ease,box-shadow .15s ease}.message-card:hover{border-color:var(--border-strong);box-shadow:var(--shadow-md)}.message-card.selected{border-color:var(--accent-primary);background:color-mix(in srgb,var(--accent-primary-soft) 44%,var(--surface-raised));box-shadow:inset 3px 0 var(--accent-primary),var(--shadow-sm)}
+.message-card{position:relative;display:grid;min-width:0;gap:.65rem;padding:.82rem .9rem;cursor:pointer;transition:border-color .15s ease,background .15s ease,box-shadow .15s ease}.message-card>*{min-width:0}.message-card:hover{border-color:var(--border-strong);box-shadow:var(--shadow-md)}.message-card.selected{border-color:var(--accent-primary);background:color-mix(in srgb,var(--accent-primary-soft) 44%,var(--surface-raised));box-shadow:inset 3px 0 var(--accent-primary),var(--shadow-sm)}
 .card-header,.headline,.tags,.actions,.meta{display:flex;flex-wrap:wrap;align-items:center}.card-header{justify-content:space-between;gap:.6rem}.headline,.tags,.actions,.meta{gap:.38rem}.type-badge,.expiry-badge,.favorite-badge{display:inline-flex;align-items:center;gap:.25rem;min-height:22px;border-radius:999px;padding:.16rem .46rem;font-size:.65rem;font-weight:750;letter-spacing:.035em}.favorite-badge svg{width:.72rem;height:.72rem}.type-badge{background:var(--surface-soft);color:var(--text-secondary)}.code-card .type-badge{background:color-mix(in srgb,var(--content-code) 13%,var(--surface-soft));color:var(--content-code)}.expiry-badge{background:color-mix(in srgb,var(--state-warning) 12%,var(--surface-soft));color:var(--state-warning)}.favorite-badge{background:var(--accent-primary-soft);color:var(--accent-primary)}
 .body-region{position:relative;display:grid;gap:.38rem}
 .header-actions{display:flex;align-items:center;gap:.3rem}

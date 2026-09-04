@@ -1,25 +1,18 @@
 <script setup lang="ts">
 import { Check, Copy, ExternalLink } from '@lucide/vue'
-import { onUnmounted, ref } from 'vue'
+import { useClipboardFeedback } from '@/shared/composables/useClipboardFeedback'
 
 const props = defineProps<{ body: string | null; requiresDetail?: boolean }>()
 const emit = defineEmits<{ openDetail: [] }>()
-const copied = ref(false)
-let resetTimer = 0
+const { copied, copyText } = useClipboardFeedback()
 
 async function activate() {
   if (props.requiresDetail) {
     emit('openDetail')
     return
   }
-  if (!props.body) return
-  await navigator.clipboard.writeText(props.body)
-  copied.value = true
-  window.clearTimeout(resetTimer)
-  resetTimer = window.setTimeout(() => { copied.value = false }, 1_600)
+  await copyText(props.body)
 }
-
-onUnmounted(() => window.clearTimeout(resetTimer))
 </script>
 
 <template>
