@@ -1,21 +1,12 @@
 import { createHmac } from 'node:crypto'
-import { expect, test, type Page } from '@playwright/test'
-import { alice, login, marker } from './helpers'
-
-async function openPanel(page: Page, width: number) {
-  if (width >= 1180) await page.locator('.app-sidebar .account-button').click()
-  else {
-    await page.getByRole('button', { name: '我的', exact: true }).click()
-    await page.getByRole('button', { name: '设备与会话', exact: true }).click()
-  }
-  return page.getByRole('dialog', { name: /设备与会话/ })
-}
+import { expect, test } from '@playwright/test'
+import { alice, login, marker, openSessions } from './helpers'
 
 for (const width of [1440, 375, 320]) {
   test(`sessions cards fit and preserve close behavior at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 })
     await login(page, alice)
-    const panel = await openPanel(page, width)
+    const panel = await openSessions(page)
     await expect(panel.getByText('当前会话', { exact: true })).toBeVisible()
     await expect(panel.locator('#password-form')).toHaveCount(0)
     await expect(panel.locator('#totp-form')).toBeHidden()
@@ -33,11 +24,11 @@ for (const width of [1440, 375, 320]) {
     await expect(panel).toHaveCount(0)
     if (width >= 1180) {
       await expect(page.locator('.app-sidebar .account-button')).toBeFocused()
-      await openPanel(page, width)
+      await openSessions(page)
       await page.locator('.backdrop').click({ position: { x: 10, y: 10 } })
       await expect(panel).toHaveCount(0)
     }
-    await openPanel(page, width)
+    await openSessions(page)
     await panel.getByRole('button', { name: '关闭', exact: true }).click()
     await expect(panel).toHaveCount(0)
   })
@@ -60,13 +51,13 @@ test('device rename, revoke, password and TOTP remain usable through the cards',
   const other = await browser.newContext()
   const otherPage = await other.newPage()
   await login(otherPage, alice)
-  const otherPanel = await openPanel(otherPage, 1440)
+  const otherPanel = await openSessions(otherPage)
   const otherName = marker('other-device')
   await otherPanel.getByRole('button', { name: '重命名', exact: true }).click()
   await otherPanel.getByLabel('当前设备名').fill(otherName)
   await otherPanel.getByRole('button', { name: '保存设备名' }).click()
   await expect(otherPanel.locator('.device-summary')).toContainText(otherName)
-  const panel = await openPanel(page, 375)
+  const panel = await openSessions(page)
   const deviceName = marker('device')
   await panel.getByRole('button', { name: '重命名', exact: true }).click()
   await panel.getByLabel('当前设备名').fill(deviceName)

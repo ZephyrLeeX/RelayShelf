@@ -3,7 +3,7 @@ import * as crypto from 'node:crypto'
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { alice, login, marker, selectComposerFiles } from './helpers'
+import { alice, login, marker, openSessions, selectComposerFiles } from './helpers'
 
 /** A deterministic multi-chunk payload spanning three 8 MiB server chunks. */
 function threeChunkFile(name: string): string {
@@ -150,10 +150,10 @@ test.describe('TOTP journey', () => {
     await login(page, alice)
 
     // Open the account drawer and enroll.
-    await page.getByRole('button', { name: alice.username, exact: true }).click()
-    const drawer = page.getByRole('dialog', { name: '设备与会话' })
+    const drawer = await openSessions(page)
     await expect(drawer).toBeVisible()
-    await drawer.getByLabel('当前密码').last().fill(alice.password)
+    await drawer.getByRole('button', { name: '设置两步验证', exact: true }).click()
+    await drawer.locator('#totp-form').getByLabel('当前密码').fill(alice.password)
     await drawer.getByRole('button', { name: '开始启用' }).click()
 
     const secretElement = drawer.locator('.secret')
@@ -164,7 +164,7 @@ test.describe('TOTP journey', () => {
 
     await drawer.getByLabel('验证码').fill(totpCode(secret))
     await drawer.getByRole('button', { name: '确认并启用' }).click()
-    await expect(drawer.getByText('已启用。输入当前验证码可关闭两步验证。')).toBeVisible()
+    await expect(drawer.locator('.badge').filter({ hasText: /^已启用$/ })).toBeVisible()
 
     // Logout, then password-only login is challenged. The confirming step is
     // already consumed by replay protection, so use the next time step.
@@ -184,13 +184,13 @@ test.describe('TOTP journey', () => {
     await expect(page).toHaveURL(/\/temporary$/)
 
     // Leave alice without TOTP so the remaining journeys stay password-only.
-    await page.getByRole('button', { name: alice.username, exact: true }).click()
-    const cleanup = page.getByRole('dialog', { name: '设备与会话' })
+    const cleanup = await openSessions(page)
     await expect(cleanup).toBeVisible()
+    await cleanup.getByRole('button', { name: '管理两步验证', exact: true }).click()
     await waitForNextStep()
     await cleanup.getByLabel('验证码').fill(totpCode(secret))
     await cleanup.getByRole('button', { name: '关闭两步验证' }).click()
-    await expect(cleanup.getByRole('button', { name: '开始启用' })).toBeVisible()
+    await expect(cleanup.locator('.badge').filter({ hasText: /^建议启用$/ })).toBeVisible()
   })
 })
 

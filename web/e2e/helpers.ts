@@ -16,6 +16,16 @@ export async function login(page: Page, credentials: { username: string; passwor
   await expect(page).toHaveURL(/\/temporary$/)
 }
 
+export async function openSessions(page: Page) {
+  const width = await page.evaluate(() => window.innerWidth)
+  if (width >= 1180) await page.locator('.app-sidebar .account-button').click()
+  else {
+    await page.getByRole('button', { name: '我的', exact: true }).click()
+    await page.getByRole('button', { name: '设备与会话', exact: true }).click()
+  }
+  return page.getByRole('dialog', { name: /设备与会话/ })
+}
+
 export async function logout(page: Page) {
   await page.getByRole('button', { name: /退出/ }).click()
   await expect(page).toHaveURL(/\/login/)
