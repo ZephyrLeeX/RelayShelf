@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import QRCode from 'qrcode'
 import { ApiError, DefaultService, TOTPEnrollmentPending } from '@/api/generated'
 import { useAuthStore } from '@/features/auth/store'
+import { toast } from '@/shared/ui/toast'
 import SessionsPanel from './SessionsPanel.vue'
 
 async function render() {
@@ -22,6 +23,7 @@ async function render() {
 
 describe('TOTP enrollment re-authentication', () => {
   beforeEach(() => {
+    toast.clear()
     vi.spyOn(QRCode, 'toCanvas').mockResolvedValue(undefined)
     vi.spyOn(DefaultService, 'getTotpStatus').mockResolvedValue({ enabled: false })
     vi.spyOn(DefaultService, 'listSessions').mockResolvedValue([])
@@ -38,6 +40,7 @@ describe('TOTP enrollment re-authentication', () => {
       algorithm: TOTPEnrollmentPending.algorithm.SHA1,
     })
     const wrapper = await render()
+    await wrapper.findAll('button').find((item) => item.text() === '设置两步验证')!.trigger('click')
     const passwordInputs = wrapper.findAll('input[type="password"]')
     const input = passwordInputs.at(-1)
     if (!input) throw new Error('TOTP enrollment password input missing')
@@ -50,7 +53,7 @@ describe('TOTP enrollment re-authentication', () => {
     await flushPromises()
     expect(start).toHaveBeenCalledWith({ currentPassword: 'TOTP_ENROLL_PASSWORD_SENTINEL' })
     expect((wrapper.vm as unknown as { enrollmentPassword: string }).enrollmentPassword).toBe('')
-    expect(wrapper.findAll('input[type="password"]')).toHaveLength(2)
+    expect(wrapper.findAll('input[type="password"]')).toHaveLength(0)
     expect(wrapper.get('[aria-label="TOTP enrollment 二维码"]').element).toBeInstanceOf(HTMLCanvasElement)
     expect(QRCode.toCanvas).toHaveBeenCalledWith(expect.any(HTMLCanvasElement), provisioningUri, expect.objectContaining({ errorCorrectionLevel: 'M' }))
     wrapper.unmount()
@@ -68,6 +71,7 @@ describe('TOTP enrollment re-authentication', () => {
       algorithm: TOTPEnrollmentPending.algorithm.SHA1,
     })
     const wrapper = await render()
+    await wrapper.findAll('button').find((item) => item.text() === '设置两步验证')!.trigger('click')
     const passwordInput = wrapper.findAll('input[type="password"]').at(-1)!
     await passwordInput.setValue('TOTP_ENROLL_PASSWORD_SENTINEL')
     await wrapper.findAll('button').find((item) => item.text().includes('开始启用'))!.trigger('click')
@@ -95,6 +99,7 @@ describe('TOTP enrollment re-authentication', () => {
       'Conflict',
     ))
     const wrapper = await render()
+    await wrapper.findAll('button').find((item) => item.text() === '设置两步验证')!.trigger('click')
     const passwordInput = wrapper.findAll('input[type="password"]').at(-1)
     if (!passwordInput) throw new Error('TOTP enrollment password input missing')
     await passwordInput.setValue('TOTP_ENROLL_PASSWORD_SENTINEL')
@@ -109,8 +114,73 @@ describe('TOTP enrollment re-authentication', () => {
     expect(state.pendingEnrollment).toBeNull()
     expect(state.totpCode).toBe('')
     expect(state.enrollmentPassword).toBe('')
-    expect(wrapper.text()).toContain('两步验证设置已更新，请重新开始启用。')
-    expect(wrapper.findAll('input[type="password"]')).toHaveLength(3)
+    expect(toast.items.value.at(-1)?.message).toBe('两步验证设置已更新，请重新开始启用。')
+    expect(wrapper.findAll('input[type="password"]')).toHaveLength(1)
+    wrapper.unmount()
+  })
+})
+
+describe('device and security cards', () => {
+  beforeEach(() => {
+    toast.clear()
+    vi.spyOn(DefaultService, 'getTotpStatus').mockResolvedValue({ enabled: false })
+    vi.spyOn(DefaultService, 'listSessions').mockResolvedValue([])
+    vi.spyOn(DefaultService, 'listDevices').mockResolvedValue([])
+  })
+
+  it('expands rename and password forms, keeps payloads and reports success through toast', async () => {
+    const rename = vi.spyOn(DefaultService, 'renameDevice').mockResolvedValue({ id: 'device-1', name: 'Laptop' } as never)
+    const change = vi.spyOn(DefaultService, 'changePassword').mockResolvedValue(undefined)
+    const wrapper = await render()
+    expect(wrapper.find('#rename-form').exists()).toBe(false)
+    expect(wrapper.find('#password-form').exists()).toBe(false)
+    expect(wrapper.get('#totp-form').attributes('style')).toContain('display: none')
+    await wrapper.findAll('button').find((item) => item.text() === '重命名')!.trigger('click')
+    await wrapper.get('#rename-form input').setValue('  Laptop  ')
+    await wrapper.get('#rename-form').trigger('submit')
+    await flushPromises()
+    expect(rename).toHaveBeenCalledWith('device-1', { name: 'Laptop' })
+    expect(wrapper.text()).toContain('Laptop')
+    expect(toast.items.value.at(-1)?.message).toBe('设备名已保存')
+    await wrapper.findAll('button').find((item) => item.text() === '修改密码')!.trigger('click')
+    await wrapper.get('[autocomplete="current-password"]').setValue('old-password')
+    await wrapper.get('[autocomplete="new-password"]').setValue('new-password')
+    await wrapper.get('#password-form').trigger('submit')
+    await flushPromises()
+    expect(change).toHaveBeenCalledWith({ currentPassword: 'old-password', newPassword: 'new-password' })
+    expect(wrapper.find('#password-form').exists()).toBe(false)
+    expect((wrapper.vm as unknown as { currentPassword: string; newPassword: string }).currentPassword).toBe('')
+    expect((wrapper.vm as unknown as { newPassword: string }).newPassword).toBe('')
+    expect(toast.items.value.at(-1)?.message).toBe('密码已修改，其他会话已撤销')
+    wrapper.unmount()
+  })
+
+  it('keeps current-session identification and revokes only the selected other session', async () => {
+    vi.mocked(DefaultService.listSessions).mockResolvedValue([
+      { id: 'session-1', current: true, deviceId: 'device-1', lastSeenAt: '2026-09-01' },
+      { id: 'session-2', current: false, deviceId: 'device-2', lastSeenAt: '2026-09-01' },
+    ] as never)
+    const revoke = vi.spyOn(DefaultService, 'revokeSession').mockResolvedValue(undefined)
+    const wrapper = await render()
+    expect(wrapper.get('.session-card.current').text()).toContain('当前会话')
+    expect(wrapper.get('.session-card.current').find('button').exists()).toBe(false)
+    await wrapper.get('.session-card:not(.current) button').trigger('click')
+    await flushPromises()
+    expect(revoke).toHaveBeenCalledWith('session-2')
+    expect(toast.items.value.at(-1)?.message).toBe('会话已撤销')
+    wrapper.unmount()
+  })
+
+  it('retains password failure input and uses a global error toast', async () => {
+    vi.spyOn(DefaultService, 'changePassword').mockRejectedValue(new Error('failed'))
+    const wrapper = await render()
+    await wrapper.findAll('button').find((item) => item.text() === '修改密码')!.trigger('click')
+    await wrapper.get('[autocomplete="new-password"]').setValue('retry-password')
+    await wrapper.get('#password-form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.find('#password-form').exists()).toBe(true)
+    expect((wrapper.get('[autocomplete="new-password"]').element as HTMLInputElement).value).toBe('retry-password')
+    expect(toast.items.value.at(-1)?.type).toBe('error')
     wrapper.unmount()
   })
 })

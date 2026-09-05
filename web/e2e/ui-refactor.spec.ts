@@ -81,29 +81,35 @@ test.describe('desktop UI integration', () => {
 })
 
 test.describe('desktop topbar constraints', () => {
-  test('keeps search truly centered and a long account name out of it at 1180px and 1440px', async ({ page }) => {
+  test('keeps search centered with one account entry and unclipped theme focus at 1180px and 1440px', async ({ page }) => {
     await login(page, alice)
-    await page.locator('.topbar-actions .identity strong').evaluate((element) => {
-      element.textContent = '这是一个非常非常长的用户显示名称 Long Account Display Name'
-    })
-
     for (const width of [1180, 1440]) {
       await page.setViewportSize({ width, height: 900 })
-      const topbar = await page.locator('.app-topbar').boundingBox()
-      const search = await page.locator('.global-search').boundingBox()
-      const actions = await page.locator('.topbar-actions').boundingBox()
-      const account = await page.locator('.topbar-account').boundingBox()
-      const accountName = page.locator('.topbar-actions .identity strong')
-      expect(topbar).not.toBeNull()
-      expect(search).not.toBeNull()
-      expect(actions).not.toBeNull()
-      expect(account).not.toBeNull()
-      expect(Math.abs((search!.x + search!.width / 2) - (topbar!.x + topbar!.width / 2))).toBeLessThanOrEqual(1)
-      expect(actions!.x).toBeGreaterThanOrEqual(search!.x + search!.width)
-      expect(account!.x).toBeGreaterThanOrEqual(search!.x + search!.width)
-      expect(account!.x + account!.width).toBeLessThanOrEqual(topbar!.x + topbar!.width)
-      expect(await accountName.evaluate((element) => element.scrollWidth)).toBeGreaterThan(await accountName.evaluate((element) => element.clientWidth))
-      expect(await accountName.evaluate((element) => getComputedStyle(element).textOverflow)).toBe('ellipsis')
+      await expect(page.locator('.app-topbar .account-button')).toHaveCount(0)
+      await expect(page.locator('.app-sidebar .account-button')).toHaveCount(1)
+      const topbar = (await page.locator('.app-topbar').boundingBox())!
+      const search = (await page.locator('.global-search').boundingBox())!
+      expect(Math.abs(search.x + search.width / 2 - topbar.x - topbar.width / 2)).toBeLessThanOrEqual(1)
+      await page.locator('#global-search').focus()
+      for (const button of await page.locator('.topbar-actions button').all()) {
+        await page.keyboard.press('Tab')
+        await expect(button).toBeFocused()
+        const box = (await button.boundingBox())!
+        expect(box.x - 5).toBeGreaterThan(search.x + search.width)
+        expect(box.x + box.width + 5).toBeLessThanOrEqual(topbar.x + topbar.width)
+        expect(await button.evaluate((element) => {
+          if (getComputedStyle(element).outlineStyle === 'none') return false
+          for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+            const style = getComputedStyle(parent)
+            if (['hidden', 'clip'].includes(style.overflowX)) {
+              const rect = parent.getBoundingClientRect()
+              const focus = element.getBoundingClientRect()
+              if (focus.left - 5 < rect.left || focus.right + 5 > rect.right) return false
+            }
+          }
+          return true
+        })).toBe(true)
+      }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
     }
   })

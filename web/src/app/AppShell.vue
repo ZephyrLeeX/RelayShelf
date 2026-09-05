@@ -165,7 +165,7 @@ function openMobileMore() {
       @open-sessions="openSessions"
       @logout="logout"
     />
-    <AppTopbar @open-sessions="openSessions" />
+    <AppTopbar />
     <MobileHeader
       :upload-count="uploadCount"
       :active-transfers="hasActiveTransfers"
