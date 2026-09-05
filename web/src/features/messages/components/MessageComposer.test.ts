@@ -1,7 +1,7 @@
 import { VueQueryPlugin, QueryClient } from '@tanstack/vue-query'
-import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
+import { mount, flushPromises, enableAutoUnmount, type VueWrapper } from '@vue/test-utils'
 import { createPinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BodyFormat, DefaultService, Lifecycle, StorageRuntimeStatus, UploadStatus, type UploadSession } from '@/api/generated'
 import { queryKeys } from '@/shared/api/queryKeys'
 import { messageFixture } from '@/test/fixtures'
@@ -11,6 +11,8 @@ import { ResumeLedger } from '@/features/uploads/resumeLedger'
 import { uploadState } from '@/features/uploads/store'
 import type { UploadItem } from '@/features/uploads/types'
 import { setStorageRuntimeStatus } from '@/features/storage/runtime'
+
+enableAutoUnmount(afterEach)
 
 const bob = { id: '11111111-1111-4111-8111-111111111111', username: 'bob', displayName: 'Bob' }
 const carol = { id: '22222222-2222-4222-8222-222222222222', username: 'carol', displayName: 'Carol' }
@@ -31,7 +33,7 @@ function uploadItem(clientId: string, status: UploadItem['status'], session = up
 
 function mountComposer(lifecycle = Lifecycle.TEMPORARY) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
-  return mount(MessageComposer, { props: { defaultLifecycle: lifecycle }, global: { plugins: [createPinia(), [VueQueryPlugin, { queryClient: client }]] } })
+  return mount(MessageComposer, { attachTo: document.body, props: { defaultLifecycle: lifecycle }, global: { plugins: [createPinia(), [VueQueryPlugin, { queryClient: client }]] } })
 }
 
 async function pickContentType(wrapper: VueWrapper, label: string) {
@@ -69,6 +71,63 @@ describe('MessageComposer', () => {
       items: [bob, carol].filter((user) => !query || user.username.includes(query) || user.displayName.toLowerCase().includes(query.toLowerCase())),
     }) as never)
     vi.stubGlobal('crypto', { randomUUID: vi.fn().mockReturnValueOnce('key-a').mockReturnValueOnce('key-b') })
+  })
+  function drag(target: EventTarget, type: string, dataTransfer = { types: ['Files'], items: [{ kind: 'file' }], files: [new File(['a'], 'a.txt'), new File(['b'], 'b.txt')] }) {
+    const event = new Event(type, { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'dataTransfer', { value: dataTransfer })
+    target.dispatchEvent(event)
+    return event
+  }
+  it.each(['textarea', '.composer-top', '.composer-toolbar', '.composer-feedback'])('accepts files once from %s', async (selector) => {
+    const add = vi.spyOn(uploadManager, 'addFiles').mockResolvedValue([])
+    const wrapper = mountComposer()
+    expect(drag(wrapper.get(selector).element, 'drop').defaultPrevented).toBe(true)
+    await flushPromises()
+    expect(add).toHaveBeenCalledTimes(1)
+    expect(Array.from(add.mock.calls[0]![0]).map((file) => file.name)).toEqual(['a.txt', 'b.txt'])
+    expect(wrapper.find('.drop-prompt').exists()).toBe(false)
+  })
+  it('guards outside drops and keeps the overlay stable across child transitions', async () => {
+    const add = vi.spyOn(uploadManager, 'addFiles').mockResolvedValue([])
+    const wrapper = mountComposer()
+    drag(document.body, 'dragenter')
+    drag(wrapper.element, 'dragenter')
+    drag(document.body, 'dragleave')
+    drag(wrapper.get('textarea').element, 'dragenter')
+    drag(wrapper.element, 'dragleave')
+    await flushPromises()
+    expect(wrapper.find('.drop-prompt').exists()).toBe(true)
+    expect(drag(document.body, 'dragover').defaultPrevented).toBe(true)
+    expect(drag(document.body, 'drop').defaultPrevented).toBe(true)
+    await flushPromises()
+    expect(add).not.toHaveBeenCalled()
+    expect(wrapper.find('.drop-prompt').exists()).toBe(false)
+    drag(document.body, 'dragenter')
+    drag(document.body, 'dragleave')
+    await flushPromises()
+    expect(wrapper.find('.drop-prompt').exists()).toBe(false)
+    wrapper.unmount()
+    expect(drag(document.body, 'dragover').defaultPrevented).toBe(false)
+  })
+  it.each(['text/plain', 'text/uri-list'])('does not intercept %s drags inside or outside', async (type) => {
+    const wrapper = mountComposer()
+    for (const target of [document.body, wrapper.get('textarea').element]) {
+      for (const event of ['dragenter', 'dragover', 'drop']) {
+        expect(drag(target, event, { types: [type], items: [{ kind: 'string' }], files: [] }).defaultPrevented).toBe(false)
+      }
+    }
+    await flushPromises()
+    expect(wrapper.find('.drop-prompt').exists()).toBe(false)
+  })
+  it('recognizes file items without Files types and blocks uploads while degraded', async () => {
+    setStorageRuntimeStatus({ healthy: false, reason: StorageRuntimeStatus.reason.NAS_TIMEOUT, lastCheckedAt: null, changedAt: '2026-09-03T00:00:00Z' })
+    const add = vi.spyOn(uploadManager, 'addFiles').mockResolvedValue([])
+    const wrapper = mountComposer()
+    expect(drag(wrapper.get('.composer-top').element, 'drop', { types: [], items: [{ kind: 'file' }], files: [new File(['a'], 'a.txt')] }).defaultPrevented).toBe(true)
+    await flushPromises()
+    expect(add).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('存储服务暂时不可用')
+    expect(wrapper.find('.drop-prompt').exists()).toBe(false)
   })
   it('disables only attachments while degraded and still sends text', async () => {
     uploadState.items.push(uploadItem('completed', 'COMPLETED', uploadSession({ id: 'upload-completed', status: UploadStatus.COMPLETED })))

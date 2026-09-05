@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { LockKeyhole, Maximize2, Star } from '@lucide/vue'
 import { computed, ref } from 'vue'
+import { relativeExpiry } from '@/shared/utils/expiry'
 import { BodyFormat, type MessageSummary } from '@/api/generated'
 import { useDetailSelection } from '@/app/composables/useDetailSelection'
 import TagChip from '@/shared/ui/TagChip.vue'
@@ -70,13 +71,6 @@ function run(command: Parameters<typeof mutation.mutate>[0]) {
 }
 function removeForever() {
   if (window.confirm('永久删除后无法恢复。确定继续吗？')) run({ type: 'delete', message: props.message })
-}
-function relativeExpiry(value?: string | null) {
-  if (!value) return ''
-  const hours = Math.ceil((new Date(value).getTime() - Date.now()) / 3_600_000)
-  if (hours <= 24) return '今天过期'
-  if (hours <= 48) return '明天过期'
-  return `剩余 ${Math.ceil(hours / 24)} 天`
 }
 </script>
 

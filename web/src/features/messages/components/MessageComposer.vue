@@ -5,6 +5,7 @@ import { Lifecycle } from '@/api/generated'
 import { formatBytes } from '@/shared/utils/bytes'
 import { isCodeContentType } from '../content/contentFormat'
 import { useMessageComposer } from '../composables/useMessageComposer'
+import { useComposerFileDrop } from '../composables/useComposerFileDrop'
 import ComposerEditor from './composer/ComposerEditor.vue'
 import ComposerAttachments from './composer/ComposerAttachments.vue'
 import ContentTypePicker from './ContentTypePicker.vue'
@@ -14,6 +15,7 @@ const props = defineProps<{ defaultLifecycle: Lifecycle }>()
 const emit = defineEmits<{ sent: [] }>()
 const fileInput = ref<HTMLInputElement>()
 const composer = useMessageComposer(() => props.defaultLifecycle, () => emit('sent'))
+const composerDrop = useComposerFileDrop(composer.dragging, composer.dropFiles)
 const isCode = computed(() => isCodeContentType(composer.contentType.value))
 
 function filesChanged(event: Event) {
@@ -27,7 +29,14 @@ function filesChanged(event: Event) {
   <section
     class="composer panel"
     aria-label="新内容"
+    @drop="composerDrop"
   >
+    <div
+      v-if="composer.dragging.value"
+      class="drop-prompt"
+    >
+      松开以添加到本条内容
+    </div>
     <div class="composer-top">
       <ContentTypePicker v-model="composer.contentType.value" />
       <div class="composer-top-right">
@@ -50,10 +59,6 @@ function filesChanged(event: Event) {
     <ComposerEditor
       v-model="composer.body.value"
       :code="isCode"
-      :dragging="composer.dragging.value"
-      @dragstart="composer.dragging.value = true"
-      @dragend="composer.dragging.value = false"
-      @drop="composer.dropFiles"
       @paste="composer.pasteFiles"
       @keydown="composer.onKeydown"
     />
@@ -253,6 +258,7 @@ function filesChanged(event: Event) {
 
 <style scoped>
 .composer{position:relative;display:grid;border-radius:var(--radius-lg);box-shadow:var(--shadow-md);overflow:visible}
+.drop-prompt{position:absolute;inset:0;z-index:30;display:grid;place-items:center;padding:1rem;border:2px dashed var(--accent-primary);border-radius:inherit;background:color-mix(in srgb,var(--surface-raised) 90%,var(--accent-primary));color:var(--accent-primary-hover);font-size:.82rem;font-weight:650;text-align:center;pointer-events:none}
 .composer-top{display:flex;align-items:center;justify-content:space-between;gap:.5rem;padding:.65rem .8rem 0}
 .composer-top-right{display:flex;align-items:center;gap:.4rem}
 .icon-tool{display:inline-grid;place-items:center;width:34px;height:34px;border:1px solid var(--border-default);border-radius:.6rem;background:var(--surface-raised);color:var(--text-secondary);cursor:pointer}.icon-tool svg{width:.95rem;height:.95rem}.icon-tool:hover{border-color:var(--border-strong);background:var(--surface-soft);color:var(--text-primary)}.icon-tool:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px}.icon-tool.on{border-color:var(--state-warning);color:var(--state-warning);background:color-mix(in srgb,var(--state-warning) 12%,var(--surface-raised))}
