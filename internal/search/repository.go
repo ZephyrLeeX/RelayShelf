@@ -22,7 +22,7 @@ func NewPostgreSQLRepository(pool *pgxpool.Pool) *PostgreSQLRepository {
 }
 
 const resultSelect = `
-SELECT m.id, m.owner_id, left(m.body_plaintext, 16385), m.body_format, m.detected_type,
+SELECT m.id, m.owner_id, m.title, left(m.body_plaintext, 16385), m.body_format, m.detected_type,
        m.detected_language, m.sensitive, m.lifecycle, m.is_favorite,
        m.expires_at, m.trashed_at, m.purge_at, m.source_user_id,
        m.source_message_id, m.version, m.created_at, m.updated_at
@@ -48,6 +48,12 @@ SELECT m.id AS message_id
 FROM messages m
 WHERE m.owner_id = $1 AND m.trashed_at IS NULL
   AND (m.lifecycle = 'PERMANENT' OR m.expires_at > $2)
+  AND m.title IS NOT NULL AND m.title ILIKE %s ESCAPE '\'
+UNION
+SELECT m.id AS message_id
+FROM messages m
+WHERE m.owner_id = $1 AND m.trashed_at IS NULL
+  AND (m.lifecycle = 'PERMANENT' OR m.expires_at > $2)
   AND m.sensitive = false AND m.body_plaintext IS NOT NULL
   AND m.body_plaintext ILIKE %s ESCAPE '\'
 UNION
@@ -66,7 +72,7 @@ WHERE tag.user_id = $1 AND m.owner_id = $1 AND m.trashed_at IS NULL
   AND (m.lifecycle = 'PERMANENT' OR m.expires_at > $2)
   AND tag.normalized_name ILIKE %s ESCAPE '\'
 )
-`, pattern, pattern, pattern)
+`, pattern, pattern, pattern, pattern)
 	}
 	sql.WriteString(resultSelect)
 	if len(tokens) > 0 {
@@ -79,7 +85,10 @@ WHERE tag.user_id = $1 AND m.owner_id = $1 AND m.trashed_at IS NULL
 	for _, token := range remainingTokens {
 		pattern := parameter(likePattern(token))
 		sql.WriteString(` AND (
-    (m.sensitive = false AND m.body_plaintext IS NOT NULL AND m.body_plaintext ILIKE `)
+	    (m.title IS NOT NULL AND m.title ILIKE `)
+		sql.WriteString(pattern)
+		sql.WriteString(` ESCAPE '\')
+    OR (m.sensitive = false AND m.body_plaintext IS NOT NULL AND m.body_plaintext ILIKE `)
 		sql.WriteString(pattern)
 		sql.WriteString(` ESCAPE '\')
     OR EXISTS (
@@ -192,10 +201,10 @@ type rowScanner interface{ Scan(dest ...any) error }
 
 func scanMessage(row rowScanner) (messages.Message, error) {
 	var message messages.Message
-	var body, detectedType, detectedLanguage pgtype.Text
+	var title, body, detectedType, detectedLanguage pgtype.Text
 	var expiresAt, trashedAt, purgeAt pgtype.Timestamptz
 	var sourceUserID, sourceMessageID pgtype.UUID
-	err := row.Scan(&message.ID, &message.OwnerID, &body, &message.BodyFormat, &detectedType,
+	err := row.Scan(&message.ID, &message.OwnerID, &title, &body, &message.BodyFormat, &detectedType,
 		&detectedLanguage, &message.Sensitive, &message.Lifecycle, &message.Favorite,
 		&expiresAt, &trashedAt, &purgeAt, &sourceUserID, &sourceMessageID,
 		&message.Version, &message.CreatedAt, &message.UpdatedAt)
@@ -204,6 +213,9 @@ func scanMessage(row rowScanner) (messages.Message, error) {
 	}
 	if body.Valid {
 		message.BodyPlaintext = &body.String
+	}
+	if title.Valid {
+		message.Title = &title.String
 	}
 	if detectedType.Valid {
 		message.DetectedType = &detectedType.String

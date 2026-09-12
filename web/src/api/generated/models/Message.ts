@@ -8,6 +8,7 @@ import type { Lifecycle } from './Lifecycle';
 import type { Tag } from './Tag';
 export type Message = {
     id: string;
+    title: string | null;
     body: string | null;
     bodyFormat: BodyFormat;
     detectedType?: string | null;

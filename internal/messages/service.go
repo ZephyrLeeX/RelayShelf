@@ -3,6 +3,7 @@ package messages
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -34,15 +35,28 @@ func (s *Service) SetThumbnailJobs(ensurer ThumbnailJobEnsurer, wake interface{ 
 func validBody(body string) bool {
 	return len(body) > 0 && len([]byte(body)) <= MaxBodyBytes && utf8.ValidString(body)
 }
+func normalizeTitle(title *string) (*string, error) {
+	if title == nil {
+		return nil, nil
+	}
+	value := strings.TrimSpace(*title)
+	if value == "" {
+		return nil, nil
+	}
+	if !utf8.ValidString(value) || utf8.RuneCountInString(value) > 200 {
+		return nil, ErrValidation
+	}
+	return &value, nil
+}
 func validFormat(value string) bool    { return value == Text || value == Markdown }
 func validLifecycle(value string) bool { return value == Temporary || value == Permanent }
 
-func (s *Service) newMessage(ownerID, deviceID uuid.UUID, body, format, lifecycle string, sensitive bool, sourceUser, sourceMessage *uuid.UUID, now time.Time, ttl time.Duration) (Message, error) {
+func (s *Service) newMessage(ownerID, deviceID uuid.UUID, title *string, body, format, lifecycle string, sensitive bool, sourceUser, sourceMessage *uuid.UUID, now time.Time, ttl time.Duration) (Message, error) {
 	idValue, err := s.ids.New()
 	if err != nil {
 		return Message{}, err
 	}
-	m := Message{ID: idValue, OwnerID: ownerID, BodyFormat: format, Lifecycle: lifecycle, Sensitive: sensitive, SourceUserID: sourceUser, SourceMessageID: sourceMessage, CreatedDeviceID: &deviceID, Version: 1, CreatedAt: now, UpdatedAt: now, Tags: []Tag{}}
+	m := Message{ID: idValue, OwnerID: ownerID, Title: title, BodyFormat: format, Lifecycle: lifecycle, Sensitive: sensitive, SourceUserID: sourceUser, SourceMessageID: sourceMessage, CreatedDeviceID: &deviceID, Version: 1, CreatedAt: now, UpdatedAt: now, Tags: []Tag{}}
 	if lifecycle == Temporary {
 		value := now.Add(ttl)
 		m.ExpiresAt = &value
@@ -81,6 +95,11 @@ func (s *Service) Create(ctx context.Context, ownerID, deviceID uuid.UUID, c Cre
 }
 
 func (s *Service) CreateResult(ctx context.Context, ownerID, deviceID uuid.UUID, c CreateCommand) (CreateResult, error) {
+	var err error
+	c.Title, err = normalizeTitle(c.Title)
+	if err != nil {
+		return CreateResult{}, err
+	}
 	if (c.Body != "" && !validBody(c.Body)) || (c.Body == "" && len(c.UploadIDs) == 0) || (c.Body == "" && c.Sensitive) || !validFormat(c.BodyFormat) || !validLifecycle(c.Lifecycle) || !validIdempotencyKey(c.IdempotencyKey) {
 		return CreateResult{}, ErrValidation
 	}
@@ -89,7 +108,7 @@ func (s *Service) CreateResult(ctx context.Context, ownerID, deviceID uuid.UUID,
 	var result Message
 	createdResult := false
 	jobCreated := false
-	err := s.repo.withTx(ctx, func(tx pgx.Tx) error {
+	err = s.repo.withTx(ctx, func(tx pgx.Tx) error {
 		idem, err := claimIdempotency(ctx, tx, ownerID, OperationCreate, c.IdempotencyKey, hash, now)
 		if err != nil {
 			return err
@@ -106,7 +125,7 @@ func (s *Service) CreateResult(ctx context.Context, ownerID, deviceID uuid.UUID,
 		if err != nil {
 			return err
 		}
-		result, err = s.newMessage(ownerID, deviceID, c.Body, c.BodyFormat, c.Lifecycle, c.Sensitive, nil, nil, now, temporaryTTL)
+		result, err = s.newMessage(ownerID, deviceID, c.Title, c.Body, c.BodyFormat, c.Lifecycle, c.Sensitive, nil, nil, now, temporaryTTL)
 		if err != nil {
 			return err
 		}
@@ -226,7 +245,7 @@ func (s *Service) mutate(ctx context.Context, ownerID, messageID uuid.UUID, expe
 }
 
 func (s *Service) Edit(ctx context.Context, ownerID, messageID uuid.UUID, c EditCommand) (Message, error) {
-	if c.Body == nil && !c.BodyClear && c.BodyFormat == nil && !c.DetectedType.Set && !c.DetectedLanguage.Set {
+	if c.Body == nil && !c.BodyClear && c.BodyFormat == nil && !c.Title.Set && !c.DetectedType.Set && !c.DetectedLanguage.Set {
 		return Message{}, ErrValidation
 	}
 	if c.Body != nil && !validBody(*c.Body) {
@@ -234,6 +253,13 @@ func (s *Service) Edit(ctx context.Context, ownerID, messageID uuid.UUID, c Edit
 	}
 	if c.BodyFormat != nil && !validFormat(*c.BodyFormat) {
 		return Message{}, ErrValidation
+	}
+	if c.Title.Set {
+		var err error
+		c.Title.Value, err = normalizeTitle(c.Title.Value)
+		if err != nil {
+			return Message{}, err
+		}
 	}
 	for _, optional := range []OptionalString{c.DetectedType, c.DetectedLanguage} {
 		if optional.Set && optional.Value != nil && utf8.RuneCountInString(*optional.Value) > 64 {
@@ -251,6 +277,10 @@ func (s *Service) Edit(ctx context.Context, ownerID, messageID uuid.UUID, c Edit
 			return false, ErrValidation
 		}
 		changed := false
+		if c.Title.Set && !optionalEqual(m.Title, c.Title.Value) {
+			m.Title = c.Title.Value
+			changed = true
+		}
 		if c.BodyClear {
 			var count int
 			if err := s.repo.pool.QueryRow(ctx, `SELECT count(*) FROM message_attachments WHERE message_id=$1`, m.ID).Scan(&count); err != nil {
@@ -511,9 +541,16 @@ func (s *Service) Reveal(ctx context.Context, ownerID, messageID uuid.UUID) (str
 	return string(plain), m.Version, nil
 }
 
-func (s *Service) EditSensitive(ctx context.Context, ownerID, messageID uuid.UUID, expected int64, body string) (Message, error) {
+func (s *Service) EditSensitive(ctx context.Context, ownerID, messageID uuid.UUID, expected int64, title OptionalString, body string) (Message, error) {
 	if !validBody(body) {
 		return Message{}, ErrValidation
+	}
+	if title.Set {
+		var err error
+		title.Value, err = normalizeTitle(title.Value)
+		if err != nil {
+			return Message{}, err
+		}
 	}
 	return s.mutate(ctx, ownerID, messageID, expected, func(m *Message) (bool, error) {
 		if m.TrashedAt != nil {
@@ -529,6 +566,9 @@ func (s *Service) EditSensitive(ctx context.Context, ownerID, messageID uuid.UUI
 		m.BodyCiphertext = ciphertext
 		m.BodyNonce = nonce
 		m.BodyEncryptionVersion = &version
+		if title.Set {
+			m.Title = title.Value
+		}
 		return true, nil
 	})
 }
@@ -539,6 +579,11 @@ func (s *Service) DirectSend(ctx context.Context, senderID, deviceID uuid.UUID, 
 }
 
 func (s *Service) DirectSendResult(ctx context.Context, senderID, deviceID uuid.UUID, c DirectSendCommand) (DeliveryResult, error) {
+	var err error
+	c.Title, err = normalizeTitle(c.Title)
+	if err != nil {
+		return DeliveryResult{}, err
+	}
 	if (c.Body != "" && !validBody(c.Body)) || (c.Body == "" && len(c.UploadIDs) == 0) || (c.Body == "" && c.Sensitive) || !validFormat(c.BodyFormat) || !validIdempotencyKey(c.IdempotencyKey) {
 		return DeliveryResult{}, ErrValidation
 	}
@@ -548,7 +593,7 @@ func (s *Service) DirectSendResult(ctx context.Context, senderID, deviceID uuid.
 	var version int64
 	createdResult := false
 	jobCreated := false
-	err := s.repo.withTx(ctx, func(tx pgx.Tx) error {
+	err = s.repo.withTx(ctx, func(tx pgx.Tx) error {
 		idem, err := claimIdempotency(ctx, tx, senderID, OperationDirectSend, c.IdempotencyKey, hash, now)
 		if err != nil {
 			return err
@@ -569,7 +614,7 @@ func (s *Service) DirectSendResult(ctx context.Context, senderID, deviceID uuid.
 			return err
 		}
 		source := senderID
-		result, err := s.newMessage(c.RecipientID, deviceID, c.Body, c.BodyFormat, Temporary, c.Sensitive, &source, nil, now, temp)
+		result, err := s.newMessage(c.RecipientID, deviceID, c.Title, c.Body, c.BodyFormat, Temporary, c.Sensitive, &source, nil, now, temp)
 		if err != nil {
 			return err
 		}
@@ -670,7 +715,7 @@ func (s *Service) ForwardResult(ctx context.Context, senderID, deviceID uuid.UUI
 		}
 		sourceUser := senderID
 		sourceID := source.ID
-		result, err := s.newMessage(c.RecipientID, deviceID, body, source.BodyFormat, Temporary, source.Sensitive, &sourceUser, &sourceID, now, temp)
+		result, err := s.newMessage(c.RecipientID, deviceID, source.Title, body, source.BodyFormat, Temporary, source.Sensitive, &sourceUser, &sourceID, now, temp)
 		if err != nil {
 			return err
 		}

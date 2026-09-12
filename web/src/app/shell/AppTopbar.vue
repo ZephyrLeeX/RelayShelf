@@ -30,7 +30,7 @@ function submitSearch() {
       <input
         id="global-search"
         v-model="search"
-        placeholder="搜索内容、文件名或标签"
+        placeholder="搜索标题、正文、文件名或标签"
       >
       <kbd>Enter</kbd>
     </form>

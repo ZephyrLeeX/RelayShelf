@@ -18,6 +18,14 @@ describe('MessageCard', () => {
   beforeEach(() => {
     writeText.mockClear()
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    vi.spyOn(DefaultService, 'listTags').mockResolvedValue([])
+  })
+
+  it('shows a non-empty title and omits the title element for null', async () => {
+    const titled = await render({ title: 'OpenWrt Sunshine 部署' })
+    expect(titled.wrapper.get('.message-title').text()).toBe('OpenWrt Sunshine 部署')
+    const untitled = await render({ title: null })
+    expect(untitled.wrapper.find('.message-title').exists()).toBe(false)
   })
 
   it('never renders a sensitive body preview', async () => {
@@ -32,6 +40,7 @@ describe('MessageCard', () => {
   it('does not offer preview copying as full body when truncated', async () => {
     const { router, wrapper } = await render({ bodyTruncated: true })
     expect(wrapper.text()).toContain('打开并复制')
+    expect(wrapper.text()).toContain('预览已截断 · 打开详情查看完整内容')
     await wrapper.get('[aria-label="打开详情后复制正文"]').trigger('click')
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(writeText).not.toHaveBeenCalled()
@@ -84,6 +93,8 @@ describe('MessageCard', () => {
     expect(wrapper.text()).toContain('恢复')
     expect(wrapper.text()).toContain('永久删除')
     expect(wrapper.text()).not.toContain('收藏')
+    expect(wrapper.find('button[aria-label="标签"]').exists()).toBe(false)
+    expect(wrapper.find('button[aria-label="添加标签"]').exists()).toBe(false)
   })
   it('surfaces version conflict without retrying an overwrite', async () => {
     const favorite = vi.spyOn(DefaultService, 'setMessageFavorite').mockRejectedValue(new ApiError(
@@ -121,6 +132,48 @@ describe('MessageCard', () => {
     const { wrapper } = await render({ bodyFormat: BodyFormat.TEXT, detectedType: 'CODE', detectedLanguage: 'shell', bodyPreview: 'ls -la' })
     expect(wrapper.get('pre.code').text()).toBe('ls -la')
     expect(wrapper.get('.type-badge').text()).toBe('SHELL')
+  })
+  it.each([
+    ['plain text', { bodyFormat: BodyFormat.TEXT, bodyPreview: 'line\n'.repeat(80) }],
+    ['markdown', { bodyFormat: BodyFormat.MARKDOWN, bodyPreview: Array.from({ length: 40 }, (_, index) => `paragraph ${index}`).join('\n\n') }],
+    ['legacy code', { bodyFormat: BodyFormat.TEXT, detectedType: 'CODE', detectedLanguage: 'shell', bodyPreview: 'echo line\n'.repeat(80) }],
+  ])('folds overflowing %s using measured DOM height and toggles without opening detail', async (_name, overrides) => {
+    const { router, wrapper } = await render(overrides)
+    await flushPromises()
+    const content = wrapper.get('.body-content').element
+    Object.defineProperty(content, 'scrollHeight', { configurable: true, value: 400 })
+    window.dispatchEvent(new Event('resize'))
+    await flushPromises()
+    const toggle = wrapper.get('.expand-button')
+    expect(toggle.text()).toBe('展开')
+    expect(wrapper.get('.body-content').classes()).toContain('collapsed')
+    await toggle.trigger('click')
+    expect(toggle.text()).toBe('收起')
+    expect(wrapper.get('.body-content').classes()).not.toContain('collapsed')
+    expect(router.currentRoute.value.query.detail).toBeUndefined()
+    await toggle.trigger('click')
+    expect(toggle.text()).toBe('展开')
+    expect(router.currentRoute.value.query.detail).toBeUndefined()
+  })
+  it('does not show an expand control for a short body', async () => {
+    const { wrapper } = await render({ bodyPreview: 'short\nbody' })
+    expect(wrapper.find('.expand-button').exists()).toBe(false)
+  })
+  it('resets expansion when the message body changes', async () => {
+    const { wrapper } = await render({ bodyPreview: 'long\n'.repeat(80) })
+    Object.defineProperty(wrapper.get('.body-content').element, 'scrollHeight', { configurable: true, value: 400 })
+    window.dispatchEvent(new Event('resize'))
+    await flushPromises()
+    await wrapper.get('.expand-button').trigger('click')
+    expect(wrapper.get('.body-content').classes()).not.toContain('collapsed')
+    await wrapper.setProps({ message: messageFixture({ id: 'message-2', bodyPreview: 'changed\n'.repeat(80) }) })
+    expect(wrapper.get('.body-content').classes()).toContain('collapsed')
+  })
+  it('opens the quick tag picker without opening detail', async () => {
+    const { router, wrapper } = await render({ tags: [] })
+    await wrapper.get('button[aria-label="添加标签"]').trigger('click')
+    expect(wrapper.find('[role="dialog"][aria-label="选择消息标签"]').exists()).toBe(true)
+    expect(router.currentRoute.value.query.detail).toBeUndefined()
   })
   it('linkifies URLs in plain text with safe hrefs and no detail opening', async () => {
     const { router, wrapper } = await render({ bodyPreview: '下载：https://example.com/file.zip 结束 javascript:no' })

@@ -26,6 +26,7 @@ type Tag struct {
 
 type Message struct {
 	ID, OwnerID                    uuid.UUID
+	Title                          *string
 	BodyPlaintext                  *string
 	BodyCiphertext, BodyNonce      []byte
 	BodyEncryptionVersion          *int16
@@ -73,6 +74,7 @@ type Page struct {
 }
 
 type CreateCommand struct {
+	Title                                       *string
 	Body, BodyFormat, Lifecycle, IdempotencyKey string
 	Sensitive                                   bool
 	TagIDs                                      []uuid.UUID
@@ -81,6 +83,7 @@ type CreateCommand struct {
 
 type EditCommand struct {
 	ExpectedVersion                int64
+	Title                          OptionalString
 	Body, BodyFormat               *string
 	BodyClear                      bool
 	DetectedType, DetectedLanguage OptionalString
@@ -100,6 +103,7 @@ type ListFilter struct {
 }
 
 type DirectSendCommand struct {
+	Title                            *string
 	RecipientID                      uuid.UUID
 	Body, BodyFormat, IdempotencyKey string
 	Sensitive                        bool

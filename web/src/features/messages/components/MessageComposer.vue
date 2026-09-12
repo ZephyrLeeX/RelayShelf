@@ -56,6 +56,14 @@ function filesChanged(event: Event) {
       </div>
     </div>
 
+    <input
+      v-model="composer.title.value"
+      class="title-input"
+      maxlength="200"
+      placeholder="标题（可选）"
+      aria-label="标题（可选）"
+    >
+
     <ComposerEditor
       v-model="composer.body.value"
       :code="isCode"
@@ -261,6 +269,7 @@ function filesChanged(event: Event) {
 .drop-prompt{position:absolute;inset:0;z-index:30;display:grid;place-items:center;padding:1rem;border:2px dashed var(--accent-primary);border-radius:inherit;background:color-mix(in srgb,var(--surface-raised) 90%,var(--accent-primary));color:var(--accent-primary-hover);font-size:.82rem;font-weight:650;text-align:center;pointer-events:none}
 .composer-top{display:flex;align-items:center;justify-content:space-between;gap:.5rem;padding:.65rem .8rem 0}
 .composer-top-right{display:flex;align-items:center;gap:.4rem}
+.title-input{min-width:0;margin:.55rem .8rem 0;border:0;border-bottom:1px solid var(--border-default);border-radius:0;padding:.5rem .1rem;background:transparent;color:var(--text-primary);font:inherit;font-size:.9rem;font-weight:650;outline:none}.title-input::placeholder{color:var(--text-tertiary);font-weight:500}.title-input:focus{border-color:var(--accent-primary)}
 .icon-tool{display:inline-grid;place-items:center;width:34px;height:34px;border:1px solid var(--border-default);border-radius:.6rem;background:var(--surface-raised);color:var(--text-secondary);cursor:pointer}.icon-tool svg{width:.95rem;height:.95rem}.icon-tool:hover{border-color:var(--border-strong);background:var(--surface-soft);color:var(--text-primary)}.icon-tool:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px}.icon-tool.on{border-color:var(--state-warning);color:var(--state-warning);background:color-mix(in srgb,var(--state-warning) 12%,var(--surface-raised))}
 .composer-toolbar{display:flex;align-items:center;gap:.3rem;padding:.65rem .8rem}
 .tool-button{display:inline-flex;align-items:center;justify-content:center;gap:.35rem;min-height:36px;border:0;border-radius:.55rem;padding:.4rem .55rem;background:transparent;color:var(--text-secondary);font-size:.8rem;font-weight:620;cursor:pointer}.tool-button>svg{width:1rem;height:1rem}.tool-button:hover{background:var(--surface-soft);color:var(--text-primary)}.tool-button:focus-visible{outline:2px solid var(--focus-ring);outline-offset:-2px}.tool-button:disabled{cursor:not-allowed;opacity:.55}
@@ -275,6 +284,6 @@ function filesChanged(event: Event) {
 .bytes{margin-left:auto;color:var(--text-tertiary);font-family:var(--font-mono);font-size:.65rem;white-space:nowrap}.bytes.error{color:var(--state-danger)}
 .send-button{display:inline-flex;align-items:center;gap:.35rem;min-height:38px;padding:.45rem .9rem;border-radius:.65rem}.send-button svg{width:.9rem;height:.9rem}
 .composer-feedback{display:grid;gap:.2rem;padding:0 .9rem}.composer-feedback:empty{display:none}.composer-feedback p{margin:0 0 .65rem;font-size:.76rem}.warning{color:var(--state-warning)}.direct-hint{color:var(--text-tertiary)}
-@media(max-width:700px){.composer-top{padding:.55rem .6rem 0}.composer-toolbar{flex-wrap:wrap;padding:.55rem .6rem}.tool-label{display:none}.tool-button,.lifecycle-control select{padding-inline:.55rem}.bytes{order:5;margin-left:auto}.send-button{order:6;padding-inline:.8rem}.popover-panel{position:fixed;left:1rem;right:1rem;bottom:calc(72px + env(safe-area-inset-bottom));width:auto;min-width:0;max-width:none}.new-tag{grid-template-columns:minmax(0,1fr) 38px auto}}
+@media(max-width:700px){.composer-top{padding:.55rem .6rem 0}.title-input{margin-inline:.6rem}.composer-toolbar{flex-wrap:wrap;padding:.55rem .6rem}.tool-label{display:none}.tool-button,.lifecycle-control select{padding-inline:.55rem}.bytes{order:5;margin-left:auto}.send-button{order:6;padding-inline:.8rem}.popover-panel{position:fixed;left:1rem;right:1rem;bottom:calc(72px + env(safe-area-inset-bottom));width:auto;min-width:0;max-width:none}.new-tag{grid-template-columns:minmax(0,1fr) 38px auto}}
 @media(max-width:420px){.bytes{display:none}.send-button{margin-left:auto}}
 </style>

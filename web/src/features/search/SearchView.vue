@@ -54,7 +54,7 @@ watch(() => route.query, () => {
   <section class="search-page">
     <header>
       <h1>搜索</h1><p class="muted">
-        通过正文、文件名、标签和时间找回内容。
+        通过标题、正文、文件名、标签和时间找回内容。
       </p>
     </header>
     <form
@@ -66,7 +66,7 @@ watch(() => route.query, () => {
         <Search aria-hidden="true" />
         <input
           v-model="q"
-          placeholder="搜索内容、文件名或标签"
+          placeholder="搜索标题、正文、文件名或标签"
           autocomplete="off"
         >
       </label>

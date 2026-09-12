@@ -148,4 +148,59 @@ describe('MessageDetailSurface', () => {
     expect(edit).toHaveBeenCalledWith('message-1', expect.objectContaining({ body: stored, bodyFormat: BodyFormat.MARKDOWN }))
     wrapper.unmount()
   })
+
+  it('displays, edits, and clears the optional title together with the body', async () => {
+    vi.spyOn(DefaultService, 'getMessage').mockResolvedValue(messageFixture({ title: 'Old title', body: 'detail body' }))
+    vi.spyOn(DefaultService, 'listTags').mockResolvedValue([])
+    const edit = vi.spyOn(DefaultService, 'editMessage').mockResolvedValue(messageFixture({ title: 'New title' }))
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/temporary', component: { template: '<div />' } }] })
+    await router.push('/temporary?detail=message-1')
+    await router.isReady()
+    const wrapper = mount(MessageDetailSurface, {
+      global: { plugins: [router, [VueQueryPlugin, { queryClient: new QueryClient({ defaultOptions: { queries: { retry: false } } }) }]], stubs: { teleport: true } },
+    })
+    await flushPromises()
+    expect(wrapper.get('.message-title').text()).toBe('Old title')
+    await wrapper.findAll('button').find((button) => button.text() === '编辑')!.trigger('click')
+    const title = wrapper.get<HTMLInputElement>('form.edit input[placeholder="标题（可选）"]')
+    await title.setValue('  New title  ')
+    await wrapper.get('form.edit').trigger('submit')
+    await flushPromises()
+    expect(edit).toHaveBeenCalledWith('message-1', expect.objectContaining({ title: 'New title', body: 'detail body' }))
+
+    await wrapper.findAll('button').find((button) => button.text() === '编辑')!.trigger('click')
+    const clearTitle = wrapper.get<HTMLInputElement>('form.edit input[placeholder="标题（可选）"]')
+    await clearTitle.setValue('   ')
+    await wrapper.get('form.edit').trigger('submit')
+    await flushPromises()
+    expect(edit).toHaveBeenLastCalledWith('message-1', expect.objectContaining({ title: '' }))
+    wrapper.unmount()
+  })
+
+  it('creates a tag in the shared detail picker, auto-selects it, and saves the replacement', async () => {
+    const existing = { id: 'tag-existing', name: '工作', color: '#112233', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }
+    const created = { id: 'tag-created', name: '服务器', color: '#3B8C6E', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }
+    vi.spyOn(DefaultService, 'getMessage').mockResolvedValue(messageFixture({ tags: [existing] }))
+    vi.spyOn(DefaultService, 'listTags').mockResolvedValueOnce([existing]).mockResolvedValue([existing, created])
+    vi.spyOn(DefaultService, 'createTag').mockResolvedValue(created)
+    const replace = vi.spyOn(DefaultService, 'replaceMessageTags').mockResolvedValue(messageFixture({ tags: [existing, created], version: 2 }))
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/temporary', component: { template: '<div />' } }] })
+    await router.push('/temporary?detail=message-1')
+    await router.isReady()
+    const wrapper = mount(MessageDetailSurface, {
+      global: { plugins: [router, [VueQueryPlugin, { queryClient: new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }) }]], stubs: { teleport: true } },
+    })
+    await flushPromises()
+    await wrapper.get('button[aria-label="编辑标签"]').trigger('click')
+    expect(wrapper.get<HTMLInputElement>('input[value="tag-existing"]').element.checked).toBe(true)
+    await wrapper.get('input[aria-label="新建标签名称"]').setValue(' 服务器 ')
+    await wrapper.findAll('.new-tag button').at(0)!.trigger('click')
+    await flushPromises()
+    expect(DefaultService.createTag).toHaveBeenCalledWith({ name: '服务器', color: '#3B8C6E' })
+    expect(wrapper.get<HTMLInputElement>('input[value="tag-created"]').element.checked).toBe(true)
+    await wrapper.findAll('.save-tags').at(0)!.trigger('click')
+    await flushPromises()
+    expect(replace).toHaveBeenCalledWith('message-1', { expectedVersion: 1, tagIds: ['tag-existing', 'tag-created'] })
+    wrapper.unmount()
+  })
 })

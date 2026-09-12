@@ -109,7 +109,7 @@ func messageDTO(m Message) httpapi.Message {
 	for _, a := range m.Attachments {
 		attachments = append(attachments, attachmentDTO(a))
 	}
-	return httpapi.Message{Id: m.ID, Body: body, BodyFormat: httpapi.BodyFormat(m.BodyFormat), DetectedType: m.DetectedType, DetectedLanguage: m.DetectedLanguage, Sensitive: m.Sensitive, Lifecycle: httpapi.Lifecycle(m.Lifecycle), Favorite: m.Favorite, ExpiresAt: m.ExpiresAt, TrashedAt: m.TrashedAt, PurgeAt: m.PurgeAt, SourceUserId: m.SourceUserID, SourceMessageId: m.SourceMessageID, Version: m.Version, CreatedAt: m.CreatedAt.UTC(), UpdatedAt: m.UpdatedAt.UTC(), Tags: tags, Attachments: attachments}
+	return httpapi.Message{Id: m.ID, Title: m.Title, Body: body, BodyFormat: httpapi.BodyFormat(m.BodyFormat), DetectedType: m.DetectedType, DetectedLanguage: m.DetectedLanguage, Sensitive: m.Sensitive, Lifecycle: httpapi.Lifecycle(m.Lifecycle), Favorite: m.Favorite, ExpiresAt: m.ExpiresAt, TrashedAt: m.TrashedAt, PurgeAt: m.PurgeAt, SourceUserId: m.SourceUserID, SourceMessageId: m.SourceMessageID, Version: m.Version, CreatedAt: m.CreatedAt.UTC(), UpdatedAt: m.UpdatedAt.UTC(), Tags: tags, Attachments: attachments}
 }
 func attachmentDTO(a Attachment) httpapi.AttachmentSummary {
 	return httpapi.AttachmentSummary{Id: a.ID, OriginalFilename: a.OriginalFilename, ClientMime: a.ClientMime, DetectedMime: a.DetectedMime, SizeBytes: a.SizeBytes, DisplayOrder: a.DisplayOrder}
@@ -119,7 +119,7 @@ func attachmentDTO(a Attachment) httpapi.AttachmentSummary {
 // Search and message listing deliberately use the same response contract.
 func SummaryDTO(s Summary) httpapi.MessageSummary {
 	m := messageDTO(s.Message)
-	return httpapi.MessageSummary{Id: m.Id, Body: nil, BodyPreview: s.BodyPreview, BodyTruncated: s.BodyTruncated, BodyFormat: m.BodyFormat, DetectedType: m.DetectedType, DetectedLanguage: m.DetectedLanguage, Sensitive: m.Sensitive, Lifecycle: m.Lifecycle, Favorite: m.Favorite, ExpiresAt: m.ExpiresAt, TrashedAt: m.TrashedAt, PurgeAt: m.PurgeAt, SourceUserId: m.SourceUserId, SourceMessageId: m.SourceMessageId, Version: m.Version, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, Tags: m.Tags, Attachments: m.Attachments, AttachmentCount: s.AttachmentCount}
+	return httpapi.MessageSummary{Id: m.Id, Title: m.Title, Body: nil, BodyPreview: s.BodyPreview, BodyTruncated: s.BodyTruncated, BodyFormat: m.BodyFormat, DetectedType: m.DetectedType, DetectedLanguage: m.DetectedLanguage, Sensitive: m.Sensitive, Lifecycle: m.Lifecycle, Favorite: m.Favorite, ExpiresAt: m.ExpiresAt, TrashedAt: m.TrashedAt, PurgeAt: m.PurgeAt, SourceUserId: m.SourceUserId, SourceMessageId: m.SourceMessageId, Version: m.Version, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, Tags: m.Tags, Attachments: m.Attachments, AttachmentCount: s.AttachmentCount}
 }
 
 func defaults(format *httpapi.BodyFormat, lifecycle *httpapi.Lifecycle, sensitive *bool) (string, string, bool) {
@@ -161,7 +161,7 @@ func (h *Handler) CreateMessage(w http.ResponseWriter, r *http.Request, params h
 	if body.Body != nil {
 		messageBody = *body.Body
 	}
-	result, err := h.service.CreateResult(r.Context(), a.User.ID, a.Device.ID, CreateCommand{Body: messageBody, BodyFormat: format, Lifecycle: lifecycle, Sensitive: sensitive, TagIDs: ids, UploadIDs: uploadIDs, IdempotencyKey: params.IdempotencyKey})
+	result, err := h.service.CreateResult(r.Context(), a.User.ID, a.Device.ID, CreateCommand{Title: body.Title, Body: messageBody, BodyFormat: format, Lifecycle: lifecycle, Sensitive: sensitive, TagIDs: ids, UploadIDs: uploadIDs, IdempotencyKey: params.IdempotencyKey})
 	if err != nil {
 		mapError(w, r, err)
 		return
@@ -221,6 +221,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, lifecycle *httpap
 func (h *Handler) EditMessage(w http.ResponseWriter, r *http.Request, messageID httpapi.MessageId) {
 	var body struct {
 		ExpectedVersion  int64               `json:"expectedVersion"`
+		Title            json.RawMessage     `json:"title"`
 		Body             json.RawMessage     `json:"body"`
 		BodyFormat       *httpapi.BodyFormat `json:"bodyFormat"`
 		DetectedType     json.RawMessage     `json:"detectedType"`
@@ -230,6 +231,14 @@ func (h *Handler) EditMessage(w http.ResponseWriter, r *http.Request, messageID 
 		return
 	}
 	command := EditCommand{ExpectedVersion: body.ExpectedVersion}
+	if len(body.Title) > 0 {
+		var value string
+		if string(body.Title) == "null" || json.Unmarshal(body.Title, &value) != nil {
+			mapError(w, r, ErrValidation)
+			return
+		}
+		command.Title = OptionalString{Set: true, Value: &value}
+	}
 	if len(body.Body) > 0 {
 		if string(body.Body) == "null" {
 			command.BodyClear = true
@@ -361,7 +370,11 @@ func (h *Handler) EditSensitiveBody(w http.ResponseWriter, r *http.Request, mess
 	if !decode(w, r, &body) {
 		return
 	}
-	m, err := h.service.EditSensitive(r.Context(), actor(r).User.ID, uuid.UUID(messageID), body.ExpectedVersion, body.Body)
+	title := OptionalString{}
+	if body.Title != nil {
+		title = OptionalString{Set: true, Value: body.Title}
+	}
+	m, err := h.service.EditSensitive(r.Context(), actor(r).User.ID, uuid.UUID(messageID), body.ExpectedVersion, title, body.Body)
 	h.respondMessage(w, r, m, body.ExpectedVersion, err)
 }
 func (h *Handler) DirectSendMessage(w http.ResponseWriter, r *http.Request, params httpapi.DirectSendMessageParams) {
@@ -381,7 +394,7 @@ func (h *Handler) DirectSendMessage(w http.ResponseWriter, r *http.Request, para
 	if body.Body != nil {
 		messageBody = *body.Body
 	}
-	result, err := h.service.DirectSendResult(r.Context(), a.User.ID, a.Device.ID, DirectSendCommand{RecipientID: uuid.UUID(body.RecipientUserId), Body: messageBody, BodyFormat: format, Sensitive: sensitive, UploadIDs: uploadIDs, IdempotencyKey: params.IdempotencyKey})
+	result, err := h.service.DirectSendResult(r.Context(), a.User.ID, a.Device.ID, DirectSendCommand{Title: body.Title, RecipientID: uuid.UUID(body.RecipientUserId), Body: messageBody, BodyFormat: format, Sensitive: sensitive, UploadIDs: uploadIDs, IdempotencyKey: params.IdempotencyKey})
 	if err != nil {
 		mapError(w, r, err)
 		return

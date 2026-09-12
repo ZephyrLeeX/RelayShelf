@@ -42,6 +42,7 @@ func newIntegrationFixture(t testing.TB) *integrationFixture {
 }
 
 type messageOptions struct {
+	title        *string
 	body         *string
 	sensitive    bool
 	lifecycle    string
@@ -82,9 +83,9 @@ func (fixture *integrationFixture) insertMessage(t testing.TB, owner uuid.UUID, 
 		purgeAt = &purge
 	}
 	_, err := fixture.db.Exec(context.Background(), `INSERT INTO messages(
-id,owner_id,body_plaintext,body_ciphertext,body_nonce,body_encryption_version,body_format,
+id,owner_id,title,body_plaintext,body_ciphertext,body_nonce,body_encryption_version,body_format,
 detected_type,sensitive,lifecycle,is_favorite,expires_at,trashed_at,purge_at,created_at,updated_at)
-VALUES($1,$2,$3,$4,$5,$6,'TEXT',$7,$8,$9,$10,$11,$12,$13,$14,$14)`, id, owner, options.body,
+VALUES($1,$2,$3,$4,$5,$6,$7,'TEXT',$8,$9,$10,$11,$12,$13,$14,$15,$15)`, id, owner, options.title, options.body,
 		ciphertext, nonce, encryptionVersion, options.detectedType, options.sensitive, options.lifecycle,
 		options.favorite, options.expiresAt, options.trashedAt, purgeAt, options.createdAt)
 	if err != nil {
@@ -190,6 +191,33 @@ func TestSearchSourcesANDPrivacyActiveAndSensitiveBoundaries(t *testing.T) {
 	}
 	if page = fixture.search(t, fixture.bob, "postgres", nil); len(page.Items) != 1 {
 		t.Fatalf("admin owner scope count=%d", len(page.Items))
+	}
+}
+
+func TestSearchTitleAndCrossFieldSensitiveMetadata(t *testing.T) {
+	fixture := newIntegrationFixture(t)
+	titleOnly := fixture.insertMessage(t, fixture.alice, messageOptions{title: textPointer("OpenWrt Sunshine 部署"), body: textPointer("正文没有查询词")})
+	crossField := fixture.insertMessage(t, fixture.alice, messageOptions{title: textPointer("nginx 部署"), body: textPointer("production rollout")})
+	sensitive := fixture.insertMessage(t, fixture.alice, messageOptions{title: textPointer("secret metadata"), sensitive: true})
+	nullTitle := fixture.insertMessage(t, fixture.alice, messageOptions{body: textPointer("ordinary null title")})
+
+	if page := fixture.search(t, fixture.alice, "OpenWrt Sunshine", nil); !containsMessage(page, titleOnly) {
+		t.Fatal("title-only search did not match")
+	}
+	if page := fixture.search(t, fixture.alice, "nginx rollout", nil); !containsMessage(page, crossField) {
+		t.Fatal("title/body cross-field AND did not match")
+	}
+	page := fixture.search(t, fixture.alice, "secret metadata", nil)
+	if !containsMessage(page, sensitive) {
+		t.Fatal("sensitive title metadata was not searchable")
+	}
+	for _, item := range page.Items {
+		if item.ID == sensitive && (item.BodyPlaintext != nil || item.BodyPreview != nil) {
+			t.Fatal("sensitive title search exposed body")
+		}
+	}
+	if page = fixture.search(t, fixture.alice, "ordinary", nil); !containsMessage(page, nullTitle) {
+		t.Fatal("NULL title broke existing body search")
 	}
 }
 

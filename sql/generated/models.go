@@ -111,6 +111,7 @@ type Message struct {
 	Version               int64
 	CreatedAt             pgtype.Timestamptz
 	UpdatedAt             pgtype.Timestamptz
+	Title                 pgtype.Text
 }
 
 type MessageAttachment struct {

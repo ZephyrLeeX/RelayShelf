@@ -9,15 +9,15 @@ SELECT t.* FROM tags t JOIN message_tags mt ON mt.tag_id=t.id
 WHERE mt.message_id=$1 ORDER BY t.normalized_name,t.id;
 
 -- name: InsertMessage :exec
-INSERT INTO messages(id,owner_id,body_plaintext,body_ciphertext,body_nonce,body_encryption_version,
+INSERT INTO messages(id,owner_id,title,body_plaintext,body_ciphertext,body_nonce,body_encryption_version,
  body_format,detected_type,detected_language,sensitive,lifecycle,is_favorite,expires_at,trashed_at,
  purge_at,source_user_id,source_message_id,created_device_id,version,created_at,updated_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21);
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22);
 
 -- name: SaveMessage :execrows
-UPDATE messages SET body_plaintext=$3,body_ciphertext=$4,body_nonce=$5,body_encryption_version=$6,
- body_format=$7,detected_type=$8,detected_language=$9,sensitive=$10,lifecycle=$11,is_favorite=$12,
- expires_at=$13,trashed_at=$14,purge_at=$15,version=$16,updated_at=$17
+UPDATE messages SET title=$3,body_plaintext=$4,body_ciphertext=$5,body_nonce=$6,body_encryption_version=$7,
+ body_format=$8,detected_type=$9,detected_language=$10,sensitive=$11,lifecycle=$12,is_favorite=$13,
+ expires_at=$14,trashed_at=$15,purge_at=$16,version=$17,updated_at=$18
 WHERE id=$1 AND owner_id=$2;
 
 -- name: GetMessageSettings :one

@@ -1,6 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import SafeMarkdown from './SafeMarkdown.vue'
+import safeMarkdownSource from './SafeMarkdown.vue?raw'
 
 describe('SafeMarkdown', () => {
   it('blocks raw HTML, active protocols, handlers, and remote image loads', async () => {
@@ -21,6 +22,18 @@ describe('SafeMarkdown', () => {
     expect(link.attributes('rel')).toBe('noopener noreferrer')
     expect(link.attributes('target')).toBe('_blank')
     expect(wrapper.html()).toContain('hljs')
+  })
+
+  it('wraps a long fenced-code line while preserving preformatted newlines and indentation', async () => {
+    const command = `podman pull ghcr.io/example/${'very-long-image-'.repeat(20)}:sha-${'a'.repeat(120)}`
+    const wrapper = mount(SafeMarkdown, { attachTo: document.body, props: { source: `\`\`\`sh\n  ${command}\n\`\`\`` } })
+    await vi.waitFor(() => expect(wrapper.find('pre code').exists()).toBe(true))
+    expect(safeMarkdownSource).toContain('white-space:pre-wrap')
+    expect(safeMarkdownSource).toContain('overflow-wrap:anywhere')
+    expect(safeMarkdownSource).toContain('max-width:100%')
+    expect(safeMarkdownSource).toContain('box-sizing:border-box')
+    expect(wrapper.get('pre code').element.textContent).toContain(`  ${command}`)
+    wrapper.unmount()
   })
 
   it('falls back to escaped plain code for an unknown language', async () => {

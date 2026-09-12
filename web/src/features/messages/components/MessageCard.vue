@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { LockKeyhole, Maximize2, Star } from '@lucide/vue'
-import { computed, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { relativeExpiry } from '@/shared/utils/expiry'
 import { BodyFormat, type MessageSummary } from '@/api/generated'
 import { useDetailSelection } from '@/app/composables/useDetailSelection'
@@ -11,12 +11,17 @@ import AttachmentGrid from './attachments/AttachmentGrid.vue'
 import LinkifiedText from './LinkifiedText.vue'
 import QuickCopyButton from './QuickCopyButton.vue'
 import SafeMarkdown from './SafeMarkdown.vue'
+import MessageTagPicker from './MessageTagPicker.vue'
 import { toast } from '@/shared/ui/toast'
 
 const props = defineProps<{ message: MessageSummary; trash?: boolean }>()
 const { selectedMessageId, openDetail: openSelectedDetail } = useDetailSelection()
 const mutation = useMessageMutation()
 const error = ref('')
+const bodyContent = ref<HTMLElement>()
+const expanded = ref(false)
+const bodyOverflows = ref(false)
+let bodyObserver: ResizeObserver | undefined
 const selected = computed(() => selectedMessageId.value === props.message.id)
 const hasBody = computed(() => props.message.sensitive || Boolean(props.message.bodyPreview))
 const requiresDetailToCopy = computed(() => props.message.sensitive || props.message.bodyTruncated)
@@ -47,6 +52,36 @@ const copyBody = computed(() => {
   const preview = props.message.bodyPreview ?? ''
   if (requiresDetailToCopy.value) return preview
   return unwrapSingleFencedCode(preview) ?? preview
+})
+
+function measureBody() {
+  const element = bodyContent.value
+  if (!element) {
+    bodyOverflows.value = false
+    return
+  }
+  const rootFontSize = Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16
+  bodyOverflows.value = element.scrollHeight > 11 * rootFontSize + 1
+}
+
+watch(() => [props.message.id, props.message.bodyPreview] as const, async () => {
+  expanded.value = false
+  await nextTick()
+  bodyObserver?.disconnect()
+  if (bodyContent.value) bodyObserver?.observe(bodyContent.value)
+  measureBody()
+})
+onMounted(() => {
+  if (typeof ResizeObserver !== 'undefined') {
+    bodyObserver = new ResizeObserver(measureBody)
+    if (bodyContent.value) bodyObserver.observe(bodyContent.value)
+  }
+  window.addEventListener('resize', measureBody)
+  void nextTick(measureBody)
+})
+onBeforeUnmount(() => {
+  bodyObserver?.disconnect()
+  window.removeEventListener('resize', measureBody)
 })
 
 function openDetail() {
@@ -116,13 +151,21 @@ function removeForever() {
     </header>
 
     <div class="body-region">
+      <h2
+        v-if="message.title"
+        class="message-title"
+      >
+        {{ message.title }}
+      </h2>
       <span
         v-if="message.sensitive"
         class="locked"
       ><strong><LockKeyhole aria-hidden="true" />敏感内容已锁定</strong><small>正文已保护，打开详情后可验证查看</small></span>
       <div
         v-else-if="message.bodyPreview"
+        ref="bodyContent"
         class="body-content"
+        :class="{ collapsed: !expanded, overflowing: bodyOverflows && !expanded }"
       >
         <SafeMarkdown
           v-if="isMarkdownView"
@@ -138,6 +181,15 @@ function removeForever() {
           :text="message.bodyPreview"
         />
       </div>
+      <button
+        v-if="bodyOverflows"
+        class="expand-button"
+        type="button"
+        :aria-expanded="expanded"
+        @click.stop="expanded = !expanded"
+      >
+        {{ expanded ? '收起' : '展开' }}
+      </button>
       <span
         v-else
         class="attachment-only"
@@ -156,7 +208,7 @@ function removeForever() {
     />
 
     <div
-      v-if="message.tags.length"
+      v-if="(!trash && !message.trashedAt) || message.tags.length"
       class="tags"
     >
       <TagChip
@@ -164,6 +216,11 @@ function removeForever() {
         :key="tag.id"
         :name="tag.name"
         :color="tag.color"
+      />
+      <MessageTagPicker
+        v-if="!trash && !message.trashedAt"
+        :message="message"
+        :label="message.tags.length ? '标签' : '添加标签'"
       />
     </div>
 
@@ -228,11 +285,10 @@ function removeForever() {
 <style scoped>
 .message-card{position:relative;display:grid;min-width:0;gap:.65rem;padding:.82rem .9rem;cursor:pointer;transition:border-color .15s ease,background .15s ease,box-shadow .15s ease}.message-card>*{min-width:0}.message-card:hover{border-color:var(--border-strong);box-shadow:var(--shadow-md)}.message-card.selected{border-color:var(--accent-primary);background:color-mix(in srgb,var(--accent-primary-soft) 44%,var(--surface-raised));box-shadow:inset 3px 0 var(--accent-primary),var(--shadow-sm)}
 .card-header,.headline,.tags,.actions,.meta{display:flex;flex-wrap:wrap;align-items:center}.card-header{justify-content:space-between;gap:.6rem}.headline,.tags,.actions,.meta{gap:.38rem}.type-badge,.expiry-badge,.favorite-badge{display:inline-flex;align-items:center;gap:.25rem;min-height:22px;border-radius:999px;padding:.16rem .46rem;font-size:.65rem;font-weight:750;letter-spacing:.035em}.favorite-badge svg{width:.72rem;height:.72rem}.type-badge{background:var(--surface-soft);color:var(--text-secondary)}.code-card .type-badge{background:color-mix(in srgb,var(--content-code) 13%,var(--surface-soft));color:var(--content-code)}.expiry-badge{background:color-mix(in srgb,var(--state-warning) 12%,var(--surface-soft));color:var(--state-warning)}.favorite-badge{background:var(--accent-primary-soft);color:var(--accent-primary)}
-.body-region{position:relative;display:grid;gap:.38rem}
+.body-region{position:relative;display:grid;min-width:0;gap:.38rem}.message-title{min-width:0;max-width:100%;margin:.05rem 0 .1rem;color:var(--text-primary);font-size:1rem;font-weight:750;line-height:1.4;overflow-wrap:anywhere;word-break:break-word}
 .header-actions{display:flex;align-items:center;gap:.3rem}
 .detail-button{display:inline-grid;place-items:center;width:28px;height:28px;border:0;border-radius:.45rem;background:transparent;color:var(--text-tertiary);cursor:pointer}.detail-button svg{width:.95rem;height:.95rem}.detail-button:hover{background:var(--surface-soft);color:var(--text-primary)}.detail-button:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px}
-.body-content pre{max-height:10.5rem;margin:0;overflow:hidden;overflow-wrap:anywhere;white-space:pre-wrap;font:inherit;line-height:1.5}.code{border-left:3px solid var(--content-code);border-radius:var(--radius-sm);padding:.7rem .75rem;background:color-mix(in srgb,var(--content-code) 8%,var(--surface-soft));font-family:var(--font-mono);font-size:.82rem}
-.feed-markdown{max-height:11rem;overflow:hidden}
+.body-content{position:relative;min-width:0;max-width:100%;overflow-wrap:anywhere}.body-content.collapsed{max-height:11rem;overflow:hidden}.body-content.overflowing::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2.4rem;background:linear-gradient(transparent,var(--surface-raised));pointer-events:none}.message-card.selected .body-content.overflowing::after{background:linear-gradient(transparent,color-mix(in srgb,var(--accent-primary-soft) 44%,var(--surface-raised)))}.body-content pre{margin:0;overflow-wrap:anywhere;white-space:pre-wrap;font:inherit;line-height:1.5}.code{max-width:100%;box-sizing:border-box;border-left:3px solid var(--content-code);border-radius:var(--radius-sm);padding:.7rem .75rem;background:color-mix(in srgb,var(--content-code) 8%,var(--surface-soft));font-family:var(--font-mono);font-size:.82rem}.feed-markdown{min-width:0;max-width:100%}.expand-button{justify-self:start;min-height:28px;border:0;border-radius:.4rem;padding:.2rem .4rem;background:transparent;color:var(--accent-primary);font-size:.75rem;font-weight:650;cursor:pointer}.expand-button:hover{background:var(--accent-primary-soft)}.expand-button:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px}
 .locked{display:grid;gap:.18rem;border-radius:var(--radius-sm);padding:.7rem .75rem;background:var(--surface-soft);color:var(--text-secondary)}.locked strong{display:flex;align-items:center;gap:.35rem;color:var(--text-primary);font-size:.85rem}.locked strong svg{width:.9rem;height:.9rem}.locked small,.truncated{color:var(--text-tertiary);font-size:.7rem}.attachment-only{color:var(--text-tertiary);font-size:.8rem}.truncated{display:block}
 footer{display:flex;justify-content:space-between;align-items:flex-end;gap:.7rem;border-top:1px solid var(--border-default);padding-top:.62rem}.meta{color:var(--text-tertiary);font-size:.7rem}.actions{justify-content:flex-end}.button{min-height:30px;padding:.28rem .52rem;font-size:.75rem;box-shadow:none}.error{margin:0;font-size:.78rem}
 @media(max-width:600px){.message-card{padding:.78rem}.card-header{align-items:flex-start}footer{display:grid}.actions{justify-content:flex-start}.button{min-height:40px}}

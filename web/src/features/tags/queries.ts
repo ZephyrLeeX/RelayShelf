@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { DefaultService, type TagRequest } from '@/api/generated'
+import { DefaultService, type Tag, type TagRequest } from '@/api/generated'
 import { queryKeys } from '@/shared/api/queryKeys'
 
 export function useTagsQuery() {
@@ -10,6 +10,9 @@ export function useCreateTag() {
   const client = useQueryClient()
   return useMutation({
     mutationFn: (tag: TagRequest) => DefaultService.createTag(tag),
-    onSuccess: () => client.invalidateQueries({ queryKey: queryKeys.tags.all() }),
+    onSuccess: (created) => {
+      client.setQueryData<Tag[]>(queryKeys.tags.all(), (current = []) => current.some((tag) => tag.id === created.id) ? current : [...current, created])
+      void client.invalidateQueries({ queryKey: queryKeys.tags.all() })
+    },
   })
 }

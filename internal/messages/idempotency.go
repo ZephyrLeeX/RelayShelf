@@ -43,10 +43,17 @@ func (h *canonicalHash) boolean(value bool) {
 		h.b = append(h.b, 0)
 	}
 }
+func (h *canonicalHash) optionalString(value *string) {
+	h.boolean(value != nil)
+	if value != nil {
+		h.string(*value)
+	}
+}
 func (h *canonicalHash) sum() [32]byte { return sha256.Sum256(h.b) }
 
 func hashCreate(c CreateCommand) [32]byte {
 	h := canonicalHash{}
+	h.optionalString(c.Title)
 	h.string(c.Body)
 	h.string(c.BodyFormat)
 	h.string(c.Lifecycle)
@@ -64,6 +71,7 @@ func hashCreate(c CreateCommand) [32]byte {
 func hashDirect(c DirectSendCommand) [32]byte {
 	h := canonicalHash{}
 	h.uuid(c.RecipientID)
+	h.optionalString(c.Title)
 	h.string(c.Body)
 	h.string(c.BodyFormat)
 	h.boolean(c.Sensitive)

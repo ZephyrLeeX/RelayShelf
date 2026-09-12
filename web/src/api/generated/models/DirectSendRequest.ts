@@ -5,6 +5,7 @@
 import type { BodyFormat } from './BodyFormat';
 export type DirectSendRequest = {
     recipientUserId: string;
+    title?: string | null;
     body?: string | null;
     bodyFormat?: BodyFormat;
     sensitive?: boolean;

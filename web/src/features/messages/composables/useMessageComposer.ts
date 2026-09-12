@@ -31,6 +31,7 @@ interface DirectSendSnapshot {
 }
 
 export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>, onSent?: () => void) {
+  const title = ref('')
   const body = ref('')
   const contentType = ref<ContentTypeId>('text')
   const lifecycle = ref(toValue(defaultLifecycle))
@@ -85,6 +86,7 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
   // pending upload client IDs so progress changes do not rotate retry keys,
   // while a changed selection always does.
   const draftFields = () => [
+    title.value,
     body.value,
     contentType.value,
     directMode.value ? 'DIRECT' : lifecycle.value,
@@ -111,6 +113,7 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
       })
       uploadManager.retireUploadIds([...consumed])
       if (unchanged) {
+        title.value = ''
         body.value = ''
         selectedTags.value = []
         selectedUploadClients.value = []
@@ -145,6 +148,7 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
       })
       uploadManager.retireUploadIds([...consumed])
       if (unchanged) {
+        title.value = ''
         body.value = ''
         selectedTags.value = []
         selectedUploadClients.value = []
@@ -194,6 +198,7 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
       fingerprint: requestFingerprint.value,
       identity: attemptedIdentity,
       payload: {
+        title: title.value.trim() || null,
         body: body.value.trim() ? serializedBody.value.body : null,
         bodyFormat: bodyFormat.value,
         lifecycle: lifecycle.value,
@@ -215,6 +220,7 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
       identity: attemptedIdentity,
       payload: {
         recipientUserId: selectedRecipient.value.id,
+        title: title.value.trim() || null,
         body: body.value.trim() ? serializedBody.value.body : null,
         bodyFormat: bodyFormat.value,
         sensitive: sensitive.value,
@@ -298,7 +304,7 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
   }
 
   return {
-    body, contentType, lifecycle, sensitive, selectedTags, selectedUploadClients, selectedUploads,
+    title, body, contentType, lifecycle, sensitive, selectedTags, selectedUploadClients, selectedUploads,
     selectedUploadIds, restorableUploads, selectedRecipient, directMode, byteLength, tooLarge,
     attachmentsBlocking, hasContent, dragging, error, failed, sending, tags, newTagName,
     newTagColor, selectFiles, removeSelected, pasteFiles, dropFiles, addTag, addRestored,

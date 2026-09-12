@@ -811,6 +811,7 @@ components:
       type: object
       additionalProperties: false
       properties:
+        title: { type: [string, 'null'], maxLength: 200 }
         body: { type: [string, 'null'], minLength: 1, maxLength: 1048576 }
         bodyFormat: { $ref: '#/components/schemas/BodyFormat', default: TEXT }
         lifecycle: { $ref: '#/components/schemas/Lifecycle', default: TEMPORARY }
@@ -823,6 +824,7 @@ components:
       required: [expectedVersion]
       properties:
         expectedVersion: { type: integer, format: int64, minimum: 1 }
+        title: { type: string, maxLength: 200, description: "Omit to keep the current title; blank or whitespace-only clears it." }
         body: { type: [string, 'null'], minLength: 1, maxLength: 1048576 }
         bodyFormat: { $ref: '#/components/schemas/BodyFormat' }
         detectedType: { type: [string, 'null'], maxLength: 64 }
@@ -858,13 +860,17 @@ components:
       type: object
       additionalProperties: false
       required: [expectedVersion, body]
-      properties: { expectedVersion: { type: integer, format: int64, minimum: 1 }, body: { type: string, minLength: 1, maxLength: 1048576 } }
+      properties:
+        expectedVersion: { type: integer, format: int64, minimum: 1 }
+        title: { type: string, maxLength: 200, description: "Omit to keep the current title; blank or whitespace-only clears it." }
+        body: { type: string, minLength: 1, maxLength: 1048576 }
     DirectSendRequest:
       type: object
       additionalProperties: false
       required: [recipientUserId]
       properties:
         recipientUserId: { type: string, format: uuid }
+        title: { type: [string, 'null'], maxLength: 200 }
         body: { type: [string, 'null'], minLength: 1, maxLength: 1048576 }
         bodyFormat: { $ref: '#/components/schemas/BodyFormat', default: TEXT }
         sensitive: { type: boolean, default: false }
@@ -902,9 +908,10 @@ components:
         updatedAt: { type: string, format: date-time }
     Message:
       type: object
-      required: [id, body, bodyFormat, sensitive, lifecycle, favorite, version, createdAt, updatedAt, tags, attachments]
+      required: [id, title, body, bodyFormat, sensitive, lifecycle, favorite, version, createdAt, updatedAt, tags, attachments]
       properties:
         id: { type: string, format: uuid }
+        title: { type: [string, 'null'] }
         body: { type: [string, 'null'] }
         bodyFormat: { $ref: '#/components/schemas/BodyFormat' }
         detectedType: { type: [string, 'null'] }

@@ -361,6 +361,7 @@ type CreateMessageRequest struct {
 	Lifecycle  *Lifecycle            `json:"lifecycle,omitempty"`
 	Sensitive  *bool                 `json:"sensitive,omitempty"`
 	TagIds     *[]openapi_types.UUID `json:"tagIds,omitempty"`
+	Title      *string               `json:"title,omitempty"`
 	UploadIds  *[]openapi_types.UUID `json:"uploadIds,omitempty"`
 }
 
@@ -386,6 +387,7 @@ type DirectSendRequest struct {
 	BodyFormat      *BodyFormat           `json:"bodyFormat,omitempty"`
 	RecipientUserId openapi_types.UUID    `json:"recipientUserId"`
 	Sensitive       *bool                 `json:"sensitive,omitempty"`
+	Title           *string               `json:"title,omitempty"`
 	UploadIds       *[]openapi_types.UUID `json:"uploadIds,omitempty"`
 }
 
@@ -396,12 +398,18 @@ type EditMessageRequest struct {
 	DetectedLanguage *string     `json:"detectedLanguage,omitempty"`
 	DetectedType     *string     `json:"detectedType,omitempty"`
 	ExpectedVersion  int64       `json:"expectedVersion"`
+
+	// Title Omit to keep the current title; blank or whitespace-only clears it.
+	Title *string `json:"title,omitempty"`
 }
 
 // EditSensitiveBodyRequest defines model for EditSensitiveBodyRequest.
 type EditSensitiveBodyRequest struct {
 	Body            string `json:"body"`
 	ExpectedVersion int64  `json:"expectedVersion"`
+
+	// Title Omit to keep the current title; blank or whitespace-only clears it.
+	Title *string `json:"title,omitempty"`
 }
 
 // Error defines model for Error.
@@ -474,6 +482,7 @@ type Message struct {
 	SourceMessageId  *openapi_types.UUID `json:"sourceMessageId,omitempty"`
 	SourceUserId     *openapi_types.UUID `json:"sourceUserId,omitempty"`
 	Tags             []Tag               `json:"tags"`
+	Title            *string             `json:"title"`
 	TrashedAt        *time.Time          `json:"trashedAt,omitempty"`
 	UpdatedAt        time.Time           `json:"updatedAt"`
 	Version          int64               `json:"version"`
@@ -512,6 +521,7 @@ type MessageSummary struct {
 	SourceMessageId  *openapi_types.UUID `json:"sourceMessageId,omitempty"`
 	SourceUserId     *openapi_types.UUID `json:"sourceUserId,omitempty"`
 	Tags             []Tag               `json:"tags"`
+	Title            *string             `json:"title"`
 	TrashedAt        *time.Time          `json:"trashedAt,omitempty"`
 	UpdatedAt        time.Time           `json:"updatedAt"`
 	Version          int64               `json:"version"`

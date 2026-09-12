@@ -156,6 +156,57 @@ describe('MessageComposer', () => {
     await flushPromises()
     expect(create).toHaveBeenLastCalledWith('key-b', expect.objectContaining({ body: 'line two' }))
   })
+  it('trims and sends an optional title, treats blank as null, and clears it after success', async () => {
+    const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
+    const wrapper = mountComposer()
+    const title = wrapper.get<HTMLInputElement>('input[aria-label="标题（可选）"]')
+    await title.setValue('  OpenWrt Sunshine 部署  ')
+    await wrapper.get('textarea').setValue('测试正文')
+    await sendByKeyboard(wrapper)
+    await flushPromises()
+    expect(create).toHaveBeenCalledWith('key-a', expect.objectContaining({ title: 'OpenWrt Sunshine 部署', body: '测试正文' }))
+    expect(title.element.value).toBe('')
+
+    await title.setValue('   ')
+    await wrapper.get('textarea').setValue('无标题正文')
+    await sendByKeyboard(wrapper)
+    await flushPromises()
+    expect(create).toHaveBeenLastCalledWith('key-b', expect.objectContaining({ title: null }))
+  })
+  it('includes title changes in retry identity and preserves the failed title draft', async () => {
+    const create = vi.spyOn(DefaultService, 'createMessage')
+      .mockRejectedValueOnce(new TypeError('offline'))
+      .mockRejectedValueOnce(new TypeError('offline again'))
+    const wrapper = mountComposer()
+    const title = wrapper.get<HTMLInputElement>('input[aria-label="标题（可选）"]')
+    await title.setValue('First title')
+    await wrapper.get('textarea').setValue('retry body')
+    await sendByKeyboard(wrapper)
+    await flushPromises()
+    expect(create.mock.calls[0][0]).toBe('key-a')
+    expect(title.element.value).toBe('First title')
+
+    await sendByKeyboard(wrapper)
+    await flushPromises()
+    expect(create.mock.calls[1][0]).toBe('key-a')
+
+    await title.setValue('Changed title')
+    await sendByKeyboard(wrapper)
+    await flushPromises()
+    expect(create.mock.calls[2][0]).toBe('key-b')
+  })
+  it('sends the title through Direct Send', async () => {
+    const direct = vi.spyOn(DefaultService, 'directSendMessage').mockResolvedValue({
+      messageId: 'message-direct', createdAt: '2026-08-31T00:00:00Z', expiresAt: '2026-09-01T00:00:00Z',
+    })
+    const wrapper = mountComposer()
+    await pickRecipient(wrapper, 'bob')
+    await wrapper.get('input[aria-label="标题（可选）"]').setValue('  Direct title  ')
+    await wrapper.get('textarea').setValue('direct body')
+    await sendByKeyboard(wrapper)
+    await flushPromises()
+    expect(direct).toHaveBeenCalledWith('key-a', expect.objectContaining({ title: 'Direct title', recipientUserId: bob.id }))
+  })
   it('exposes no UUID input and no More menu anywhere in the composer', () => {
     const wrapper = mountComposer()
     expect(wrapper.html()).not.toContain('UUID')
@@ -212,6 +263,7 @@ describe('MessageComposer', () => {
     expect(create).not.toHaveBeenCalled()
     expect(direct).toHaveBeenCalledWith('key-a', {
       recipientUserId: bob.id,
+      title: null,
       body: 'send once', bodyFormat: BodyFormat.TEXT, sensitive: false, uploadIds: [],
     })
     expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('')
@@ -284,6 +336,7 @@ describe('MessageComposer', () => {
     expect(createTag).not.toHaveBeenCalled()
     expect(direct).toHaveBeenCalledWith('key-a', {
       recipientUserId: bob.id,
+      title: null,
       body: 'direct with drafted tag', bodyFormat: BodyFormat.TEXT, sensitive: false, uploadIds: [],
     })
   })
