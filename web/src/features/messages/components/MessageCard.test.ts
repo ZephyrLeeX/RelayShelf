@@ -32,6 +32,13 @@ describe('MessageCard', () => {
     const { wrapper } = await render({ sensitive: true, bodyPreview: 'must-not-leak' })
     expect(wrapper.text()).toContain('敏感内容已锁定')
     expect(wrapper.text()).not.toContain('must-not-leak')
+    expect(wrapper.find('.attachment-only').exists()).toBe(false)
+  })
+  it('keeps the sensitive lock state for messages with attachments', async () => {
+    const attachment = { id:'a1', originalFilename:'notes.txt', clientMime:'text/plain', detectedMime:'text/plain', sizeBytes:12, displayOrder:0 }
+    const { wrapper } = await render({ sensitive: true, body: null, bodyPreview: null, attachments: [attachment], attachmentCount: 1 })
+    expect(wrapper.text()).toContain('敏感内容已锁定')
+    expect(wrapper.find('.attachment-only').exists()).toBe(false)
   })
   it('hides favorite for temporary messages and offers it for permanent messages', async () => {
     expect((await render({ lifecycle: Lifecycle.TEMPORARY })).wrapper.text()).not.toContain('收藏')
@@ -65,6 +72,7 @@ describe('MessageCard', () => {
     const { wrapper } = await render({ body:null, bodyPreview:null, attachments:[attachment], attachmentCount:1 })
     expect(wrapper.find('[aria-label="复制正文"]').exists()).toBe(false)
     expect(wrapper.text()).toContain('仅附件内容')
+    expect(wrapper.find('.expand-button').exists()).toBe(false)
   })
   it('uses detected MIME, not the client MIME, as image thumbnail authority', async () => {
     const disguised = { id:'unsafe', originalFilename:'unsafe.svg', clientMime:'image/png', detectedMime:'image/svg+xml', sizeBytes:12, displayOrder:0 }
@@ -145,6 +153,7 @@ describe('MessageCard', () => {
     window.dispatchEvent(new Event('resize'))
     await flushPromises()
     const toggle = wrapper.get('.expand-button')
+    expect(wrapper.find('.attachment-only').exists()).toBe(false)
     expect(toggle.text()).toBe('展开')
     expect(wrapper.get('.body-content').classes()).toContain('collapsed')
     await toggle.trigger('click')
@@ -155,9 +164,11 @@ describe('MessageCard', () => {
     expect(toggle.text()).toBe('展开')
     expect(router.currentRoute.value.query.detail).toBeUndefined()
   })
-  it('does not show an expand control for a short body', async () => {
+  it('shows a short body without expand or attachment-only states', async () => {
     const { wrapper } = await render({ bodyPreview: 'short\nbody' })
+    expect(wrapper.get('.body-content').text()).toContain('short')
     expect(wrapper.find('.expand-button').exists()).toBe(false)
+    expect(wrapper.find('.attachment-only').exists()).toBe(false)
   })
   it('resets expansion when the message body changes', async () => {
     const { wrapper } = await render({ bodyPreview: 'long\n'.repeat(80) })
@@ -173,6 +184,16 @@ describe('MessageCard', () => {
     const { router, wrapper } = await render({ tags: [] })
     await wrapper.get('button[aria-label="添加标签"]').trigger('click')
     expect(wrapper.find('[role="dialog"][aria-label="选择消息标签"]').exists()).toBe(true)
+    expect(router.currentRoute.value.query.detail).toBeUndefined()
+  })
+  it('closes the quick tag picker with Escape without opening detail', async () => {
+    const { router, wrapper } = await render({ tags: [] })
+    const trigger = wrapper.get<HTMLButtonElement>('button[aria-label="添加标签"]')
+    await trigger.trigger('click')
+    const input = wrapper.get<HTMLInputElement>('input[aria-label="新建标签名称"]')
+    await input.trigger('keydown', { key: 'Escape' })
+    await flushPromises()
+    expect(wrapper.find('[role="dialog"][aria-label="选择消息标签"]').exists()).toBe(false)
     expect(router.currentRoute.value.query.detail).toBeUndefined()
   })
   it('linkifies URLs in plain text with safe hrefs and no detail opening', async () => {

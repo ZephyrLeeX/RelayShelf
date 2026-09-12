@@ -1,7 +1,7 @@
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { BodyFormat, DefaultService } from '@/api/generated'
 import { messageFixture } from '@/test/fixtures'
 import MessageDetailSurface from './MessageDetailSurface.vue'
@@ -202,5 +202,86 @@ describe('MessageDetailSurface', () => {
     await flushPromises()
     expect(replace).toHaveBeenCalledWith('message-1', { expectedVersion: 1, tagIds: ['tag-existing', 'tag-created'] })
     wrapper.unmount()
+  })
+
+  describe('message editing validation', () => {
+    const attachment = { id:'a1', originalFilename:'notes.txt', clientMime:'text/plain', detectedMime:'text/plain', sizeBytes:12, displayOrder:0 }
+
+    beforeEach(() => vi.restoreAllMocks())
+
+    async function renderEditor(overrides = {}) {
+      vi.spyOn(DefaultService, 'getMessage').mockResolvedValue(messageFixture({ attachments: [attachment], attachmentCount: 1, ...overrides }))
+      vi.spyOn(DefaultService, 'listTags').mockResolvedValue([])
+      const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/temporary', component: { template: '<div />' } }] })
+      await router.push('/temporary?detail=message-1')
+      await router.isReady()
+      const wrapper = mount(MessageDetailSurface, {
+        attachTo: document.body,
+        global: { plugins: [router, [VueQueryPlugin, { queryClient: new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }) }]], stubs: { teleport: true } },
+      })
+      await flushPromises()
+      return { router, wrapper }
+    }
+
+    it('allows an ordinary message with attachments to clear its body', async () => {
+      const edit = vi.spyOn(DefaultService, 'editMessage').mockResolvedValue(messageFixture({ body: null, bodyPreview: null, attachments: [attachment], attachmentCount: 1 }))
+      const { wrapper } = await renderEditor()
+      await wrapper.get('button[title="编辑正文"]').trigger('click')
+      const textarea = wrapper.get<HTMLTextAreaElement>('form.edit textarea')
+      expect(textarea.attributes('required')).toBeUndefined()
+      await textarea.setValue('   ')
+      await wrapper.get('form.edit').trigger('submit')
+      await flushPromises()
+      expect(edit).toHaveBeenCalledWith('message-1', expect.objectContaining({ body: null }))
+      wrapper.unmount()
+    })
+
+    it('rejects an empty sensitive body even when attachments exist', async () => {
+      vi.spyOn(DefaultService, 'revealSensitiveBody').mockResolvedValue({ body: 'secret', version: 1 })
+      const edit = vi.spyOn(DefaultService, 'editSensitiveBody').mockResolvedValue(messageFixture({ sensitive: true, body: null, attachments: [attachment], attachmentCount: 1 }))
+      const { wrapper } = await renderEditor({ sensitive: true, body: null, bodyPreview: null })
+      await wrapper.get('.sensitive .button.primary').trigger('click')
+      await flushPromises()
+      await wrapper.get('button[title="编辑正文"]').trigger('click')
+      const textarea = wrapper.get<HTMLTextAreaElement>('form.edit textarea')
+      expect(textarea.attributes('required')).toBeDefined()
+      await textarea.setValue('   ')
+      await wrapper.get('form.edit').trigger('submit')
+      await flushPromises()
+      expect(edit).not.toHaveBeenCalled()
+      wrapper.unmount()
+    })
+
+    it('submits a non-empty sensitive body when attachments exist', async () => {
+      vi.spyOn(DefaultService, 'revealSensitiveBody').mockResolvedValue({ body: 'secret', version: 1 })
+      const edit = vi.spyOn(DefaultService, 'editSensitiveBody').mockResolvedValue(messageFixture({ sensitive: true, body: null, version: 2, attachments: [attachment], attachmentCount: 1 }))
+      const { wrapper } = await renderEditor({ sensitive: true, body: null, bodyPreview: null })
+      await wrapper.get('.sensitive .button.primary').trigger('click')
+      await flushPromises()
+      await wrapper.get('button[title="编辑正文"]').trigger('click')
+      await wrapper.get<HTMLTextAreaElement>('form.edit textarea').setValue('updated secret')
+      await wrapper.get('form.edit').trigger('submit')
+      await flushPromises()
+      expect(edit).toHaveBeenCalledWith('message-1', { expectedVersion: 1, title: '', body: 'updated secret' })
+      wrapper.unmount()
+    })
+
+    it('keeps the detail open when Escape closes the tag picker', async () => {
+      const { router, wrapper } = await renderEditor()
+      const trigger = wrapper.get<HTMLButtonElement>('button[aria-label="编辑标签"]')
+      await trigger.trigger('click')
+      const input = wrapper.get<HTMLInputElement>('input[aria-label="新建标签名称"]')
+      input.element.focus()
+      await input.trigger('keydown', { key: 'Escape' })
+      await flushPromises()
+      expect(wrapper.find('[role="dialog"][aria-label="选择消息标签"]').exists()).toBe(false)
+      expect(router.currentRoute.value.query.detail).toBe('message-1')
+      expect(document.activeElement).toBe(trigger.element)
+
+      await trigger.trigger('keydown', { key: 'Escape' })
+      await flushPromises()
+      expect(router.currentRoute.value.query.detail).toBeUndefined()
+      wrapper.unmount()
+    })
   })
 })

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Plus, Tags, X } from '@lucide/vue'
-import { ref, watch } from 'vue'
+import { nextTick, ref, watch } from 'vue'
 import type { Message } from '@/api/generated'
 import { displayError } from '@/shared/api/errors'
 import { toast } from '@/shared/ui/toast'
@@ -14,6 +14,7 @@ const props = withDefaults(defineProps<{
 }>(), { label: '标签', iconOnly: false })
 const emit = defineEmits<{ saved: [] }>()
 const open = ref(false)
+const trigger = ref<HTMLButtonElement>()
 const selected = ref<string[]>([])
 const newTagName = ref('')
 const newTagColor = ref('#3B8C6E')
@@ -32,6 +33,14 @@ watch(() => [props.message.id, props.message.version] as const, () => {
 function toggle() {
   if (!open.value) resetSelection()
   open.value = !open.value
+}
+
+function closeAndRestoreFocus(event: KeyboardEvent) {
+  if (!open.value) return
+  event.preventDefault()
+  event.stopPropagation()
+  open.value = false
+  void nextTick(() => trigger.value?.focus())
 }
 
 async function addTag() {
@@ -64,8 +73,10 @@ function save() {
     class="message-tag-picker"
     :class="{ 'icon-mode': iconOnly }"
     @click.stop
+    @keydown.esc="closeAndRestoreFocus"
   >
     <button
+      ref="trigger"
       class="tag-trigger"
       :class="{ 'icon-only': iconOnly }"
       type="button"

@@ -161,7 +161,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
             v-model="editBody"
             rows="12"
             :class="{ code: isCodeContentType(editContentType) }"
-            :required="!message.attachments.length"
+            :required="message.sensitive || !message.attachments.length"
           /></label>
           <div>
             <button

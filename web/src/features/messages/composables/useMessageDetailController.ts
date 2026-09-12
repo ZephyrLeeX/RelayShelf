@@ -162,7 +162,9 @@ export function useMessageDetailController(messageId: MaybeRefOrGetter<string>) 
   }
 
   function saveBody() {
-    if (!message.value || (!editBody.value.trim() && !message.value.attachments.length)) return
+    if (!message.value) return
+    const bodyRequired = message.value.sensitive || !message.value.attachments.length
+    if (!editBody.value.trim() && bodyRequired) return
     if (message.value.sensitive && currentSensitiveBody.value === null) {
       editing.value = false
       error.value = '内容版本已更新，请重新显示正文后再编辑。'

@@ -157,30 +157,34 @@ function removeForever() {
       >
         {{ message.title }}
       </h2>
+      <template v-if="message.sensitive">
+        <span class="locked"><strong><LockKeyhole aria-hidden="true" />敏感内容已锁定</strong><small>正文已保护，打开详情后可验证查看</small></span>
+      </template>
+      <template v-else-if="message.bodyPreview">
+        <div
+          ref="bodyContent"
+          class="body-content"
+          :class="{ collapsed: !expanded, overflowing: bodyOverflows && !expanded }"
+        >
+          <SafeMarkdown
+            v-if="isMarkdownView"
+            class="feed-markdown"
+            :source="message.bodyPreview"
+          />
+          <pre
+            v-else-if="isLegacyCodeView"
+            class="code"
+          >{{ message.bodyPreview }}</pre>
+          <LinkifiedText
+            v-else
+            :text="message.bodyPreview"
+          />
+        </div>
+      </template>
       <span
-        v-if="message.sensitive"
-        class="locked"
-      ><strong><LockKeyhole aria-hidden="true" />敏感内容已锁定</strong><small>正文已保护，打开详情后可验证查看</small></span>
-      <div
-        v-else-if="message.bodyPreview"
-        ref="bodyContent"
-        class="body-content"
-        :class="{ collapsed: !expanded, overflowing: bodyOverflows && !expanded }"
-      >
-        <SafeMarkdown
-          v-if="isMarkdownView"
-          class="feed-markdown"
-          :source="message.bodyPreview"
-        />
-        <pre
-          v-else-if="isLegacyCodeView"
-          class="code"
-        >{{ message.bodyPreview }}</pre>
-        <LinkifiedText
-          v-else
-          :text="message.bodyPreview"
-        />
-      </div>
+        v-else
+        class="attachment-only"
+      >仅附件内容</span>
       <button
         v-if="bodyOverflows"
         class="expand-button"
@@ -190,10 +194,6 @@ function removeForever() {
       >
         {{ expanded ? '收起' : '展开' }}
       </button>
-      <span
-        v-else
-        class="attachment-only"
-      >仅附件内容</span>
       <small
         v-if="message.bodyTruncated"
         class="truncated"
