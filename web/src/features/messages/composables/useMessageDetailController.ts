@@ -1,7 +1,7 @@
 import { computed, onUnmounted, ref, toValue, watch, type MaybeRefOrGetter } from 'vue'
 import { useQueryClient } from '@tanstack/vue-query'
 import { useRoute, useRouter } from 'vue-router'
-import { DefaultService, type RecipientUser } from '@/api/generated'
+import { BodyFormat, DefaultService, type RecipientUser } from '@/api/generated'
 import { displayError } from '@/shared/api/errors'
 import { uploadManager } from '@/features/uploads/manager'
 import { visibleUploads } from '@/features/uploads/store'
@@ -153,6 +153,7 @@ export function useMessageDetailController(messageId: MaybeRefOrGetter<string>) 
       if (currentSensitiveBody.value === null) await reveal()
       if (currentSensitiveBody.value === null) return
       editBody.value = currentSensitiveBody.value
+      editContentType.value = message.value.bodyFormat === BodyFormat.MARKDOWN ? 'markdown' : 'text'
     } else {
       const parsed = parseStoredContent(message.value.body, message.value.bodyFormat)
       editBody.value = parsed.text

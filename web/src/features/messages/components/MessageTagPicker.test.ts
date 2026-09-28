@@ -12,6 +12,20 @@ describe('MessageTagPicker', () => {
   })
   afterEach(() => document.body.replaceChildren())
 
+  it('keeps inside interactions open and dismisses outside pointer presses', async () => {
+    const wrapper = mount(MessageTagPicker, {
+      attachTo: document.body, props: { message: messageFixture() },
+      global: { plugins: [[VueQueryPlugin, { queryClient: new QueryClient({ defaultOptions: { queries: { retry: false } } }) }]] },
+    })
+    await wrapper.get('.tag-trigger').trigger('click')
+    await wrapper.get('input[aria-label="新建标签名称"]').trigger('pointerdown')
+    expect(wrapper.find('.tag-popover').exists()).toBe(true)
+    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    await flushPromises()
+    expect(wrapper.find('.tag-popover').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('consumes Escape, closes the popover, and restores trigger focus', async () => {
     const parentKeydown = vi.fn()
     document.addEventListener('keydown', parentKeydown)

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Plus, Tags, X } from '@lucide/vue'
-import { nextTick, ref, watch } from 'vue'
+import { nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import type { Message } from '@/api/generated'
 import { displayError } from '@/shared/api/errors'
 import { toast } from '@/shared/ui/toast'
@@ -14,6 +14,13 @@ const props = withDefaults(defineProps<{
 }>(), { label: '标签', iconOnly: false })
 const emit = defineEmits<{ saved: [] }>()
 const open = ref(false)
+const root = ref<HTMLElement>()
+function outside(event: PointerEvent) {
+  if (open.value && event.target instanceof Node && !root.value?.contains(event.target)) open.value = false
+}
+function escape(event: KeyboardEvent) { if (event.key === 'Escape') closeAndRestoreFocus(event) }
+onMounted(() => { document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', escape, true) })
+onBeforeUnmount(() => { document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', escape, true) })
 const trigger = ref<HTMLButtonElement>()
 const selected = ref<string[]>([])
 const newTagName = ref('')
@@ -45,7 +52,7 @@ function closeAndRestoreFocus(event: KeyboardEvent) {
 
 async function addTag() {
   const name = newTagName.value.trim()
-  if (!name) return
+  if (!name || createTag.isPending.value) return
   try {
     const tag = await createTag.mutateAsync({ name, color: newTagColor.value })
     if (!selected.value.includes(tag.id)) selected.value.push(tag.id)
@@ -70,6 +77,7 @@ function save() {
 
 <template>
   <div
+    ref="root"
     class="message-tag-picker"
     :class="{ 'icon-mode': iconOnly }"
     @click.stop
@@ -112,6 +120,25 @@ function save() {
         </button>
       </div>
       <div class="tag-options">
+        <p
+          v-if="tags.isPending.value"
+          class="empty-note"
+          role="status"
+        >
+          正在加载标签…
+        </p>
+        <p
+          v-else-if="tags.isError.value"
+          class="empty-note"
+          role="alert"
+        >
+          标签加载失败。<button
+            type="button"
+            @click="tags.refetch()"
+          >
+            重试
+          </button>
+        </p>
         <label
           v-for="tag in tags.data.value"
           :key="tag.id"
@@ -125,7 +152,7 @@ function save() {
           <span>{{ tag.name }}</span>
         </label>
         <p
-          v-if="!tags.data.value?.length"
+          v-if="!tags.isPending.value && !tags.isError.value && !tags.data.value?.length"
           class="empty-note"
         >
           暂无标签，可在下方创建。
@@ -148,13 +175,13 @@ function save() {
           :disabled="createTag.isPending.value || !newTagName.trim()"
           @click="addTag"
         >
-          添加
+          {{ createTag.isPending.value ? '添加中…' : '添加' }}
         </button>
       </div>
       <button
         class="button primary save-tags"
         type="button"
-        :disabled="mutation.isPending.value"
+        :disabled="mutation.isPending.value || createTag.isPending.value"
         @click="save"
       >
         {{ mutation.isPending.value ? '保存中…' : '完成' }}
@@ -169,4 +196,5 @@ function save() {
 .icon-mode .tag-popover{right:0;left:auto}
 .tag-options{display:grid;gap:.2rem}.tag-options label{display:grid;grid-template-columns:auto .55rem minmax(0,1fr);align-items:center;gap:.45rem;padding:.35rem;border-radius:.4rem;font-size:.8rem}.tag-options label:hover{background:var(--surface-soft)}.tag-options i{width:.55rem;height:.55rem;border-radius:50%}.tag-options span{overflow-wrap:anywhere}.empty-note{margin:.2rem;color:var(--text-tertiary);font-size:.76rem}.new-tag{display:grid;grid-template-columns:minmax(0,1fr) 38px auto;gap:.35rem;padding-top:.5rem;border-top:1px solid var(--border-default)}.new-tag input:not([type=color]){min-width:0}.new-tag input[type=color]{width:38px;height:36px;padding:.1rem}.new-tag button{min-height:36px}.save-tags{justify-self:end;min-height:34px;padding:.35rem .7rem;font-size:.75rem}
 @media(max-width:600px){.tag-popover,.icon-mode .tag-popover{position:fixed;left:.75rem;right:.75rem;bottom:calc(.75rem + env(safe-area-inset-bottom));width:auto;max-height:min(70vh,520px)}.new-tag{grid-template-columns:minmax(0,1fr) 38px auto}}
+.tag-popover{gap:.85rem;padding:1rem;border-radius:16px}.popover-heading{font-size:.9rem}.tag-options{max-height:230px;overflow:auto;gap:.35rem}.tag-options label{padding:.6rem;border:1px solid transparent;cursor:pointer}.tag-options label:has(input:checked){border-color:var(--accent-primary);background:var(--accent-primary-soft);color:var(--accent-primary)}.tag-popover input:focus-visible,.tag-popover button:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px}.tag-popover button:disabled{opacity:.5;cursor:not-allowed}.new-tag input{border:1px solid var(--border-default);border-radius:8px;padding:.5rem;background:var(--surface-soft);color:var(--text-primary)}.new-tag button{border:0;border-radius:8px;padding:.4rem .65rem;background:var(--accent-primary-soft);color:var(--accent-primary)}
 </style>

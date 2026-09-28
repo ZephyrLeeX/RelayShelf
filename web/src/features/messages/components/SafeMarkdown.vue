@@ -1,12 +1,24 @@
 <script setup lang="ts">
 /* eslint-disable vue/no-v-html -- this dedicated boundary sanitizes renderer output with DOMPurify */
 import { onBeforeUnmount, ref, watch } from 'vue'
+import ImagePreview from './ImagePreview.vue'
+import { markdownImages, useOpenMessageImage } from '../composables/useMessageImages'
 import DOMPurify from 'dompurify'
 import MarkdownIt from 'markdown-it'
 import hljs from 'highlight.js/lib/core'
 
 const props = defineProps<{ source: string }>()
 const rendered = ref('')
+const currentImage = ref<string | null>(null)
+const openMessageImage = useOpenMessageImage()
+function clickImage(event: MouseEvent) {
+  const link = event.target instanceof Element ? event.target.closest('a.markdown-image') : null
+  if (!link) return
+  event.preventDefault(); event.stopPropagation()
+  const src = link.getAttribute('href')!
+  if (openMessageImage) openMessageImage(src)
+  else currentImage.value = src
+}
 let generation = 0
 const languageLoaders: Record<string, () => Promise<{ default: Parameters<typeof hljs.registerLanguage>[1] }>> = {
   shell: () => import('highlight.js/lib/languages/shell'), bash: () => import('highlight.js/lib/languages/bash'),
@@ -48,7 +60,7 @@ async function render(source: string) {
   type RenderRule = NonNullable<typeof markdown.renderer.rules.link_open>
   const imageRule: RenderRule = (tokens, index) => {
     const href = String(tokens[index].attrGet('src') ?? '')
-    return markdown.validateLink(href) ? `<a href="${markdown.utils.escapeHtml(href)}" rel="noopener noreferrer" target="_blank">[远程图片链接]</a>` : '[图片已阻止]'
+    return /^https?:\/\//i.test(href) ? `<a class="markdown-image" href="${markdown.utils.escapeHtml(href)}" rel="noopener noreferrer" target="_blank">[远程图片链接 · 点击预览 ${markdown.utils.escapeHtml(tokens[index].content)}]</a>` : '[图片已阻止]'
   }
   markdown.renderer.rules.image = imageRule
   const fallbackLink: RenderRule = (tokens, index, options, _env, self) => self.renderToken(tokens, index, options)
@@ -69,11 +81,21 @@ onBeforeUnmount(() => { generation++ })
 </script>
 
 <template>
-  <!-- Renderer output is sanitized by DOMPurify with a narrow tag/attribute allowlist above. -->
-  <div
-    class="safe-markdown"
-    v-html="rendered"
-  />
+  <div>
+    <!-- Renderer output is sanitized by DOMPurify with a narrow tag/attribute allowlist above. -->
+    <div
+      class="safe-markdown"
+      @click="clickImage"
+      v-html="rendered"
+    />
+    <ImagePreview
+      v-if="currentImage"
+      :images="markdownImages(source)"
+      :current="currentImage"
+      @select="currentImage = $event"
+      @close="currentImage = null"
+    />
+  </div>
 </template>
 
 <style scoped>

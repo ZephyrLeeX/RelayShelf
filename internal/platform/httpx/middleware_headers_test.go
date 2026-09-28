@@ -46,7 +46,15 @@ func TestSecurityHeadersPolicyShape(t *testing.T) {
 	if sources := directives["base-uri"]; sources != "'none'" {
 		t.Fatalf("base-uri must be 'none', got %s", sources)
 	}
+	// Markdown images are loaded only after an explicit preview click. Remote
+	// sources are allowed for image elements, never scripts, frames or fetch.
+	if sources := directives["img-src"]; sources != "'self' https: http:" {
+		t.Fatalf("unexpected image sources: %s", sources)
+	}
 	for name, sources := range directives {
+		if name == "img-src" {
+			continue
+		}
 		for _, source := range strings.Fields(sources) {
 			if strings.HasPrefix(source, "http:") || strings.HasPrefix(source, "https:") || strings.HasPrefix(source, "//") || source == "*" {
 				t.Fatalf("%s must not allow remote origins or wildcards: %s", name, source)

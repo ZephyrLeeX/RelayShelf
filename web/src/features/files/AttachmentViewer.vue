@@ -102,6 +102,7 @@ onUnmounted(() => {
       aria-modal="true"
       aria-label="附件查看器"
       tabindex="-1"
+      @click.self="emit('close')"
     >
       <header v-if="current">
         <div><strong>{{ current.originalFilename }}</strong><small>{{ current.detectedMime }}</small></div><nav>
@@ -139,7 +140,10 @@ onUnmounted(() => {
           </button>
         </nav>
       </header>
-      <main v-if="current">
+      <main
+        v-if="current"
+        @click.self="emit('close')"
+      >
         <section
           v-if="fileError"
           class="file-error"

@@ -141,6 +141,18 @@ describe('MessageComposer', () => {
     await flushPromises()
     expect(create).toHaveBeenCalledWith('key-a', expect.objectContaining({ body: 'text still works', uploadIds: [] }))
   })
+  it('promotes formatting to Markdown and sends the formatted body', async () => {
+    const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
+    const wrapper = mountComposer()
+    const input = wrapper.get('textarea')
+    await input.setValue('格式内容')
+    input.element.setSelectionRange(0, 4)
+    await wrapper.findAll('button').find(button => button.text() === '加粗')!.trigger('click')
+    await sendByKeyboard(wrapper)
+    await flushPromises()
+    expect(create).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ body: '**格式内容**', bodyFormat: BodyFormat.MARKDOWN }))
+  })
+
   it('keeps Enter as a newline and sends on Ctrl/Cmd+Enter', async () => {
     const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
     const wrapper = mountComposer()

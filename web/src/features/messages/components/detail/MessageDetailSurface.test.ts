@@ -252,6 +252,22 @@ describe('MessageDetailSurface', () => {
       wrapper.unmount()
     })
 
+    it('renders revealed Markdown safely and retains its format when editing', async () => {
+      vi.spyOn(DefaultService, 'revealSensitiveBody').mockResolvedValue({ body: '**secret**', version: 1 })
+      const edit = vi.spyOn(DefaultService, 'editSensitiveBody').mockResolvedValue(messageFixture({ sensitive: true, body: null, bodyFormat: BodyFormat.MARKDOWN, version: 2 }))
+      const { wrapper } = await renderEditor({ sensitive: true, body: null, bodyPreview: null, bodyFormat: BodyFormat.MARKDOWN })
+      await wrapper.get('.sensitive .button.primary').trigger('click')
+      await flushPromises()
+      expect(wrapper.get('.sensitive .safe-markdown strong').text()).toBe('secret')
+      await wrapper.get('button[title="编辑正文"]').trigger('click')
+      expect(wrapper.get<HTMLTextAreaElement>('form.edit textarea').element.value).toBe('**secret**')
+      expect(wrapper.find('form.edit .format-toolbar').exists()).toBe(true)
+      await wrapper.get('form.edit').trigger('submit')
+      await flushPromises()
+      expect(edit).toHaveBeenCalledWith('message-1', expect.objectContaining({ body: '**secret**' }))
+      wrapper.unmount()
+    })
+
     it('submits a non-empty sensitive body when attachments exist', async () => {
       vi.spyOn(DefaultService, 'revealSensitiveBody').mockResolvedValue({ body: 'secret', version: 1 })
       const edit = vi.spyOn(DefaultService, 'editSensitiveBody').mockResolvedValue(messageFixture({ sensitive: true, body: null, version: 2, attachments: [attachment], attachmentCount: 1 }))

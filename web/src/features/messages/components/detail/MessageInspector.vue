@@ -9,6 +9,10 @@ import LinkifiedText from '../LinkifiedText.vue'
 import RecipientPicker from '../RecipientPicker.vue'
 import SafeMarkdown from '../SafeMarkdown.vue'
 import MessageTagPicker from '../MessageTagPicker.vue'
+import ImagePreview from '../ImagePreview.vue'
+import { useMessageImages } from '../../composables/useMessageImages'
+import { previewURL, safeRasterMIMEs } from '@/features/files/preview'
+import ComposerEditor from '../composer/ComposerEditor.vue'
 import ContentTypePicker from '../ContentTypePicker.vue'
 import { isCodeContentType } from '../../content/contentFormat'
 import { useMessageDetailController } from '../../composables/useMessageDetailController'
@@ -27,11 +31,22 @@ const {
   openViewer, closeViewer, selectViewer, chooseDetailFiles, addAttachments, addRestored, removeAttachment,
 } = useMessageDetailController(() => props.id)
 
+const gallery = useMessageImages(() => message.value?.bodyFormat === BodyFormat.MARKDOWN ? (message.value.sensitive ? currentSensitiveBody.value ?? '' : message.value.body ?? '') : '', () => message.value?.attachments ?? [])
+function viewAttachment(id: string) {
+  const file = message.value?.attachments.find(item => item.id === id)
+  if (file && safeRasterMIMEs.has(file.detectedMime)) gallery.open(previewURL(id))
+  else openViewer(id)
+}
+
 watch(() => props.id, () => {
   extendOpen.value = false
   moreOpen.value = false
   forwardOpen.value = false
 })
+
+function onEditKey(event: KeyboardEvent) {
+  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); if (!mutation.isPending.value) saveBody() }
+}
 
 function onKey(event: KeyboardEvent) {
   if (event.key !== 'Escape' || viewerId.value) return
@@ -50,6 +65,13 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
 
 <template>
   <div class="message-inspector">
+    <ImagePreview
+      v-if="gallery.current.value"
+      :images="gallery.images.value"
+      :current="gallery.current.value"
+      @select="gallery.open"
+      @close="gallery.current.value = null"
+    />
     <header class="detail-header">
       <div>
         <h1 id="detail-title">
@@ -116,7 +138,11 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
             </button>
           </template>
           <template v-else>
-            <pre>{{ currentSensitiveBody }}</pre><button
+            <SafeMarkdown
+              v-if="message.bodyFormat === BodyFormat.MARKDOWN"
+              :source="currentSensitiveBody"
+            />
+            <pre v-else>{{ currentSensitiveBody }}</pre><button
               class="button"
               @click="clearRevealedBody"
             >
@@ -157,12 +183,17 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
             maxlength="200"
             placeholder="标题（可选）"
           ></label>
-          <label class="field">正文<textarea
+          <ComposerEditor
             v-model="editBody"
-            rows="12"
-            :class="{ code: isCodeContentType(editContentType) }"
+            :rows="12"
+            :code="isCodeContentType(editContentType)"
+            :markdown="editContentType === 'markdown'"
+            :format-locked="message.sensitive"
             :required="message.sensitive || !message.attachments.length"
-          /></label>
+            shortcut="保存"
+            @format="editContentType = 'markdown'"
+            @keydown="onEditKey"
+          />
           <div>
             <button
               class="button"
@@ -233,7 +264,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
           :files="message.attachments"
           interactive
           :removable="!message.trashedAt"
-          @view="openViewer"
+          @view="viewAttachment"
           @remove="removeAttachment"
         />
         <p
@@ -456,7 +487,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
 
 <style scoped>
 .message-inspector{display:grid;align-content:start;gap:0;min-width:0;min-height:100%;padding:1.15rem 1.2rem 5.25rem;color:var(--text-primary)}.message-inspector>*{min-width:0}.detail-header{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;position:sticky;top:-1.15rem;z-index:5;min-width:0;margin:-1.15rem -1.2rem 0;padding:1.15rem 1.2rem .9rem;background:color-mix(in srgb,var(--surface-raised) 94%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--border-default)}h1,h2,p{margin:.2rem 0}h1{font-size:1.12rem}h2{font-size:.78rem}.detail-header p{font-size:.7rem;overflow-wrap:anywhere}.icon-button{display:inline-grid;place-items:center;flex:0 0 auto;width:34px;height:34px;padding:0;border:0;border-radius:9px;background:transparent;color:var(--text-secondary)}.icon-button:hover{background:var(--surface-soft);color:var(--text-primary)}.icon-button svg,.action-button svg,.compact-action svg,.sensitive-title svg{width:1rem;height:1rem}
-.body-section{min-width:0;padding:1.15rem 0 1.25rem}.message-title{min-width:0;max-width:100%;margin:0 0 .85rem;color:var(--text-primary);font-size:1.08rem;font-weight:760;line-height:1.4;overflow-wrap:anywhere;word-break:break-word}.body-section pre{max-width:100%;box-sizing:border-box;margin:0;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.65}.code{font-family:var(--font-mono);background:var(--surface-soft);padding:.9rem;border-radius:var(--radius)}.sensitive{display:grid;gap:.75rem;padding:1rem;box-shadow:none}.sensitive-title{display:inline-flex;align-items:center;gap:.4rem}.sensitive .button{justify-self:start}.edit{display:grid;gap:.7rem}.edit-toolbar{display:flex;align-items:center;gap:.55rem;flex-wrap:wrap}.edit-toolbar small{color:var(--text-tertiary);font-size:.72rem}.edit textarea{resize:vertical}.edit textarea.code{font-family:var(--font-mono);color:var(--content-code)}.edit>div{display:flex;gap:.45rem}
+.body-section{min-width:0;padding:1.15rem 0 1.25rem}.message-title{min-width:0;max-width:100%;margin:0 0 .85rem;color:var(--text-primary);font-size:1.08rem;font-weight:760;line-height:1.4;overflow-wrap:anywhere;word-break:break-word}.body-section pre{max-width:100%;box-sizing:border-box;margin:0;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.65}.code{font-family:var(--font-mono);background:var(--surface-soft);padding:.9rem;border-radius:var(--radius)}.sensitive{display:grid;gap:.75rem;padding:1rem;box-shadow:none}.sensitive-title{display:inline-flex;align-items:center;gap:.4rem}.sensitive .button{justify-self:start}.edit{display:grid;gap:.7rem}.edit-toolbar{display:flex;align-items:center;gap:.55rem;flex-wrap:wrap}.edit-toolbar small{color:var(--text-tertiary);font-size:.72rem}.edit textarea{resize:vertical}.edit textarea.code{font-family:var(--font-mono);color:var(--content-code)}.edit>div:not(.editor){display:flex;gap:.45rem}
 .compact-section{position:relative;padding:.8rem 0;border-top:1px solid var(--border-default)}.section-heading{display:flex;align-items:center;justify-content:space-between;gap:.75rem;min-height:34px}.tags{display:flex;flex-wrap:wrap;gap:.35rem}.empty-inline{color:var(--text-tertiary);font-size:.75rem}.compact-popover{margin-top:.55rem;padding:.65rem;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--surface-soft)}
 .files{display:grid}.files :deep(.attachment-list){margin-top:.45rem}.files :deep(.attachment){grid-template-columns:34px minmax(0,1fr);padding:.4rem;border:0;background:transparent}.files :deep(.attachment img),.files :deep(.attachment .file-icon){width:34px;height:32px}.files :deep(.remove){min-height:30px;padding:.25rem .4rem;font-size:.7rem}.add-files{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.35rem .6rem}.upload-row{grid-column:1;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.5rem;font-size:.76rem}.upload-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.upload-row small{color:var(--text-tertiary)}.add-files>.button{grid-column:2;grid-row:1/-1;align-self:center}.restored summary{cursor:pointer;font-size:.76rem;font-weight:650}.restored ul{list-style:none;margin:.55rem 0 0;padding:0;display:grid;gap:.35rem}.restored li{display:flex;align-items:center;justify-content:space-between;gap:.6rem;font-size:.74rem}.restored li span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .quick-actions{position:relative;padding:.8rem 0;border-top:1px solid var(--border-default)}.compact-action,.action-button{display:inline-flex;align-items:center;gap:.32rem;min-height:34px;padding:.35rem .55rem;font-size:.76rem}.forward{display:flex;align-items:center;justify-content:space-between;gap:.5rem;flex-wrap:wrap}.forward-submit{margin-left:auto}

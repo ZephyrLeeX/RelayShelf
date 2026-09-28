@@ -2,7 +2,7 @@
 import { LockKeyhole, Maximize2, Star } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { relativeExpiry } from '@/shared/utils/expiry'
-import { BodyFormat, type MessageSummary } from '@/api/generated'
+import { DefaultService, BodyFormat, type MessageSummary } from '@/api/generated'
 import { useDetailSelection } from '@/app/composables/useDetailSelection'
 import TagChip from '@/shared/ui/TagChip.vue'
 import { extractFenceLanguage, unwrapSingleFencedCode } from '../content/contentFormat'
@@ -12,11 +12,17 @@ import LinkifiedText from './LinkifiedText.vue'
 import QuickCopyButton from './QuickCopyButton.vue'
 import SafeMarkdown from './SafeMarkdown.vue'
 import MessageTagPicker from './MessageTagPicker.vue'
+import ImagePreview from './ImagePreview.vue'
+import { useMessageImages } from '../composables/useMessageImages'
 import { toast } from '@/shared/ui/toast'
 
 const props = defineProps<{ message: MessageSummary; trash?: boolean }>()
 const { selectedMessageId, openDetail: openSelectedDetail } = useDetailSelection()
 const mutation = useMessageMutation()
+const gallery = useMessageImages(() => props.message.sensitive || props.message.bodyFormat !== BodyFormat.MARKDOWN ? '' : props.message.bodyPreview ?? '', () => props.message.attachments, async () => {
+  const message = await DefaultService.getMessage(props.message.id)
+  return { source: message.sensitive || message.bodyFormat !== BodyFormat.MARKDOWN ? '' : message.body ?? '', files: message.attachments }
+})
 const error = ref('')
 const bodyContent = ref<HTMLElement>()
 const expanded = ref(false)
@@ -116,6 +122,13 @@ function removeForever() {
     :aria-current="selected ? 'true' : undefined"
     @click="onCardClick"
   >
+    <ImagePreview
+      v-if="gallery.current.value"
+      :images="gallery.images.value"
+      :current="gallery.current.value"
+      @select="gallery.open"
+      @close="gallery.current.value = null"
+    />
     <header class="card-header">
       <div class="headline">
         <span class="type-badge">{{ typeLabel }}</span>

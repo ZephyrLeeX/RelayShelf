@@ -286,7 +286,7 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
     // future UI bug still invokes this while a direct recipient is picked.
     if (directMode.value) return
     const name = newTagName.value.trim()
-    if (!name) return
+    if (!name || createTag.isPending.value) return
     try {
       const tag = await createTag.mutateAsync({ name, color: newTagColor.value })
       selectedTags.value.push(tag.id)
@@ -297,6 +297,7 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
   }
 
   function onKeydown(event: KeyboardEvent) {
+    if (event.isComposing || event.keyCode === 229) return
     if (event.key !== 'Enter' || (!event.ctrlKey && !event.metaKey)) return
     event.preventDefault()
     if (directMode.value) submitDirect()
@@ -307,7 +308,7 @@ export function useMessageComposer(defaultLifecycle: MaybeRefOrGetter<Lifecycle>
     title, body, contentType, lifecycle, sensitive, selectedTags, selectedUploadClients, selectedUploads,
     selectedUploadIds, restorableUploads, selectedRecipient, directMode, byteLength, tooLarge,
     attachmentsBlocking, hasContent, dragging, error, failed, sending, tags, newTagName,
-    newTagColor, selectFiles, removeSelected, pasteFiles, dropFiles, addTag, addRestored,
+    newTagColor, createTag, selectFiles, removeSelected, pasteFiles, dropFiles, addTag, addRestored,
     submit, submitDirect, onKeydown, storageAvailable,
   }
 }

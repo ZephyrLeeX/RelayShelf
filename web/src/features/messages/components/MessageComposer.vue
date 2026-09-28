@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { LockKeyhole, LockOpen, Paperclip, RotateCcw, Send, Tags } from '@lucide/vue'
-import { computed, ref } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import { Lifecycle } from '@/api/generated'
 import { formatBytes } from '@/shared/utils/bytes'
 import { isCodeContentType } from '../content/contentFormat'
@@ -14,6 +14,18 @@ import RecipientPicker from './RecipientPicker.vue'
 const props = defineProps<{ defaultLifecycle: Lifecycle }>()
 const emit = defineEmits<{ sent: [] }>()
 const fileInput = ref<HTMLInputElement>()
+const tagPanel = ref<HTMLDetailsElement>()
+function dismissTags(event: Event) {
+  if (!tagPanel.value?.open) return
+  if (event instanceof KeyboardEvent) {
+    if (event.key !== 'Escape') return
+    event.preventDefault(); event.stopPropagation()
+    tagPanel.value.open = false
+    tagPanel.value.querySelector('summary')?.focus()
+  } else if (event.target instanceof Node && !tagPanel.value.contains(event.target)) tagPanel.value.open = false
+}
+onMounted(() => { document.addEventListener('pointerdown', dismissTags, true); document.addEventListener('keydown', dismissTags, true) })
+onBeforeUnmount(() => { document.removeEventListener('pointerdown', dismissTags, true); document.removeEventListener('keydown', dismissTags, true) })
 const composer = useMessageComposer(() => props.defaultLifecycle, () => emit('sent'))
 const composerDrop = useComposerFileDrop(composer.dragging, composer.dropFiles)
 const isCode = computed(() => isCodeContentType(composer.contentType.value))
@@ -65,8 +77,11 @@ function filesChanged(event: Event) {
     >
 
     <ComposerEditor
+      id="composer-body"
       v-model="composer.body.value"
       :code="isCode"
+      :markdown="composer.contentType.value === 'markdown'"
+      @format="composer.contentType.value = 'markdown'"
       @paste="composer.pasteFiles"
       @keydown="composer.onKeydown"
     />
@@ -136,6 +151,7 @@ function filesChanged(event: Event) {
            sending to themselves. -->
       <details
         v-if="!composer.directMode.value"
+        ref="tagPanel"
         class="popover tag-picker"
       >
         <summary
@@ -149,8 +165,26 @@ function filesChanged(event: Event) {
           >{{ composer.selectedTags.value.length }}</span>
         </summary>
         <div class="popover-panel tag-options">
+          <strong>消息标签</strong>
           <p
-            v-if="!composer.tags.data.value?.length"
+            v-if="composer.tags.isPending.value"
+            role="status"
+          >
+            正在加载标签…
+          </p>
+          <p
+            v-else-if="composer.tags.isError.value"
+            role="alert"
+          >
+            标签加载失败。<button
+              type="button"
+              @click="composer.tags.refetch()"
+            >
+              重试
+            </button>
+          </p>
+          <p
+            v-if="!composer.tags.isPending.value && !composer.tags.isError.value && !composer.tags.data.value?.length"
             class="empty-note"
           >
             暂无标签，可在下方创建。
@@ -182,9 +216,10 @@ function filesChanged(event: Event) {
             <button
               class="button"
               type="button"
+              :disabled="composer.createTag.isPending.value || !composer.newTagName.value.trim()"
               @click="composer.addTag"
             >
-              添加
+              {{ composer.createTag.isPending.value ? '添加中…' : '添加' }}
             </button>
           </div>
         </div>
@@ -286,4 +321,6 @@ function filesChanged(event: Event) {
 .composer-feedback{display:grid;gap:.2rem;padding:0 .9rem}.composer-feedback:empty{display:none}.composer-feedback p{margin:0 0 .65rem;font-size:.76rem}.warning{color:var(--state-warning)}.direct-hint{color:var(--text-tertiary)}
 @media(max-width:700px){.composer-top{padding:.55rem .6rem 0}.title-input{margin-inline:.6rem}.composer-toolbar{flex-wrap:wrap;padding:.55rem .6rem}.tool-label{display:none}.tool-button,.lifecycle-control select{padding-inline:.55rem}.bytes{order:5;margin-left:auto}.send-button{order:6;padding-inline:.8rem}.popover-panel{position:fixed;left:1rem;right:1rem;bottom:calc(72px + env(safe-area-inset-bottom));width:auto;min-width:0;max-width:none}.new-tag{grid-template-columns:minmax(0,1fr) 38px auto}}
 @media(max-width:420px){.bytes{display:none}.send-button{margin-left:auto}}
+.tag-options{padding:1rem;border-radius:16px;max-height:65vh;overflow:auto}.tag-options label{padding:.6rem;border:1px solid transparent;border-radius:8px;cursor:pointer}.tag-options label:hover{background:var(--surface-soft)}.tag-options label:has(input:checked){border-color:var(--accent-primary);background:var(--accent-primary-soft)}.tag-options button:disabled{opacity:.5;cursor:not-allowed}.tag-options :focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px}
+@media(max-width:600px){.tag-picker .popover-panel{position:fixed;left:.75rem;right:.75rem;bottom:calc(.75rem + env(safe-area-inset-bottom));width:auto}}
 </style>
