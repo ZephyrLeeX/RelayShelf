@@ -74,28 +74,44 @@ function move(delta: number) {
 
 type Point = { x: number; y: number }
 const pointers = new Map<number, Point>()
+let press: Point | null = null
+// Keep this through pointerup and navigation: browsers dispatch click afterwards.
+let suppressClick = false
 let swipe: Point | null = null
 let pinched = false
 let distance = 0
 let center: Point | null = null
-function clearGesture() { pointers.clear(); swipe = null; pinched = false; distance = 0; center = null }
+function clearGesture() { pointers.clear(); press = null; swipe = null; pinched = false; distance = 0; center = null }
 function pinchGeometry() {
   const [a, b] = [...pointers.values()]
   return { distance: Math.hypot(b.x - a.x, b.y - a.y), center: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } }
 }
+function backdropClick(event: MouseEvent) {
+  if (suppressClick || pointers.size) return
+  // The image has pointer-events:none; hit-test its transformed display bounds.
+  const rect = ready.value ? original.value?.getBoundingClientRect() : null
+  if (rect && event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom) return
+  emit('close')
+}
+function trackMovement(event: PointerEvent) {
+  if (press && Math.hypot(event.clientX - press.x, event.clientY - press.y) > 5) suppressClick = true
+}
 function pointerDown(event: PointerEvent) {
+  if (!pointers.size) suppressClick = false
   if (!ready.value || (event.pointerType === 'mouse' && event.button !== 0)) return
   stage.value?.setPointerCapture?.(event.pointerId)
   pointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
+  if (pointers.size === 1) press = { x: event.clientX, y: event.clientY }
   if (pointers.size === 1) swipe = event.pointerType !== 'mouse' && atFit.value ? { x: event.clientX, y: event.clientY } : null
   if (pointers.size === 2) {
-    pinched = true; swipe = null
+    pinched = true; suppressClick = true; swipe = null
     const geometry = pinchGeometry(); distance = geometry.distance; center = geometry.center
   }
 }
 function pointerMove(event: PointerEvent) {
   const previous = pointers.get(event.pointerId)
   if (!previous) return
+  trackMovement(event)
   pointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
   if (pointers.size === 2) {
     const geometry = pinchGeometry()
@@ -112,6 +128,8 @@ function pointerMove(event: PointerEvent) {
 }
 function pointerUp(event: PointerEvent) {
   if (!pointers.has(event.pointerId)) return
+  trackMovement(event)
+  if (event.type !== 'pointerup') suppressClick = true
   if (event.type === 'pointerup' && pointers.size === 1 && swipe && !pinched && atFit.value) {
     const dx = event.clientX - swipe.x, dy = event.clientY - swipe.y
     if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) move(dx < 0 ? 1 : -1)
@@ -163,7 +181,8 @@ onBeforeUnmount(() => {
       role="dialog"
       aria-modal="true"
       aria-label="图片预览"
-      @click.stop.self="emit('close')"
+      @click.stop.self="backdropClick"
+      @pointerdown.self="suppressClick = false"
     >
       <header>
         <span>{{ image?.alt }} · {{ index + 1 }} / {{ images.length }}</span>
@@ -180,6 +199,7 @@ onBeforeUnmount(() => {
         class="image-stage"
         :class="{ pannable: canPan }"
         :aria-busy="loading"
+        @click.stop.self="backdropClick"
         @wheel.prevent="wheel"
         @dblclick.prevent="toggleSize"
         @pointerdown="pointerDown"

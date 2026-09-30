@@ -66,6 +66,67 @@ describe('image preview', () => {
     expect(wrapper.emitted('select')).toHaveLength(1)
     wrapper.unmount()
   })
+  function displayBounds(wrapper: ReturnType<typeof create>, left = 200) {
+    // jsdom has no layout; represent a transformed image with blank space around it.
+    vi.spyOn(wrapper.get('img').element, 'getBoundingClientRect').mockReturnValue({ left, top: 100, right: left + 400, bottom: 500, width: 400, height: 400, x: left, y: 100, toJSON() {} })
+  }
+  it('hit-tests the displayed image even though clicks target the stage', async () => {
+    const wrapper = create()
+    await load(wrapper)
+    displayBounds(wrapper)
+    const stage = wrapper.get('.image-stage')
+    await stage.trigger('click', { clientX: 400, clientY: 300 })
+    await stage.trigger('click', { clientX: 400, clientY: 300 })
+    await stage.trigger('dblclick', { clientX: 400, clientY: 300 })
+    expect(wrapper.get('output').text()).toBe('100%')
+    // After zoom/pan the hit-test must use the new bounds, not the fit rectangle.
+    displayBounds(wrapper, 0)
+    await stage.trigger('click', { clientX: 100, clientY: 300 })
+    await wrapper.get('footer').trigger('click')
+    await wrapper.get('[aria-label="放大"]').trigger('click')
+    expect(wrapper.emitted('close')).toBeUndefined()
+    await stage.trigger('click', { clientX: 700, clientY: 300 })
+    expect(wrapper.emitted('close')).toHaveLength(1)
+  })
+  it.each(['drag', 'swipe', 'pinch', 'pointercancel', 'lostpointercapture'])('does not close after %s, but allows the next blank click', async gesture => {
+    const wrapper = create()
+    await load(wrapper)
+    displayBounds(wrapper)
+    const stage = wrapper.get('.image-stage')
+    if (gesture === 'drag') await stage.trigger('dblclick')
+    await pointer(wrapper, 'pointerdown', 1, 300, 300)
+    if (gesture === 'pinch') {
+      await pointer(wrapper, 'pointerdown', 2, 400, 300)
+      await pointer(wrapper, 'pointerup', 2, 400, 300)
+    }
+    if (gesture === 'drag') {
+      await pointer(wrapper, 'pointermove', 1, 100, 300)
+      await pointer(wrapper, 'pointermove', 1, 300, 300)
+    }
+    const end = gesture.startsWith('pointer') || gesture === 'lostpointercapture' ? gesture : 'pointerup'
+    await pointer(wrapper, end, 1, gesture === 'swipe' ? 100 : 300, 300)
+    if (gesture === 'swipe') {
+      expect(wrapper.emitted('select')).toEqual([['/b']])
+      await wrapper.setProps({ current: '/b' })
+    }
+    // Compatibility clicks can arrive after all pointers and navigation state reset.
+    await stage.trigger('click', { clientX: 50, clientY: 50 })
+    await wrapper.get('.image-preview').trigger('click', { clientX: 50, clientY: 50 })
+    expect(wrapper.emitted('close')).toBeUndefined()
+    await wrapper.get('.image-preview').trigger('pointerdown')
+    await wrapper.get('.image-preview').trigger('click', { clientX: 50, clientY: 50 })
+    expect(wrapper.emitted('close')).toHaveLength(1)
+    await pointer(wrapper, 'pointerdown', 1, 50, 50)
+    await pointer(wrapper, 'pointerup', 1, 52, 51)
+    await stage.trigger('click', { clientX: 52, clientY: 51 })
+    expect(wrapper.emitted('close')).toHaveLength(2)
+  })
+  it.each(['loading', 'failed'])('closes on stage blank space while %s', async state => {
+    const wrapper = create()
+    if (state === 'failed') await wrapper.get('img').trigger('error')
+    await wrapper.get('.image-stage').trigger('click', { clientX: 50, clientY: 50 })
+    expect(wrapper.emitted('close')).toHaveLength(1)
+  })
   it('resets on navigation, ignores detached requests, and retries the authorized original', async () => {
     const wrapper = create()
     const old = wrapper.get('img')
@@ -77,6 +138,7 @@ describe('image preview', () => {
     await wrapper.get('img').trigger('error')
     expect(wrapper.get('[role="alert"]').text()).toContain('加载失败')
     await wrapper.findAll('button').find(b => b.text() === '重试')!.trigger('click')
+    expect(wrapper.emitted('close')).toBeUndefined()
     expect(wrapper.get('img').attributes('src')).toBe('/b')
     await load(wrapper)
     expect(wrapper.find('[role="status"]').exists()).toBe(false)

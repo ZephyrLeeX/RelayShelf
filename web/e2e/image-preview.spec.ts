@@ -114,7 +114,20 @@ for (const mobile of [false, true]) {
         await page.keyboard.press('Shift+Tab')
         await expect(dialog.getByRole('button', { name: '下一张' })).toBeFocused()
       }
-      await page.keyboard.press('Escape')
+      await dialog.getByRole('button', { name: '适应窗口', exact: true }).click()
+      await assertFit(dialog)
+      // The image ignores pointer events, so even its center click targets the stage.
+      const imageBox = (await dialog.locator('img').boundingBox())!
+      if (mobile) await page.touchscreen.tap(imageBox.x + imageBox.width / 2, imageBox.y + imageBox.height / 2)
+      else await page.mouse.click(imageBox.x + imageBox.width / 2, imageBox.y + imageBox.height / 2)
+      await expect(dialog).toBeVisible()
+      const stageBox = (await stage.boundingBox())!
+      const blank = imageBox.x - stageBox.x > 2
+        ? { x: (stageBox.x + imageBox.x) / 2, y: stageBox.y + stageBox.height / 2 }
+        : { x: stageBox.x + stageBox.width / 2, y: (stageBox.y + imageBox.y) / 2 }
+      expect(await stage.evaluate((element, point) => document.elementFromPoint(point.x, point.y) === element, blank)).toBe(true)
+      if (mobile) await page.touchscreen.tap(blank.x, blank.y)
+      else await page.mouse.click(blank.x, blank.y)
       await expect(dialog).toHaveCount(0)
       await expect(opener).toBeFocused()
       expect(await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY, overflow: document.body.style.overflow }))).toEqual(beforeScroll)
