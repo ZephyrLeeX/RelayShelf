@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { LockKeyhole, LockOpen, Paperclip, RotateCcw, Send, Tags } from '@lucide/vue'
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
+import { pendingShare, shareNotice } from '@/features/share/receive'
 import { Lifecycle } from '@/api/generated'
 import { formatBytes } from '@/shared/utils/bytes'
 import { isCodeContentType } from '../content/contentFormat'
@@ -28,6 +29,28 @@ onMounted(() => { document.addEventListener('pointerdown', dismissTags, true); d
 onBeforeUnmount(() => { document.removeEventListener('pointerdown', dismissTags, true); document.removeEventListener('keydown', dismissTags, true) })
 const composer = useMessageComposer(() => props.defaultLifecycle, () => emit('sent'))
 const composerDrop = useComposerFileDrop(composer.dragging, composer.dropFiles)
+const hasDraft = computed(() => Boolean(composer.title.value || composer.body.value || composer.selectedUploadClients.value.length))
+function protectDraft(event: BeforeUnloadEvent) {
+  if (!hasDraft.value && !pendingShare.value) return
+  event.preventDefault()
+  event.returnValue = ''
+}
+onMounted(() => window.addEventListener('beforeunload', protectDraft))
+onBeforeUnmount(() => window.removeEventListener('beforeunload', protectDraft))
+function applyShare(mode: 'merge' | 'replace') {
+  const share = pendingShare.value
+  if (!share || composer.sending.value) return
+  if (mode === 'replace' && hasDraft.value && !window.confirm('替换当前标题和正文？附件、敏感设置和接收人将保留。')) return
+  if (mode === 'replace') {
+    composer.title.value = share.title
+    composer.body.value = share.body
+    composer.contentType.value = 'text'
+  } else {
+    composer.body.value = [composer.body.value, share.title, share.body].filter(Boolean).join('\n\n')
+  }
+  pendingShare.value = null
+  shareNotice.value = '分享已带入编辑器。请检查内容、接收人和敏感设置，再点击发送。'
+}
 const isCode = computed(() => isCodeContentType(composer.contentType.value))
 
 function filesChanged(event: Event) {
@@ -48,6 +71,44 @@ function filesChanged(event: Event) {
       class="drop-prompt"
     >
       松开以添加到本条内容
+    </div>
+    <div class="share-intake">
+      <template v-if="pendingShare">
+        <p role="status">
+          收到系统分享。{{ hasDraft ? '已有未发送内容，请选择合并或替换标题和正文。' : '带入编辑器后由你确认发送。' }}
+        </p>
+        <button
+          v-if="hasDraft"
+          class="button"
+          type="button"
+          :disabled="composer.sending.value"
+          @click="applyShare('merge')"
+        >
+          合并到草稿
+        </button>
+        <button
+          class="button"
+          type="button"
+          :disabled="composer.sending.value"
+          @click="applyShare('replace')"
+        >
+          {{ hasDraft ? '替换标题和正文' : '带入编辑器' }}
+        </button>
+        <button
+          class="button"
+          type="button"
+          @click="pendingShare = null"
+        >
+          放弃分享
+        </button>
+      </template>
+      <p
+        v-if="shareNotice"
+        role="status"
+      >
+        {{ shareNotice }}
+      </p>
+      <details><summary>从其他应用分享</summary><p>在支持系统分享接收的平台安装 RelayShelf 后，可在其他应用的分享菜单中选择它。iOS / Safari、Firefox 或分享菜单中没有 RelayShelf 时，请复制文本或链接，粘贴到下方编辑器，再确认发送。仅接收文本和链接，不抓取网页内容。</p></details>
     </div>
     <div class="composer-top">
       <ContentTypePicker v-model="composer.contentType.value" />
@@ -300,6 +361,7 @@ function filesChanged(event: Event) {
 </template>
 
 <style scoped>
+.share-intake{padding:.65rem .8rem;color:var(--text-secondary);font-size:.78rem}.share-intake p{margin:.3rem 0}.share-intake .button{margin:.25rem .3rem .25rem 0}.share-intake summary{cursor:pointer}
 .composer{position:relative;display:grid;border-radius:var(--radius-lg);box-shadow:var(--shadow-md);overflow:visible}
 .drop-prompt{position:absolute;inset:0;z-index:30;display:grid;place-items:center;padding:1rem;border:2px dashed var(--accent-primary);border-radius:inherit;background:color-mix(in srgb,var(--surface-raised) 90%,var(--accent-primary));color:var(--accent-primary-hover);font-size:.82rem;font-weight:650;text-align:center;pointer-events:none}
 .composer-top{display:flex;align-items:center;justify-content:space-between;gap:.5rem;padding:.65rem .8rem 0}

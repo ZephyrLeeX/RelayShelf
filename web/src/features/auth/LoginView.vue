@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { pendingShare } from '@/features/share/receive'
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiCodes, displayError, toApiError } from '@/shared/api/errors'
@@ -73,6 +74,13 @@ async function submit() {
         在你的设备间取回刚刚放下的内容。
       </p>
     </div>
+    <p
+      v-if="pendingShare"
+      role="status"
+      class="muted"
+    >
+      分享内容暂存在本页内存中，登录后可继续编辑。请勿刷新或关闭此页。
+    </p>
     <form @submit.prevent="submit">
       <template v-if="!pendingChallenge">
         <label class="field">用户名<input

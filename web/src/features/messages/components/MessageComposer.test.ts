@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BodyFormat, DefaultService, Lifecycle, StorageRuntimeStatus, UploadStatus, type UploadSession } from '@/api/generated'
 import { queryKeys } from '@/shared/api/queryKeys'
 import { messageFixture } from '@/test/fixtures'
+import { clearShare, pendingShare } from '@/features/share/receive'
 import MessageComposer from './MessageComposer.vue'
 import { uploadManager } from '@/features/uploads/manager'
 import { ResumeLedger } from '@/features/uploads/resumeLedger'
@@ -64,6 +65,7 @@ function sendByKeyboard(wrapper: VueWrapper) {
 
 describe('MessageComposer', () => {
   beforeEach(() => {
+    clearShare()
     uploadState.items = []
     setStorageRuntimeStatus(undefined)
     vi.spyOn(DefaultService, 'listTags').mockResolvedValue([])
@@ -71,6 +73,48 @@ describe('MessageComposer', () => {
       items: [bob, carol].filter((user) => !query || user.username.includes(query) || user.displayName.toLowerCase().includes(query.toLowerCase())),
     }) as never)
     vi.stubGlobal('crypto', { randomUUID: vi.fn().mockReturnValueOnce('key-a').mockReturnValueOnce('key-b') })
+  })
+  it('warns before a navigation can discard an unsent draft', async () => {
+    const wrapper = mountComposer()
+    const empty = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(empty)
+    expect(empty.defaultPrevented).toBe(false)
+    await wrapper.get('textarea').setValue('未发送内容')
+    const dirty = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(dirty)
+    expect(dirty.defaultPrevented).toBe(true)
+  })
+  it('requires intake and an explicit send, protecting an existing draft', async () => {
+    const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
+    const wrapper = mountComposer()
+    await wrapper.get('textarea').setValue('原草稿')
+    pendingShare.value = { title: '分享标题', body: '分享正文' }
+    await flushPromises()
+    expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('原草稿')
+    expect(create).not.toHaveBeenCalled()
+    await wrapper.findAll('button').find((button) => button.text() === '合并到草稿')!.trigger('click')
+    expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('原草稿\n\n分享标题\n\n分享正文')
+    expect(create).not.toHaveBeenCalled()
+    await wrapper.get('button.primary').trigger('click')
+    await flushPromises()
+    expect(create).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ body: '原草稿\n\n分享标题\n\n分享正文' }))
+  })
+  it('requires confirmation before replacing a draft and preserves sensitive settings', async () => {
+    const wrapper = mountComposer()
+    await wrapper.get('textarea').setValue('原草稿')
+    await wrapper.get('button[aria-label="敏感内容"]').trigger('click')
+    pendingShare.value = { title: '分享标题', body: '分享正文' }
+    await flushPromises()
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true)
+    const replace = wrapper.findAll('button').find((button) => button.text() === '替换标题和正文')!
+    await replace.trigger('click')
+    expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('原草稿')
+    expect(pendingShare.value).not.toBeNull()
+    await replace.trigger('click')
+    expect(confirm).toHaveBeenCalledTimes(2)
+    expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('分享正文')
+    expect(wrapper.get('button[aria-label="敏感内容"]').attributes('aria-pressed')).toBe('true')
+    expect(pendingShare.value).toBeNull()
   })
   function drag(target: EventTarget, type: string, dataTransfer = { types: ['Files'], items: [{ kind: 'file' }], files: [new File(['a'], 'a.txt'), new File(['b'], 'b.txt')] }) {
     const event = new Event(type, { bubbles: true, cancelable: true })

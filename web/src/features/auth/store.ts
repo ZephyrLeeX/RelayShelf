@@ -1,3 +1,4 @@
+import { clearShare } from '@/features/share/receive'
 import { defineStore } from 'pinia'
 import { DefaultService, type AuthBootstrap, type Device, type Session, type TOTPLoginChallenge, type User } from '@/api/generated'
 import { queryClient } from '@/app/queryClient'
@@ -30,6 +31,7 @@ export const useAuthStore = defineStore('auth', {
       setCsrfToken(data.csrfToken)
     },
     clear(status: AuthStatus = 'guest') {
+      if (this.user) clearShare()
       uploadManager.clearForLogout()
       this.user = null
       this.device = null

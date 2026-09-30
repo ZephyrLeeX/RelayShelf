@@ -625,6 +625,8 @@ V1 使用 Server-Sent Events。
 
 ## 17. PWA
 
+系统分享接收第一版接受文本与链接，用户确认后才发送；已有草稿提供合并或替换。未登录分享在本页内存中保留到登录结束，不持久化正文、不抓取链接内容。平台限制、POST 数据边界及验收见 [系统分享接收](SHARE_TARGET.md)。
+
 V1 Online-first。
 
 Service Worker 只缓存：

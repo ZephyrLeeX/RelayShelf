@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory, type RouteLocationNormalized } from 'vue-router'
+import { pendingShare, receiveShare, shareNotice } from '@/features/share/receive'
 import AppShell from './AppShell.vue'
 import LoginLayout from './LoginLayout.vue'
 import { useAuthStore } from '@/features/auth/store'
@@ -10,6 +11,7 @@ export const router = createRouter({
     {
       path: '/', component: AppShell, meta: { private: true }, children: [
         { path: '', redirect: '/temporary' },
+        { path: 'share', name: 'share', component: () => import('@/features/messages/views/FeedView.vue'), props: { kind: 'temporary' } },
         { path: 'temporary', name: 'temporary', component: () => import('@/features/messages/views/FeedView.vue'), props: { kind: 'temporary' } },
         { path: 'permanent', name: 'permanent', component: () => import('@/features/messages/views/FeedView.vue'), props: { kind: 'permanent' } },
         { path: 'favorites', name: 'favorites', component: () => import('@/features/messages/views/FeedView.vue'), props: { kind: 'favorites' } },
@@ -30,6 +32,13 @@ function loginRedirect(to: RouteLocationNormalized) {
 
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
+  if (to.name === 'share' && to.hash) {
+    await receiveShare(to.hash.slice(1))
+    return { path: '/share', replace: true }
+  }
+  if (to.name === 'share' && !pendingShare.value && !shareNotice.value) {
+    shareNotice.value = '没有待接收的分享。刷新或关闭页面会清除未发送内容，请重新分享或复制粘贴。'
+  }
   if (to.name === 'login') {
     if (auth.status === 'unknown') await auth.bootstrap()
     return auth.status === 'authenticated' ? '/temporary' : true
