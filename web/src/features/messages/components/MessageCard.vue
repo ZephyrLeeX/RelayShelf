@@ -16,7 +16,7 @@ import ImagePreview from './ImagePreview.vue'
 import { useMessageImages } from '../composables/useMessageImages'
 import { toast } from '@/shared/ui/toast'
 
-const props = defineProps<{ message: MessageSummary; trash?: boolean }>()
+const props = defineProps<{ message: MessageSummary; trash?: boolean; batchMode?: boolean }>()
 const { selectedMessageId, openDetail: openSelectedDetail } = useDetailSelection()
 const mutation = useMessageMutation()
 const gallery = useMessageImages(() => props.message.sensitive || props.message.bodyFormat !== BodyFormat.MARKDOWN ? '' : props.message.bodyPreview ?? '', () => props.message.attachments, async () => {
@@ -231,7 +231,7 @@ function removeForever() {
         :color="tag.color"
       />
       <MessageTagPicker
-        v-if="!trash && !message.trashedAt"
+        v-if="!batchMode && !trash && !message.trashedAt"
         :message="message"
         :label="message.tags.length ? '标签' : '添加标签'"
       />
@@ -244,6 +244,7 @@ function removeForever() {
         <span v-if="message.attachmentCount">{{ message.attachmentCount }} 个附件</span>
       </div>
       <div
+        v-if="!batchMode"
         class="actions"
         @click.stop
       >

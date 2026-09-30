@@ -16,7 +16,7 @@ export type MessageCommand =
   | { type: 'tags'; message: Message; tagIds: string[] }
   | { type: 'forward'; message: Message; recipientUserId: string }
 
-async function execute(command: MessageCommand) {
+export async function executeMessageCommand(command: MessageCommand) {
   const { message } = command
   switch (command.type) {
     case 'permanent': return DefaultService.makeMessagePermanent(message.id, { expectedVersion: message.version })
@@ -48,7 +48,7 @@ export function invalidateMessageTruth(id: string, client = useQueryClient()) {
 export function useMessageMutation() {
   const client = useQueryClient()
   return useMutation({
-    mutationFn: execute,
+    mutationFn: executeMessageCommand,
     onSuccess: (_, command) => invalidateMessageTruth(command.message.id, client),
     onError: (error, command) => {
       if (toApiError(error).code === apiCodes.versionConflict) invalidateMessageTruth(command.message.id, client)

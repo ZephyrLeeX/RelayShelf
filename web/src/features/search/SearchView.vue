@@ -24,6 +24,8 @@ function afterFor(value: string) {
   const durations: Record<string, number> = { '24h': 1, '7d': 7, '30d': 30 }
   return durations[value] ? new Date(Date.now() - durations[value] * 86_400_000).toISOString() : undefined
 }
+const createdAfter = ref(afterFor(stringQuery('time')))
+watch(() => stringQuery('time'), value => { createdAfter.value = afterFor(value) })
 const appliedValidation = computed(() => hasShortSearchToken(stringQuery('q')))
 const filters = computed(() => ({ search: {
   q: stringQuery('q').trim() || undefined,
@@ -31,7 +33,7 @@ const filters = computed(() => ({ search: {
   favorite: stringQuery('favorite') === 'true' || undefined,
   tagIds: arrayQuery('tagId').length ? arrayQuery('tagId') : undefined,
   type: stringQuery('type').trim() || undefined,
-  createdAfter: afterFor(stringQuery('time')),
+  createdAfter: createdAfter.value,
 } }))
 
 function submit() {
