@@ -27,6 +27,37 @@ func TestArchiveNames(t *testing.T) {
 	}
 }
 
+func TestArchiveWindowsDeviceNames(t *testing.T) {
+	for _, tt := range []struct{ in, want string }{
+		{"COM¹.txt", "_COM¹.txt"},
+		{"COM².txt", "_COM².txt"},
+		{"COM³.txt", "_COM³.txt"},
+		{"LPT¹.txt", "_LPT¹.txt"},
+		{"LPT².txt", "_LPT².txt"},
+		{"LPT³.txt", "_LPT³.txt"},
+		{"com¹", "_com¹"},
+		{"lpt².tar.gz", "_lpt².tar.gz"},
+		{"COM9.txt", "_COM9.txt"},
+		{"LPT9.txt", "_LPT9.txt"},
+		{"COM⁴.txt", "COM⁴.txt"},
+		{"COM10.txt", "COM10.txt"},
+		{"LPT0.txt", "LPT0.txt"},
+	} {
+		t.Run(tt.in, func(t *testing.T) {
+			if got := archiveName(tt.in, map[string]bool{}); got != tt.want {
+				t.Errorf("got %q want %q", got, tt.want)
+			}
+		})
+	}
+	used := map[string]bool{}
+	for i, name := range []string{"COM¹.txt", "_COM¹.txt", "com¹.TXT"} {
+		want := []string{"_COM¹.txt", "_COM¹ (2).txt", "_com¹ (3).TXT"}[i]
+		if got := archiveName(name, used); got != want {
+			t.Errorf("collision for %q: got %q want %q", name, got, want)
+		}
+	}
+}
+
 func TestStreamArchiveContentsAndFailures(t *testing.T) {
 	data := []byte(strings.Repeat("contents", 20000))
 	hash := sha256.Sum256(data)

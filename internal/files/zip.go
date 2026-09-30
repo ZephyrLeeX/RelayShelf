@@ -82,8 +82,10 @@ func archiveName(name string, used map[string]bool) string {
 	}
 	stem, ext := strings.TrimSuffix(name, path.Ext(name)), path.Ext(name)
 	upperStem := strings.ToUpper(strings.SplitN(name, ".", 2)[0])
+	// Windows also treats superscript ¹, ² and ³ as device-number digits.
+	deviceRunes := []rune(upperStem)
 	if upperStem == "CON" || upperStem == "PRN" || upperStem == "AUX" || upperStem == "NUL" ||
-		(len(upperStem) == 4 && (strings.HasPrefix(upperStem, "COM") || strings.HasPrefix(upperStem, "LPT")) && upperStem[3] >= '1' && upperStem[3] <= '9') {
+		(len(deviceRunes) == 4 && (strings.HasPrefix(upperStem, "COM") || strings.HasPrefix(upperStem, "LPT")) && strings.ContainsRune("123456789¹²³", deviceRunes[3])) {
 		name = "_" + name
 		stem = "_" + stem
 	}
