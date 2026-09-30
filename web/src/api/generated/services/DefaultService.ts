@@ -729,6 +729,27 @@ export class DefaultService {
         });
     }
     /**
+     * Stream this owned message's complete attachments as a store ZIP. No Range support. Storage failures before streaming return JSON; failures during streaming abort the response without completing the ZIP.
+     * @param messageId
+     * @returns binary Complete message attachment archive
+     * @throws ApiError
+     */
+    public static downloadMessageAttachments(
+        messageId: string,
+    ): CancelablePromise<Blob> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/messages/{messageId}/attachments/download',
+            path: {
+                'messageId': messageId,
+            },
+            errors: {
+                404: `API error`,
+                503: `API error`,
+            },
+        });
+    }
+    /**
      * @param attachmentId
      * @returns binary Full attachment
      * @throws ApiError

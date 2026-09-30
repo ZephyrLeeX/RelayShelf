@@ -282,3 +282,22 @@ describe('attachment reconciliation', () => {
     second.wrapper.unmount()
   })
 })
+
+describe('message attachment archive', () => {
+  beforeEach(() => vi.restoreAllMocks())
+  it.each([0, 1, 2])('offers ZIP only for multiple attachments (%i)', async count => {
+    const attachments = Array.from({ length: count }, (_, i) => ({
+      id: `file-${i}`, originalFilename: `file-${i}.txt`, sizeBytes: 3, clientMime: 'text/plain', detectedMime: 'text/plain', displayOrder: i,
+    }))
+    const { wrapper } = await mountDetail(() => messageFixture({ attachments, attachmentCount: count }))
+    const archive = wrapper.find('a.archive-download')
+    expect(archive.exists()).toBe(count > 1)
+    if (count > 1) {
+      expect(archive.attributes('href')).toBe('/api/v1/messages/message-1/attachments/download')
+      expect(archive.text()).toBe('下载全部附件（ZIP）')
+      expect(wrapper.text()).toContain('下载状态请查看浏览器')
+    }
+    expect(wrapper.findAll('.attachment-list a.download')).toHaveLength(count)
+    wrapper.unmount()
+  })
+})

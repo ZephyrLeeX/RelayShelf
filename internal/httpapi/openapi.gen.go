@@ -1149,6 +1149,9 @@ type ServerInterface interface {
 	// (POST /messages/{messageId}/attachments)
 	AddMessageAttachments(w http.ResponseWriter, r *http.Request, messageId MessageId)
 
+	// (GET /messages/{messageId}/attachments/download)
+	DownloadMessageAttachments(w http.ResponseWriter, r *http.Request, messageId MessageId)
+
 	// (DELETE /messages/{messageId}/attachments/{attachmentId})
 	RemoveMessageAttachment(w http.ResponseWriter, r *http.Request, messageId MessageId, attachmentId AttachmentId)
 
@@ -1391,6 +1394,11 @@ func (_ Unimplemented) EditMessage(w http.ResponseWriter, r *http.Request, messa
 
 // (POST /messages/{messageId}/attachments)
 func (_ Unimplemented) AddMessageAttachments(w http.ResponseWriter, r *http.Request, messageId MessageId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /messages/{messageId}/attachments/download)
+func (_ Unimplemented) DownloadMessageAttachments(w http.ResponseWriter, r *http.Request, messageId MessageId) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -2249,6 +2257,32 @@ func (siw *ServerInterfaceWrapper) AddMessageAttachments(w http.ResponseWriter, 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.AddMessageAttachments(w, r, messageId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DownloadMessageAttachments operation middleware
+func (siw *ServerInterfaceWrapper) DownloadMessageAttachments(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "messageId" -------------
+	var messageId MessageId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "messageId", chi.URLParam(r, "messageId"), &messageId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "messageId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DownloadMessageAttachments(w, r, messageId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3356,6 +3390,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Delete(options.BaseURL+"/messages/{messageId}/attachments/{attachmentId}", wrapper.RemoveMessageAttachment)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/messages/{messageId}/attachments/download", wrapper.DownloadMessageAttachments)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/attachments/{attachmentId}/download", wrapper.DownloadAttachment)

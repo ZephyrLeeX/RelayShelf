@@ -73,6 +73,11 @@ func Recovery(logger *log.Logger) func(http.Handler) http.Handler {
 				if value == nil {
 					return
 				}
+				// Streaming handlers use this sentinel to terminate a response.
+				// Preserve net/http's abort semantics; never append JSON to it.
+				if value == http.ErrAbortHandler {
+					panic(value)
+				}
 				if errors.Is(r.Context().Err(), context.Canceled) {
 					// The client went away mid-handler; nothing to report.
 					return

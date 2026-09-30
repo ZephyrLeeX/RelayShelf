@@ -138,3 +138,24 @@ func TestRequestLogPreservesFlusher(t *testing.T) {
 		t.Fatal("flush did not reach the underlying recorder")
 	}
 }
+
+func TestRecoveryPreservesStreamAbort(t *testing.T) {
+	var logged strings.Builder
+	handler := Recovery(log.New(&logged, "", 0))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ZIP bytes"))
+		panic(http.ErrAbortHandler)
+	}))
+	response := httptest.NewRecorder()
+	defer func() {
+		if got := recover(); got != http.ErrAbortHandler {
+			t.Fatalf("abort=%v", got)
+		}
+		if response.Body.String() != "ZIP bytes" {
+			t.Fatal("JSON appended to broken stream")
+		}
+		if logged.Len() != 0 {
+			t.Fatal("abort logged as recovered panic")
+		}
+	}()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/archive", nil))
+}

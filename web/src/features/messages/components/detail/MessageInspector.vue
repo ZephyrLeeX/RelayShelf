@@ -259,6 +259,18 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
             @change="chooseDetailFiles"
           >
         </div>
+        <a
+          v-if="message.attachments.length > 1 && storageAvailable"
+          class="button archive-download"
+          :href="`/api/v1/messages/${encodeURIComponent(message.id)}/attachments/download`"
+          download
+        >下载全部附件（ZIP）</a>
+        <p
+          v-if="message.attachments.length > 1"
+          class="muted archive-hint"
+        >
+          仅打包当前消息；不支持断点续传。下载状态请查看浏览器，失败后请重新下载。
+        </p>
         <AttachmentList
           v-if="message.attachments.length"
           :files="message.attachments"
@@ -493,4 +505,5 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
 .quick-actions{position:relative;padding:.8rem 0;border-top:1px solid var(--border-default)}.compact-action,.action-button{display:inline-flex;align-items:center;gap:.32rem;min-height:34px;padding:.35rem .55rem;font-size:.76rem}.forward{display:flex;align-items:center;justify-content:space-between;gap:.5rem;flex-wrap:wrap}.forward-submit{margin-left:auto}
 .actions{position:sticky;z-index:4;bottom:-1.15rem;display:flex;align-items:center;gap:.3rem;margin:0 -1.2rem -5.25rem;padding:.75rem 1.2rem calc(.75rem + env(safe-area-inset-bottom));border-top:1px solid var(--border-default);background:color-mix(in srgb,var(--surface-raised) 96%,transparent);backdrop-filter:blur(12px)}.menu-anchor{position:relative}.action-menu{position:absolute;z-index:10;bottom:calc(100% + .45rem);min-width:118px;padding:.3rem;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--surface-raised);box-shadow:var(--shadow-floating)}.extend-menu{left:0}.more-menu{right:0}.action-menu button{display:flex;align-items:center;gap:.4rem;width:100%;min-height:34px;padding:.4rem .55rem;border:0;border-radius:.4rem;background:transparent;color:var(--text-primary);font-size:.76rem;text-align:left}.action-menu button:hover{background:var(--surface-soft)}.action-menu svg{width:.9rem}.action-menu .danger-item{color:var(--state-danger)}.notice{margin:.65rem 0;color:var(--accent-primary);font-size:.76rem}.state{padding:3rem 1rem;text-align:center}.small{min-height:32px;padding:.3rem .55rem;font-size:.74rem}
 @media(max-width:600px){.message-inspector{padding:1rem 1rem 5.5rem}.detail-header{top:-1rem;margin:-1rem -1rem 0;padding:1rem}.actions{bottom:-1rem;margin:0 -1rem -5.5rem;padding-inline:1rem;overflow-x:auto}.action-button{white-space:nowrap}.add-files{grid-template-columns:1fr}.add-files>.button{grid-column:1;grid-row:auto;justify-self:end}}
+.archive-download{display:inline-flex;margin-bottom:.4rem;text-decoration:none;min-height:36px}.archive-hint{font-size:.72rem;line-height:1.5;margin:0 0 .6rem}
 </style>

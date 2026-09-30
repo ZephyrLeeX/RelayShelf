@@ -433,6 +433,16 @@ paths:
       parameters: [{ $ref: '#/components/parameters/MessageId' }, { $ref: '#/components/parameters/AttachmentId' }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/VersionRequest' } } } }
       responses: { '200': { description: Updated message, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }, '404': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' }, '422': { $ref: '#/components/responses/Error' } }
+  /messages/{messageId}/attachments/download:
+    get:
+      operationId: downloadMessageAttachments
+      description: Stream this owned message's complete attachments as a store ZIP. No Range support. Storage failures before streaming return JSON; failures during streaming abort the response without completing the ZIP.
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/MessageId' }]
+      responses:
+        '200': { description: Complete message attachment archive, content: { application/zip: { schema: { type: string, format: binary } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
   /attachments/{attachmentId}/download:
     get:
       operationId: downloadAttachment

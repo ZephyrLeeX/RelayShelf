@@ -33,13 +33,14 @@ type ThumbnailDownload struct {
 	Modified                   time.Time
 }
 type Service struct {
-	pool    *pgxpool.Pool
-	store   storage.Adapter
-	monitor *storage.Monitor
+	pool         *pgxpool.Pool
+	store        storage.Adapter
+	monitor      *storage.Monitor
+	archiveSlots chan struct{}
 }
 
 func NewService(pool *pgxpool.Pool, store storage.Adapter) *Service {
-	return &Service{pool: pool, store: store}
+	return &Service{pool: pool, store: store, archiveSlots: make(chan struct{}, 1)}
 }
 
 // SetMonitor installs the storage health monitor. When storage is known

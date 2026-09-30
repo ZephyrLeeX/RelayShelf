@@ -779,6 +779,16 @@ SHA-256 可以内部用于 Stable ETag，但普通 Metadata API 不公开 Global
 
 V1 不用 Nginx `alias` 直读 NAS，也不使用 X-Accel-Redirect。
 
+消息多附件使用 `GET /api/v1/messages/{messageId}/attachments/download`：
+
+- 只查询当前 owner 的附件元数据，绝不读取正文；Trash 下载规则与单文件一致。
+- 按 display order 打包，文件名只保留安全 basename，重名编号，限制名称长度并避开 Windows 保留名。
+- 复用 Storage Monitor、Open/Stat 完整性检查，逐文件 SHA-256 校验；store ZIP 使用 128 KiB 复制缓冲和一个文件句柄。
+- ZIP 使用独立的 service 级单并发 gate，繁忙立即返回 `503 DOWNLOAD_BUSY`，不改变现有上传/finalize 并发配置。
+- 开始前检查全部对象；开始后出错不关闭 ZIP writer，不写 central directory；通过 `http.ErrAbortHandler` 中断 HTTP，Recovery 必须继续传播该信号，禁止追加 JSON。
+- 取消检查 request context，并关闭当前文件、释放 gate；hard-mounted NFS 的内核阻塞仍受宿主机恢复机制约束。
+- 不缓存 ZIP，不支持 ZIP Range；单文件 Range、ETag 下载保持原样。浏览器显示下载状态。
+
 ## 22. SSE 架构
 
 内存结构：
