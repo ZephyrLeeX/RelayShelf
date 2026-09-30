@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/vue-query'
-import { DefaultService, type BodyFormat, type EditMessageRequest, type Message } from '@/api/generated'
+import { DefaultService, type BodyFormat, type EditMessageRequest, type Message, type MessageDeliveryReceipt } from '@/api/generated'
 import { apiCodes, toApiError } from '@/shared/api/errors'
 import { queryKeys } from '@/shared/api/queryKeys'
 
@@ -16,7 +16,12 @@ export type MessageCommand =
   | { type: 'tags'; message: Message; tagIds: string[] }
   | { type: 'forward'; message: Message; recipientUserId: string }
 
-export async function executeMessageCommand(command: MessageCommand) {
+type MetadataCommand = Exclude<MessageCommand, { type: 'forward' | 'delete' }>
+export function executeMessageCommand(command: MetadataCommand): Promise<Message>
+export function executeMessageCommand(command: Extract<MessageCommand, { type: 'forward' }>): Promise<MessageDeliveryReceipt>
+export function executeMessageCommand(command: Extract<MessageCommand, { type: 'delete' }>): Promise<void>
+export function executeMessageCommand(command: MessageCommand): Promise<Message | MessageDeliveryReceipt | void>
+export async function executeMessageCommand(command: MessageCommand): Promise<Message | MessageDeliveryReceipt | void> {
   const { message } = command
   switch (command.type) {
     case 'permanent': return DefaultService.makeMessagePermanent(message.id, { expectedVersion: message.version })

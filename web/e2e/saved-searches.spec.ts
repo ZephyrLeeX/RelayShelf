@@ -45,6 +45,32 @@ test('saved search desktop/mobile management, cross-device persistence and owner
   expect(searchUrl.searchParams.get('createdAfter')).toBe('2026-08-31T16:00:00.000Z')
   expect(searchUrl.searchParams.get('createdBefore')).toBe('2026-09-30T16:00:00.000Z')
   expect(await other.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  // Keep a stale view in the first device's sidebar cache, then update it elsewhere.
+  await page.locator('.app-sidebar').getByRole('link', { name: '临时区', exact: true }).click()
+  await other.getByRole('textbox', { name: '搜索词' }).fill('fresh device keyword')
+  await other.getByLabel('时间', { exact: true }).selectOption('30d')
+  await other.getByRole('button', { name: '更新当前视图条件' }).click()
+  await expect(other.getByRole('status').filter({ hasText: '当前视图条件已更新' })).toBeVisible()
+  await page.locator('.app-sidebar').getByRole('link', { name: renamed, exact: true }).click()
+  await expect(page.getByRole('textbox', { name: '搜索词' })).toHaveValue('fresh device keyword')
+  await expect(page.getByLabel('时间', { exact: true })).toHaveValue('30d')
+  // A background refresh must prompt before replacing either filter or name drafts.
+  await page.getByRole('textbox', { name: '搜索词' }).fill('local draft keyword')
+  await page.getByLabel('视图名称').fill('local draft name')
+  await other.getByRole('textbox', { name: '搜索词' }).fill('new server keyword')
+  await other.getByRole('button', { name: '更新当前视图条件' }).click()
+  await expect(other.getByRole('status').filter({ hasText: '当前视图条件已更新' })).toBeVisible()
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+    window.dispatchEvent(new Event('visibilitychange'))
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+    window.dispatchEvent(new Event('visibilitychange'))
+  })
+  await expect(page.getByRole('status').filter({ hasText: '保留了未保存的编辑' })).toBeVisible()
+  await expect(page.getByRole('textbox', { name: '搜索词' })).toHaveValue('local draft keyword')
+  await expect(page.getByLabel('视图名称')).toHaveValue('local draft name')
+  await page.getByRole('button', { name: '采用服务端最新条件' }).click()
+  await expect(page.getByRole('textbox', { name: '搜索词' })).toHaveValue('new server keyword')
   await otherContext.close()
   const bobContext = await browser.newContext()
   const bobPage = await bobContext.newPage()
@@ -113,3 +139,42 @@ for (const missing of [false, true]) {
     expect(views).toHaveLength(0)
   })
 }
+
+test('a delayed cached-view refresh cannot overwrite a later sidebar view', async ({ page }) => {
+  await login(page, alice)
+  const session = await (await page.request.get('/api/v1/auth/session')).json()
+  const headers = { 'X-CSRF-Token': session.csrfToken, Origin: 'http://127.0.0.1:8080' }
+  const create = async (suffix: string) => {
+    const response = await page.request.post('/api/v1/saved-searches', { headers, data: {
+      name: marker(`refresh-${suffix}`), conditions: { q: `keyword ${suffix}`, lifecycle: '', favorite: false, tagIds: [], type: '', time: '7d', from: '', to: '', timezone: 'UTC' },
+    } })
+    expect(response.ok()).toBeTruthy()
+    return response.json()
+  }
+  const first = await create('first'), second = await create('second')
+  await page.goto(`/search?saved=${first.id}`)
+  await expect(page.getByRole('textbox', { name: '搜索词' })).toHaveValue('keyword first')
+  await page.locator('.app-sidebar').getByRole('link', { name: '临时区', exact: true }).click()
+  const views = await (await page.request.get('/api/v1/saved-searches')).json()
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  let started!: () => void
+  const held = new Promise<void>(resolve => { started = resolve })
+  let reads = 0
+  await page.route('**/api/v1/saved-searches', async route => {
+    if (route.request().method() !== 'GET') { await route.continue(); return }
+    if (++reads === 1) { started(); await gate }
+    // The first request can be cancelled by Vue Query when the second view opens.
+    await route.fulfill({ json: views }).catch(() => {})
+  })
+  await page.locator('.app-sidebar').getByRole('link', { name: first.name, exact: true }).click()
+  await held
+  await page.locator('.app-sidebar').getByRole('link', { name: second.name, exact: true }).click()
+  await expect(page.getByRole('textbox', { name: '搜索词' })).toHaveValue('keyword second')
+  await expect.poll(() => new URL(page.url()).searchParams.get('time')).toBe('7d')
+  release()
+  await expect(page).toHaveURL(new RegExp(`saved=${second.id}`))
+  await expect(page.getByRole('textbox', { name: '搜索词' })).toHaveValue('keyword second')
+  await page.request.delete(`/api/v1/saved-searches/${first.id}`, { headers })
+  await page.request.delete(`/api/v1/saved-searches/${second.id}`, { headers })
+})

@@ -22,7 +22,7 @@ const mutation = useMessageMutation()
 const gallery = useMessageImages(() => props.message.sensitive || props.message.bodyFormat !== BodyFormat.MARKDOWN ? '' : props.message.bodyPreview ?? '', () => props.message.attachments, async () => {
   const message = await DefaultService.getMessage(props.message.id)
   return { source: message.sensitive || message.bodyFormat !== BodyFormat.MARKDOWN ? '' : message.body ?? '', files: message.attachments }
-})
+}, () => `${props.message.id}:${props.message.sensitive}:${props.message.trashedAt ?? ''}`, () => props.message.version)
 const error = ref('')
 const bodyContent = ref<HTMLElement>()
 const expanded = ref(false)

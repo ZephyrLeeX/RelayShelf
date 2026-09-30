@@ -57,7 +57,22 @@ for (const mobile of [false, true]) {
       await composer.locator('textarea').fill('![远程图](https://image.test/preview.png)')
       await composer.locator('input[type=file]').setInputFiles(['first.png', 'second.png'].map(name => ({ name, mimeType: 'image/png', buffer: png })))
       await expect(composer.getByRole('button', { name: '发送', exact: true })).toBeEnabled()
+      const sent = page.waitForResponse(r => r.url().endsWith('/api/v1/messages') && r.request().method() === 'POST')
       await composer.getByRole('button', { name: '发送', exact: true }).click()
+      const message = await (await sent).json()
+      const session = await (await page.request.get('/api/v1/auth/session')).json()
+      const headers = { 'X-CSRF-Token': session.csrfToken, Origin: 'http://127.0.0.1:8080' }
+      const assertMetadataRefresh = async () => {
+        const style = await dialog.locator('img').getAttribute('style')
+        const scale = await percentage(dialog)
+        const latest = await (await page.request.get(`/api/v1/messages/${message.id}`)).json()
+        const edited = await page.request.patch(`/api/v1/messages/${message.id}`, { headers, data: { expectedVersion: latest.version, title: `${title}-updated` } })
+        expect(edited.ok()).toBeTruthy()
+        await expect(card).toContainText(`${title}-updated`)
+        await expect(dialog).toBeVisible()
+        expect(await dialog.locator('img').getAttribute('style')).toBe(style)
+        expect(await percentage(dialog)).toBe(scale)
+      }
       const card = page.locator('.message-card', { hasText: title })
       const opener = card.getByRole('button', { name: '预览 first.png', exact: true })
       await expect(opener).toBeVisible()
@@ -84,6 +99,7 @@ for (const mobile of [false, true]) {
         await touch(page, stage, 'pan')
         expect(await dialog.locator('img').getAttribute('style')).not.toBe(before)
         await expect(dialog.locator('header')).toContainText('2 / 3')
+        await assertMetadataRefresh()
         await dialog.getByRole('button', { name: '适应窗口', exact: true }).click()
         await touch(page, stage, 'swipe')
         await expect(dialog.locator('header')).toContainText('3 / 3')
@@ -99,6 +115,7 @@ for (const mobile of [false, true]) {
         await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
         await page.mouse.down(); await page.mouse.move(box.x + box.width / 2 + 90, box.y + box.height / 2 + 50); await page.mouse.up()
         await expect(dialog.locator('img')).toHaveAttribute('style', /translate\(90px, 50px\)/)
+        await assertMetadataRefresh()
         await page.mouse.wheel(0, -100)
         await expect.poll(() => percentage(dialog)).toBeGreaterThan(100)
         await stage.dblclick(); await assertFit(dialog)
@@ -155,3 +172,39 @@ for (const mobile of [false, true]) {
     })
   })
 }
+
+test('removing the current image and relocking sensitive body clears its preview', async ({ page }) => {
+  await login(page, alice)
+  const session = await (await page.request.get('/api/v1/auth/session')).json()
+  const headers = { 'X-CSRF-Token': session.csrfToken, Origin: 'http://127.0.0.1:8080' }
+  const response = await page.request.post('/api/v1/messages', {
+    headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() },
+    data: { title: marker('image-boundaries'), bodyFormat: 'MARKDOWN', body: '![one](https://image.test/one.png) ![two](https://image.test/two.png)', lifecycle: 'TEMPORARY' },
+  })
+  expect(response.ok()).toBeTruthy()
+  let message = await response.json()
+  await page.route('https://image.test/*.png', route => route.fulfill({ contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aH0cAAAAASUVORK5CYII=', 'base64') }))
+  await page.goto(`/temporary?detail=${message.id}`)
+  const detail = page.locator('.message-inspector')
+  const dialog = page.getByRole('dialog', { name: '图片预览' })
+  await detail.locator('a.markdown-image').first().click()
+  await expect(dialog.locator('header')).toContainText('1 / 2')
+  const update = async (path: string, data: Record<string, unknown>, method: 'patch' | 'post' = 'patch') => {
+    message = await (await page.request.get(`/api/v1/messages/${message.id}`)).json()
+    const result = await page.request[method](`/api/v1/messages/${message.id}${path}`, { headers, data: { expectedVersion: message.version, ...data } })
+    expect(result.ok()).toBeTruthy()
+  }
+  await update('', { body: '![one](https://image.test/one.png)' })
+  await expect(dialog.locator('header')).toContainText('1 / 1')
+  await update('', { body: '![two](https://image.test/two.png)' })
+  await expect(dialog).toHaveCount(0)
+  await update('/sensitive', { sensitive: true }, 'post')
+  await expect(detail).toContainText('敏感内容已锁定')
+  await detail.getByRole('button', { name: '显示正文', exact: true }).click()
+  await detail.locator('a.markdown-image').click()
+  await expect(dialog).toBeVisible()
+  // A version update re-locks the revealed body under the existing security policy.
+  await update('', { title: `${message.title}-relocked` })
+  await expect(detail).toContainText('敏感内容已锁定')
+  await expect(dialog).toHaveCount(0)
+})

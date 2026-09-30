@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { Search, SlidersHorizontal } from '@lucide/vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQueryClient } from '@tanstack/vue-query'
-import { DefaultService, Lifecycle, type SearchConditions } from '@/api/generated'
+import { DefaultService, Lifecycle, type SavedSearch, type SearchConditions } from '@/api/generated'
 import MessageFeed from '@/features/messages/components/MessageFeed.vue'
 import { useTagsQuery } from '@/features/tags/queries'
 import { displayError } from '@/shared/api/errors'
@@ -28,27 +28,83 @@ const appliedError = computed(() => {
   if (current.value?.invalidReason) return current.value.invalidReason
   const invalid = conditionError(applied.value)
   if (invalid) return invalid
-  if (applied.value.tagIds.length && tags.error.value) return '无法验证标签，请重试；搜索已暂停'
-  if (applied.value.tagIds.length && !tags.data.value) return '正在验证标签…'
-  if (applied.value.tagIds.some(id => !tags.data.value?.some(tag => tag.id === id))) return '标签已删除或不可用，请重新选择并搜索；保存视图需明确更新条件'
+  const tagIds = [...applied.value.tagIds, ...(current.value?.conditions.tagIds ?? [])]
+  if (tagIds.length && tags.error.value) return '无法验证标签，请重试；搜索已暂停'
+  if (tagIds.length && !tags.data.value) return '正在验证标签…'
+  if (tagIds.some(id => !tags.data.value?.some(tag => tag.id === id))) return '标签已删除或不可用，请重新选择并搜索；保存视图需明确更新条件'
   return ''
 })
 const filters = computed(() => searchFilters(applied.value, now.value))
-watch(() => route.query, () => { Object.assign(form, readConditions(route.query)); now.value = Date.now() })
-watch([savedId, () => saved.data.value, () => route.query], async () => {
-  if (!savedId.value) { loadedId.value = ''; return }
-  if (!current.value || (loadedId.value === savedId.value && route.query.time !== undefined)) return
-  loadedId.value = savedId.value; name.value = current.value.name; now.value = Date.now()
-  if (conditionError(current.value.conditions)) {
-    // A fresh form is only a repair draft. No route/query is built from it
-    // until the user explicitly replaces the invalid persisted conditions.
-    Object.assign(form, readConditions({}))
-    return
+// Detail/attachment navigation must neither rebase relative dates nor replace drafts.
+const searchRoute = computed(() => JSON.stringify([savedId.value, ...['q', 'lifecycle', 'favorite', 'tagId', 'type', 'time', 'from', 'to', 'timezone'].map(key => route.query[key])]))
+let openGeneration = 0
+onBeforeUnmount(() => { openGeneration++ })
+let baselineForm = JSON.stringify(form)
+let baselineName = ''
+let acceptedSnapshot = ''
+const pendingUpdate = ref<SavedSearch | null>(null)
+const dirty = () => JSON.stringify(form) !== baselineForm || name.value !== baselineName
+function applyView(item: SavedSearch, rebase = true) {
+  acceptedSnapshot = JSON.stringify(item)
+  pendingUpdate.value = null
+  loadedId.value = item.id
+  name.value = baselineName = item.name
+  if (rebase) now.value = Date.now()
+  Object.assign(form, conditionError(item.conditions) ? readConditions({}) : item.conditions)
+  baselineForm = JSON.stringify(form)
+  if (!conditionError(item.conditions)) {
+    return router.replace({ name: 'search', query: { ...route.query, ...conditionsQuery(item.conditions), saved: item.id } })
   }
-  opening.value++
-  try { await router.replace({ name: 'search', query: { ...conditionsQuery(current.value.conditions), saved: savedId.value } }) }
-  finally { opening.value-- }
+}
+async function refreshView() {
+  const id = savedId.value, generation = ++openGeneration
+  opening.value = 1
+  pendingUpdate.value = null
+  try {
+    const result = await saved.refetch()
+    if (generation !== openGeneration || savedId.value !== id) return
+    const item = result.data?.find(v => v.id === id)
+    if (!item || result.isError) return
+    if (dirty()) {
+      pendingUpdate.value = item
+      status.value = '保存视图已刷新；保留了未保存的编辑。可采用服务端条件，或明确更新当前视图。'
+      return
+    }
+    await applyView(item)
+  } finally { if (generation === openGeneration) opening.value = 0 }
+}
+watch(searchRoute, async () => {
+  const preserveDraft = savedId.value && loadedId.value === savedId.value && route.query.time === undefined && dirty()
+  if (!preserveDraft) Object.assign(form, readConditions(route.query))
+  if (!savedId.value) baselineForm = JSON.stringify(form)
+  now.value = Date.now()
+  // A shortcut has no time parameter; returning to it always refreshes the view.
+  if (!savedId.value) { openGeneration++; opening.value = 0; loadedId.value = ''; pendingUpdate.value = null; return }
+  if (loadedId.value === savedId.value && route.query.time !== undefined) return
+  // Cache can populate the draft, but search stays paused until the server responds.
+  const cached = current.value
+  if (cached && !preserveDraft) {
+    name.value = baselineName = cached.name
+    Object.assign(form, conditionError(cached.conditions) ? readConditions({}) : cached.conditions)
+    baselineForm = JSON.stringify(form)
+  } else if (!cached && !preserveDraft) {
+    name.value = baselineName = ''
+    baselineForm = JSON.stringify(form)
+  }
+  await refreshView()
 }, { immediate: true })
+// Window-focus/SSE cache refreshes also participate, even for the same loaded id.
+watch(current, async item => {
+  if (!item || opening.value || busy.value || loadedId.value !== item.id || JSON.stringify(item) === acceptedSnapshot) return
+  if (dirty()) {
+    pendingUpdate.value = item
+    status.value = '保存视图已更新；保留了未保存的编辑。可采用服务端条件，或明确更新当前视图。'
+  } else await applyView(item, JSON.stringify(item.conditions) !== JSON.stringify(applied.value))
+})
+async function acceptUpdate() {
+  const item = pendingUpdate.value
+  if (item && item.id === savedId.value) { await applyView(item); status.value = '已采用服务端最新条件' }
+}
 function conditions(): SearchConditions {
   return { ...form, q: form.q.trim(), tagIds: [...form.tagIds], from: form.time === 'custom' ? form.from : '', to: form.time === 'custom' ? form.to : '' }
 }
@@ -59,19 +115,25 @@ function submit() {
 }
 async function manage(action: 'create' | 'rename' | 'update' | 'delete') {
   error.value = ''; status.value = ''; busy.value = true
+  const id = savedId.value, generation = ++openGeneration
+  opening.value = 0
+  const stillCurrent = () => generation === openGeneration && savedId.value === id
   try {
     if (action === 'delete') {
-      await DefaultService.deleteSavedSearch(savedId.value)
-      await router.replace({ name: 'search', query: {} }); status.value = '视图已删除'
+      await DefaultService.deleteSavedSearch(id)
+      if (stillCurrent()) { await router.replace({ name: 'search', query: {} }); status.value = '视图已删除' }
     } else {
       const value = action === 'rename' ? current.value?.conditions : conditions()
       if (!value || conditionError(value)) throw new Error('请先修正筛选条件')
       if (!name.value.trim()) throw new Error('请输入视图名称')
       const request = { name: action === 'update' ? current.value!.name : name.value.trim(), conditions: value }
-      const item = action === 'create' ? await DefaultService.createSavedSearch(request) : await DefaultService.updateSavedSearch(savedId.value, request)
+      const item = action === 'create' ? await DefaultService.createSavedSearch(request) : await DefaultService.updateSavedSearch(id, request)
       client.setQueryData(savedSearchKey, (items: typeof saved.data.value) => [item, ...(items ?? []).filter(v => v.id !== item.id)])
-      loadedId.value = item.id; name.value = item.name; now.value = Date.now()
+      if (!stillCurrent()) { await client.invalidateQueries({ queryKey: savedSearchKey }); return }
+      acceptedSnapshot = JSON.stringify(item); pendingUpdate.value = null
+      loadedId.value = item.id; name.value = baselineName = item.name; now.value = Date.now()
       await router.replace({ name: 'search', query: { ...conditionsQuery(item.conditions), saved: item.id } })
+      Object.assign(form, item.conditions); baselineForm = JSON.stringify(form)
       status.value = action === 'update' ? '当前视图条件已更新' : action === 'rename' ? '已重命名，条件保持不变' : '视图已保存'
     }
     await client.invalidateQueries({ queryKey: savedSearchKey })
@@ -197,7 +259,7 @@ async function manage(action: 'create' | 'rename' | 'update' | 'delete') {
       >
         保存视图读取失败 <button
           class="button"
-          @click="saved.refetch()"
+          @click="refreshView"
         >
           重试
         </button>
@@ -239,6 +301,13 @@ async function manage(action: 'create' | 'rename' | 'update' | 'delete') {
           </button>
         </template>
       </div>
+      <button
+        v-if="pendingUpdate"
+        class="button"
+        @click="acceptUpdate"
+      >
+        采用服务端最新条件
+      </button>
       <p
         v-if="error"
         class="error"

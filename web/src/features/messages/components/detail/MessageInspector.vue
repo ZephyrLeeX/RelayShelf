@@ -31,7 +31,13 @@ const {
   openViewer, closeViewer, selectViewer, chooseDetailFiles, addAttachments, addRestored, removeAttachment,
 } = useMessageDetailController(() => props.id)
 
-const gallery = useMessageImages(() => message.value?.bodyFormat === BodyFormat.MARKDOWN ? (message.value.sensitive ? currentSensitiveBody.value ?? '' : message.value.body ?? '') : '', () => message.value?.attachments ?? [])
+const gallery = useMessageImages(
+  () => detail.isError.value || message.value?.id !== props.id || message.value?.bodyFormat !== BodyFormat.MARKDOWN
+    ? '' : message.value.sensitive ? currentSensitiveBody.value ?? '' : message.value.body ?? '',
+  () => detail.isError.value || message.value?.id !== props.id ? [] : message.value?.attachments ?? [],
+  undefined,
+  () => `${props.id}:${detail.isError.value}:${message.value?.trashedAt ?? ''}:${message.value?.sensitive && currentSensitiveBody.value == null}`,
+)
 function viewAttachment(id: string) {
   const file = message.value?.attachments.find(item => item.id === id)
   if (file && safeRasterMIMEs.has(file.detectedMime)) gallery.open(previewURL(id))
