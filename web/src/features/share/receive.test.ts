@@ -9,6 +9,25 @@ describe('share parsing', () => {
     expect(parseShare({ title: '仅标题' })).toEqual({ title: '', body: '仅标题' })
     expect(parseShare({ text: '文字', url: 'https://example.com/?a=1&b=2#x' }).body).toContain('?a=1&b=2#x')
   })
+  it.each([
+    'https://en.wikipedia.org/wiki/Function_(mathematics)',
+    'https://example.com/search?q=hello!',
+  ])('preserves legitimate trailing punctuation in %s when deduplicating', (url) => {
+    expect(parseShare({ text: `查看 ${url}`, url }).body).toBe(`查看 ${url}`)
+    expect(parseShare({ text: `查看 ${url}。`, url }).body).toBe(`查看 ${url}。`)
+  })
+  it.each(['.', ',', ';', '!', '?', ')', ']', '。', ').'])('ignores surrounding punctuation %s when deduplicating', (punctuation) => {
+    const url = 'https://example.com/a'
+    const text = `查看 (${url}${punctuation}`
+    expect(parseShare({ text, url }).body).toBe(text)
+  })
+  it.each([101, 200])('accepts a title with %i emoji code points', (length) => {
+    const title = '😀'.repeat(length)
+    expect(parseShare({ title, text: '正文' })).toEqual({ title, body: '正文' })
+  })
+  it('rejects a title with 201 emoji code points', () => {
+    expect(() => parseShare({ title: '😀'.repeat(201), text: '正文' })).toThrow('large')
+  })
   it('rejects empty, oversized titles and oversized UTF-8 bodies', () => {
     expect(() => parseShare({ text: new File(['x'], 'x') })).toThrow()
     expect(() => parseShare({ title: 'x'.repeat(201) })).toThrow()

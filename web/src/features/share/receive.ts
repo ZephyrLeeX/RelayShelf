@@ -10,10 +10,12 @@ export function parseShare(data: Record<string, unknown>): SharedDraft {
   const text = field('text')
   const url = field('url')
   // Compare complete URL tokens, never a substring (e.g. /a vs /abc).
-  const links = (text.match(/https?:\/\/[^\s<>"']+/g) ?? []).map((link) => link.replace(/[.,;!?)\]。]+$/, ''))
-  const body = [text, url && !links.includes(url) && text !== url ? url : ''].filter(Boolean).join('\n\n') || title
+  const links = text.match(/https?:\/\/[^\s<>"']+/g) ?? []
+  // Preserve punctuation belonging to the URL; only ignore punctuation after it.
+  const hasUrl = links.some((link) => link === url || (link.startsWith(url) && /^[.,;!?)\]。]+$/.test(link.slice(url.length))))
+  const body = [text, url && !hasUrl && text !== url ? url : ''].filter(Boolean).join('\n\n') || title
   if (!body) throw new Error('empty')
-  if (title.length > 200 || new TextEncoder().encode(body).byteLength > 1024 * 1024) throw new Error('large')
+  if ([...title].length > 200 || new TextEncoder().encode(body).byteLength > 1024 * 1024) throw new Error('large')
   return { title: title === body ? '' : title, body }
 }
 
