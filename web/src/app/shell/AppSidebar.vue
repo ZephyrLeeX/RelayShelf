@@ -4,6 +4,7 @@ import type { StorageRuntimeStatus } from '@/api/generated'
 import type { RealtimeConnectionState } from '@/app/realtime'
 import { useAuthStore } from '@/features/auth/store'
 import { useTagsQuery } from '@/features/tags/queries'
+import { useSavedSearches } from '@/features/search/savedQueries'
 import AccountButton from './AccountButton.vue'
 import SidebarStatusCard from './SidebarStatusCard.vue'
 
@@ -17,6 +18,7 @@ defineProps<{
 defineEmits<{ openUploads: [], openSessions: [], logout: [] }>()
 const auth = useAuthStore()
 const tags = useTagsQuery()
+const saved = useSavedSearches()
 </script>
 
 <template>
@@ -50,6 +52,20 @@ const tags = useTagsQuery()
       </RouterLink>
     </nav>
     <div class="library">
+      <p class="nav-label">
+        保存搜索
+      </p>
+      <nav aria-label="保存搜索">
+        <RouterLink
+          v-for="item in saved.data.value"
+          :key="item.id"
+          :to="{ name: 'search', query: { saved: item.id } }"
+        >
+          {{ item.name }}{{ item.invalidReason ? '（失效）' : '' }}
+        </RouterLink><RouterLink to="/search">
+          管理保存搜索
+        </RouterLink>
+      </nav>
       <p class="nav-label">
         标签
       </p>
@@ -123,6 +139,6 @@ const tags = useTagsQuery()
 .app-sidebar{grid-row:1/-1;display:flex;flex-direction:column;min-height:100vh;padding:1rem .75rem .75rem;border-right:1px solid var(--border-default);background:var(--surface-raised)}
 .brand{display:flex;align-items:center;gap:.65rem;margin:0 .35rem 1.45rem;text-decoration:none}.brand span{display:grid}.brand strong{font-size:1rem;letter-spacing:-.02em}.brand small{margin-top:.1rem;color:var(--text-tertiary);font:700 .55rem/1 var(--font-mono);letter-spacing:.12em}
 nav{display:grid;gap:.2rem}.main-nav a,.library nav a,.library nav button,.admin{display:flex;align-items:center;gap:.65rem;min-height:40px;padding:.48rem .65rem;border:0;border-radius:var(--radius-sm);background:transparent;text-decoration:none;text-align:left;color:var(--text-secondary);font-size:.84rem}.main-nav a.router-link-active,.library nav a.router-link-active,.admin.router-link-active{background:var(--accent-primary-soft);color:var(--accent-primary-hover);font-weight:700}.main-nav svg,.tools svg,.admin svg{width:1rem;height:1rem;flex:0 0 auto;color:var(--text-tertiary)}
-.library{min-height:0;overflow:auto;margin-top:.7rem}.nav-label{margin:.85rem .65rem .35rem;color:var(--text-tertiary);font:700 .62rem/1 var(--font-mono);letter-spacing:.12em;text-transform:uppercase}.tags i{width:.5rem;height:.5rem;border-radius:50%}.empty{display:block;padding:.5rem .65rem;color:var(--text-tertiary);font-size:.72rem}.tools{margin-top:1rem;padding-top:1rem;border-top:1px solid var(--border-default)}.tools .badge{display:grid;place-items:center;width:1.25rem;height:1.25rem;margin-left:auto;border-radius:999px;background:var(--accent-primary-soft);color:var(--accent-primary);font-size:.65rem}.admin{margin-top:.8rem}
+.library nav a{min-width:0;overflow-wrap:anywhere}.library{min-height:0;overflow:auto;margin-top:.7rem}.nav-label{margin:.85rem .65rem .35rem;color:var(--text-tertiary);font:700 .62rem/1 var(--font-mono);letter-spacing:.12em;text-transform:uppercase}.tags i{width:.5rem;height:.5rem;border-radius:50%}.empty{display:block;padding:.5rem .65rem;color:var(--text-tertiary);font-size:.72rem}.tools{margin-top:1rem;padding-top:1rem;border-top:1px solid var(--border-default)}.tools .badge{display:grid;place-items:center;width:1.25rem;height:1.25rem;margin-left:auto;border-radius:999px;background:var(--accent-primary-soft);color:var(--accent-primary);font-size:.65rem}.admin{margin-top:.8rem}
 .sidebar-foot{display:grid;gap:.35rem;margin-top:auto;padding-top:1rem}.logout{justify-self:start;margin-left:.45rem;border:0;background:transparent;color:var(--text-tertiary);font-size:.7rem}
 </style>

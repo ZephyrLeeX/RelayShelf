@@ -8,6 +8,8 @@ vi.mock('@/features/tags/queries', () => ({
   useTagsQuery: () => ({ data: ref([]), isPending: ref(false) }),
 }))
 
+vi.mock('@/features/search/savedQueries', () => ({ useSavedSearches: () => ({ data: ref([{ id: 'saved-1', name: '本周代码', invalidReason: '' }]) }) }))
+
 const RouterLink = { props: ['to'], template: '<a :href="to"><slot /></a>' }
 
 describe('AppSidebar', () => {
@@ -18,6 +20,8 @@ describe('AppSidebar', () => {
     })
     const destinations = wrapper.findAll('a').map((link) => link.attributes('href'))
     expect(destinations).toEqual(expect.arrayContaining(['/temporary', '/permanent', '/search', '/favorites', '/trash']))
+    expect(wrapper.text()).toContain('保存搜索')
+    expect(wrapper.text()).toContain('本周代码')
     expect(wrapper.text()).toContain('实时连接正常')
     expect(wrapper.text()).toContain('3 个设备')
     expect(wrapper.text()).not.toContain('在线')

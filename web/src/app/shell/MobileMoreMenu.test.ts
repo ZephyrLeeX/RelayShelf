@@ -9,6 +9,8 @@ vi.mock('@/features/tags/queries', () => ({
   useTagsQuery: () => ({ data: ref([{ id: 'tag-1', name: '工作', color: '#336699' }]), isPending: ref(false) }),
 }))
 
+vi.mock('@/features/search/savedQueries', () => ({ useSavedSearches: () => ({ data: ref([{ id: 'saved-1', name: '本周代码', invalidReason: '' }]) }) }))
+
 const RouterLink = { props: ['to'], emits: ['click'], template: '<a :href="to" @click="$emit(\'click\')"><slot /></a>' }
 
 describe('MobileMoreMenu', () => {
@@ -19,6 +21,8 @@ describe('MobileMoreMenu', () => {
     const wrapper = mount(MobileMoreMenu, {
       global: { plugins: [pinia], stubs: { RouterLink, teleport: true } },
     })
+    expect(wrapper.text()).toContain('保存搜索')
+    expect(wrapper.text()).toContain('本周代码')
     expect(wrapper.text()).toContain('标签')
     expect(wrapper.text()).toContain('工作')
     expect(wrapper.text()).toContain('收藏')
