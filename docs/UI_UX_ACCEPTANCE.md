@@ -63,3 +63,43 @@
 - 为保持已有敏感正文编辑接口约束，历史敏感 TEXT 消息仍保持纯文本；敏感 MARKDOWN 消息可使用格式工具栏，并仅在揭示后安全渲染。
 - 远程正文图片默认不自动请求，点击预览才加载且不发送 Referer；远端防盗链、无效 URL、HTTPS 页面中的不安全 HTTP 图片仍可能无法显示。SVG 等活动附件维持原有仅下载策略。
 - 未创建 tag、GitHub Release 或生产部署；未推送或声称 GitHub CI 已通过。
+
+## 2026-09-30 图片预览统一验收
+
+### 实现范围
+
+- 卡片、消息详情、附件及外部 Markdown 图片沿用当前消息的图片集合；AttachmentViewer 的图片分支复用 ImagePreview，删除独立缩放/切图交互。PDF、文本、音视频及活动文件仅下载策略保留。
+- 适应窗口按图片 naturalWidth/naturalHeight 与可用视口计算，不放大小图片；原始尺寸为 100%，百分比显示至 0.1%。支持按钮/滚轮缩放（最高 800%）、双击适应窗口/原始尺寸、边界内拖动、双指缩放；仅在适应窗口时单指横滑切图，双指操作和取消手势不会触发切图。
+- 图片切换和重试重建当前图片节点并校验来源/版本，旧图片事件无法覆盖新状态；附件其他媒体的预检也忽略已取消请求。加载中显示加载状态，不显示仅下载提示。
+- 弹层锁定背景滚动、限制键盘焦点、恢复触发元素与页面位置，适配安全区和尺寸变化。下载原图入口在手机上可见。
+- 缩略图仍懒加载，附件 ID 变化重置缩略图重试。附件使用原有授权 URL，未修改 Go、数据库、OpenAPI、敏感正文边界或 Service Worker。外部 Markdown 图片继续主动点击加载、HTTP(S) 限制和 no-referrer 策略。
+
+### 本地验证
+
+测试前检查 `git diff --name-only`，只选择相关范围。
+
+- `pnpm --dir web exec vitest run src/features/messages/components/ImagePreview.test.ts src/features/files/AttachmentViewer.test.ts src/features/messages/components/attachments/AttachmentThumbnail.test.ts src/features/messages/components/SafeMarkdown.test.ts src/features/messages/components/MessageCard.test.ts`：5 文件、49 项 PASS。
+- `image-preview.spec.ts`：桌面 1440×900、移动 390×844（含 844×390 横屏），2 项 PASS。真实登录/上传/下载；验证卡片/详情/Markdown 入口、无原图预加载、百分比、桌面滚轮/拖动/双击/按键、CDP 触摸双指缩放/平移/切图、焦点及滚动恢复、加载/失败/重试。
+- `pnpm --dir web exec vue-tsc -b --pretty false` PASS；对本任务 8 个 Vue/TypeScript 文件运行 ESLint PASS；`git diff --check` PASS。
+- 未运行全量前端、Go、集成或 E2E，也未运行 `make dev-check`；全量回归留给 GitHub CI，本次局部通过不代表 CI 全量回归通过。未修改 OpenAPI，因此无需 `make generate`。
+
+`make dev-preview` 因缺少 podman 无法直接启动，Docker socket 也不可访问；复用既有 `.local/dev/postgres-runtime` 的独立 PostgreSQL（127.0.0.1:55432，数据库 `relayshelf_dev`）及 `.local/dev/start-native-{backend,vite}.sh` 启动。Vite 在 **0.0.0.0:5173**，API 在 127.0.0.1:8080；两者健康检查 HTTP 200。未使用生产 `.env`、NFS、数据库或密钥。
+
+本机 Chromium headless shell 崩溃，最终验证使用已安装的完整 Chromium、`.local/dev/browser-libs` 与专用字体配置；临时配置 `.local/dev/image-preview.playwright.config.ts` 仅匹配本 spec 并复用 5173，不启动默认 E2E 数据库：
+
+```sh
+FONTCONFIG_FILE="$PWD/.local/dev/browser-libs/fonts.conf" \
+LD_LIBRARY_PATH="$PWD/.local/dev/browser-libs/root/usr/lib/x86_64-linux-gnu" \
+pnpm --dir web exec playwright test --config ../.local/dev/image-preview.playwright.config.ts
+```
+
+### 人工验收与限制
+
+实际登录验证账号：`e2e-alice` / `e2e-alice-pass-12345`，地址 `http://localhost:5173`。
+
+1. 用 Markdown 类型发送两张大图片附件和一个图片链接，分别从卡片、详情附件及正文链接打开；检查图片计数、完整适配、原始尺寸 100%、缩放按钮/滚轮、双击、放大后拖动和方向键切图。
+2. 手机真机检查双指缩放与抬起一指后的拖动；回到适应窗口后左右滑动，确认放大拖动不会误切图。检查刘海/底部安全区、横竖屏和浏览器地址栏收缩时的控件可见性。
+3. 点击下载原图；关闭按钮/Esc 关闭后确认触发元素焦点、原页面位置及详情面板仍保留，Tab 不进入背景。
+4. 用无法访问的外部图片观察加载、失败、重试；快速切换图片，确认不会出现旧图加载状态或仅下载提示。
+
+真实 iOS/Android 触屏手感、系统手势和浏览器动态工具栏没有通过桌面 Chromium 模拟完成真机验证，仍需人工验收。远端防盗链、失效链接及混合内容仍按原有安全策略失败。

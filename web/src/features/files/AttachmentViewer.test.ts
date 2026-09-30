@@ -1,5 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AttachmentSummary } from '@/api/generated'
 import AttachmentViewer from './AttachmentViewer.vue'
 import { setStorageRuntimeStatus } from '@/features/storage/runtime'
@@ -14,6 +14,7 @@ function mountViewer(detectedMime: string) {
 }
 
 describe('AttachmentViewer', () => {
+  beforeEach(() => { vi.spyOn(window, 'scrollTo').mockImplementation(() => {}) })
   const partialResponse = () => new Response(new Uint8Array([0]), { status: 206 })
 
   afterEach(() => {
@@ -21,14 +22,18 @@ describe('AttachmentViewer', () => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
-  it('renders the safe raster original through the preview endpoint after a range preflight', async () => {
+  it('delegates raster images to the shared viewer using the authorized preview endpoint', async () => {
     const fetch = vi.fn().mockResolvedValue(partialResponse())
     vi.stubGlobal('fetch', fetch)
     const wrapper = mountViewer('image/png')
     await flushPromises()
     const image = wrapper.get('img.original')
     expect(image.attributes('src')).toBe('/api/v1/attachments/attach-1/preview')
-    expect(fetch).toHaveBeenCalledWith('/api/v1/attachments/attach-1/preview', expect.objectContaining({ headers: { Range: 'bytes=0-0' } }))
+    expect(wrapper.find('[aria-label="图片预览"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('正在加载图片')
+    expect(wrapper.text()).not.toContain('此文件仅支持下载')
+    expect(wrapper.get('a').attributes('href')).toBe('/api/v1/attachments/attach-1/download')
+    expect(fetch).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
@@ -36,10 +41,33 @@ describe('AttachmentViewer', () => {
     vi.stubGlobal('fetch', vi.fn().mockImplementation(() => Promise.resolve(partialResponse())))
     for (const mime of ['application/pdf', 'audio/mpeg', 'video/mp4']) {
       const wrapper = mountViewer(mime)
+      expect(wrapper.text()).toContain('正在加载文件')
+      expect(wrapper.text()).not.toContain('此文件仅支持下载')
       await flushPromises()
       expect(wrapper.find('[src="/api/v1/attachments/attach-1/preview"]').exists()).toBe(true)
       wrapper.unmount()
     }
+  })
+
+
+  it('ignores a late preflight after navigation and retries the current media', async () => {
+    let resolveOld!: (response: Response) => void
+    const fetch = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => { resolveOld = resolve }))
+      .mockResolvedValueOnce(new Response('', { status: 500 }))
+      .mockResolvedValueOnce(partialResponse())
+    vi.stubGlobal('fetch', fetch)
+    const second = { ...file('application/pdf'), id: 'attach-2' }
+    const wrapper = mount(AttachmentViewer, { props: { files: [file('application/pdf'), second], currentId: 'attach-1' }, global: { stubs: { teleport: true } } })
+    await wrapper.setProps({ currentId: second.id })
+    await flushPromises()
+    resolveOld(partialResponse())
+    await flushPromises()
+    expect(wrapper.find('iframe').exists()).toBe(false)
+    expect(wrapper.text()).toContain('文件预览暂不可用')
+    await wrapper.findAll('button').find(button => button.text() === '重试')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.get('iframe').attributes('src')).toBe('/api/v1/attachments/attach-2/preview')
+    wrapper.unmount()
   })
 
   it('keeps unsafe active content download-only with no same-origin render', () => {

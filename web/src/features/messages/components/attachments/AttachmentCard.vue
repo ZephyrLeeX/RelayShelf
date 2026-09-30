@@ -2,14 +2,14 @@
 import { Download } from '@lucide/vue'
 import type { AttachmentSummary } from '@/api/generated'
 import { useOpenMessageImage } from '../../composables/useMessageImages'
-import { downloadURL, previewURL } from '@/features/files/preview'
+import { downloadURL, previewURL, safeRasterMIMEs } from '@/features/files/preview'
 import { formatBytes } from '@/shared/utils/bytes'
 import AttachmentIcon from './AttachmentIcon.vue'
 import AttachmentThumbnail from './AttachmentThumbnail.vue'
 
 defineProps<{ file: AttachmentSummary }>()
 const openImage = useOpenMessageImage()
-const safeImages = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp'])
+const safeImages = safeRasterMIMEs
 </script>
 
 <template>
