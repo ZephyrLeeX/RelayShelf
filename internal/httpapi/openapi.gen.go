@@ -34,16 +34,16 @@ func (e AdminUserStatus) Valid() bool {
 
 // Defines values for BodyFormat.
 const (
-	MARKDOWN BodyFormat = "MARKDOWN"
-	TEXT     BodyFormat = "TEXT"
+	BodyFormatMARKDOWN BodyFormat = "MARKDOWN"
+	BodyFormatTEXT     BodyFormat = "TEXT"
 )
 
 // Valid indicates whether the value is a known member of the BodyFormat enum.
 func (e BodyFormat) Valid() bool {
 	switch e {
-	case MARKDOWN:
+	case BodyFormatMARKDOWN:
 		return true
-	case TEXT:
+	case BodyFormatTEXT:
 		return true
 	default:
 		return false
@@ -94,16 +94,106 @@ func (e HealthState) Valid() bool {
 
 // Defines values for Lifecycle.
 const (
-	PERMANENT Lifecycle = "PERMANENT"
-	TEMPORARY Lifecycle = "TEMPORARY"
+	LifecyclePERMANENT Lifecycle = "PERMANENT"
+	LifecycleTEMPORARY Lifecycle = "TEMPORARY"
 )
 
 // Valid indicates whether the value is a known member of the Lifecycle enum.
 func (e Lifecycle) Valid() bool {
 	switch e {
-	case PERMANENT:
+	case LifecyclePERMANENT:
 		return true
-	case TEMPORARY:
+	case LifecycleTEMPORARY:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SearchConditionsLifecycle.
+const (
+	SearchConditionsLifecycleALL       SearchConditionsLifecycle = ""
+	SearchConditionsLifecyclePERMANENT SearchConditionsLifecycle = "PERMANENT"
+	SearchConditionsLifecycleTEMPORARY SearchConditionsLifecycle = "TEMPORARY"
+)
+
+// Valid indicates whether the value is a known member of the SearchConditionsLifecycle enum.
+func (e SearchConditionsLifecycle) Valid() bool {
+	switch e {
+	case SearchConditionsLifecycleALL:
+		return true
+	case SearchConditionsLifecyclePERMANENT:
+		return true
+	case SearchConditionsLifecycleTEMPORARY:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SearchConditionsTime.
+const (
+	All    SearchConditionsTime = "all"
+	Custom SearchConditionsTime = "custom"
+	N24h   SearchConditionsTime = "24h"
+	N30d   SearchConditionsTime = "30d"
+	N7d    SearchConditionsTime = "7d"
+)
+
+// Valid indicates whether the value is a known member of the SearchConditionsTime enum.
+func (e SearchConditionsTime) Valid() bool {
+	switch e {
+	case All:
+		return true
+	case Custom:
+		return true
+	case N24h:
+		return true
+	case N30d:
+		return true
+	case N7d:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SearchConditionsTimezone.
+const (
+	AsiaShanghai SearchConditionsTimezone = "Asia/Shanghai"
+	UTC          SearchConditionsTimezone = "UTC"
+)
+
+// Valid indicates whether the value is a known member of the SearchConditionsTimezone enum.
+func (e SearchConditionsTimezone) Valid() bool {
+	switch e {
+	case AsiaShanghai:
+		return true
+	case UTC:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SearchConditionsType.
+const (
+	SearchConditionsTypeALL      SearchConditionsType = ""
+	SearchConditionsTypeCODE     SearchConditionsType = "CODE"
+	SearchConditionsTypeMARKDOWN SearchConditionsType = "MARKDOWN"
+	SearchConditionsTypeTEXT     SearchConditionsType = "TEXT"
+)
+
+// Valid indicates whether the value is a known member of the SearchConditionsType enum.
+func (e SearchConditionsType) Valid() bool {
+	switch e {
+	case SearchConditionsTypeALL:
+		return true
+	case SearchConditionsTypeCODE:
+		return true
+	case SearchConditionsTypeMARKDOWN:
+		return true
+	case SearchConditionsTypeTEXT:
 		return true
 	default:
 		return false
@@ -580,6 +670,52 @@ type RuntimeSettings struct {
 	UploadRetentionHours int                 `json:"uploadRetentionHours"`
 }
 
+// SavedSearch defines model for SavedSearch.
+type SavedSearch struct {
+	Conditions SearchConditions   `json:"conditions"`
+	Id         openapi_types.UUID `json:"id"`
+
+	// InvalidReason Nonempty when conditions are no longer valid; do not broaden search
+	InvalidReason string    `json:"invalidReason"`
+	Name          string    `json:"name"`
+	UpdatedAt     time.Time `json:"updatedAt"`
+}
+
+// SavedSearchRequest defines model for SavedSearchRequest.
+type SavedSearchRequest struct {
+	Conditions SearchConditions `json:"conditions"`
+	Name       string           `json:"name"`
+}
+
+// SearchConditions defines model for SearchConditions.
+type SearchConditions struct {
+	Favorite bool `json:"favorite"`
+
+	// From Local YYYY-MM-DDTHH:mm, inclusive start in timezone
+	From      string                    `json:"from"`
+	Lifecycle SearchConditionsLifecycle `json:"lifecycle"`
+	Q         string                    `json:"q"`
+	TagIds    []openapi_types.UUID      `json:"tagIds"`
+	Time      SearchConditionsTime      `json:"time"`
+	Timezone  SearchConditionsTimezone  `json:"timezone"`
+
+	// To Local YYYY-MM-DDTHH:mm, exclusive end in timezone
+	To   string               `json:"to"`
+	Type SearchConditionsType `json:"type"`
+}
+
+// SearchConditionsLifecycle defines model for SearchConditions.Lifecycle.
+type SearchConditionsLifecycle string
+
+// SearchConditionsTime defines model for SearchConditions.Time.
+type SearchConditionsTime string
+
+// SearchConditionsTimezone defines model for SearchConditions.Timezone.
+type SearchConditionsTimezone string
+
+// SearchConditionsType defines model for SearchConditions.Type.
+type SearchConditionsType string
+
 // SensitiveBody defines model for SensitiveBody.
 type SensitiveBody struct {
 	Body    string `json:"body"`
@@ -902,6 +1038,12 @@ type ReplaceMessageTagsJSONRequestBody = ReplaceMessageTagsRequest
 // TrashMessageJSONRequestBody defines body for TrashMessage for application/json ContentType.
 type TrashMessageJSONRequestBody = VersionRequest
 
+// CreateSavedSearchJSONRequestBody defines body for CreateSavedSearch for application/json ContentType.
+type CreateSavedSearchJSONRequestBody = SavedSearchRequest
+
+// UpdateSavedSearchJSONRequestBody defines body for UpdateSavedSearch for application/json ContentType.
+type UpdateSavedSearchJSONRequestBody = SavedSearchRequest
+
 // CreateTagJSONRequestBody defines body for CreateTag for application/json ContentType.
 type CreateTagJSONRequestBody = TagRequest
 
@@ -1036,6 +1178,18 @@ type ServerInterface interface {
 
 	// (POST /messages/{messageId}/trash)
 	TrashMessage(w http.ResponseWriter, r *http.Request, messageId MessageId)
+
+	// (GET /saved-searches)
+	ListSavedSearches(w http.ResponseWriter, r *http.Request)
+
+	// (POST /saved-searches)
+	CreateSavedSearch(w http.ResponseWriter, r *http.Request)
+
+	// (DELETE /saved-searches/{savedSearchId})
+	DeleteSavedSearch(w http.ResponseWriter, r *http.Request, savedSearchId openapi_types.UUID)
+
+	// (PUT /saved-searches/{savedSearchId})
+	UpdateSavedSearch(w http.ResponseWriter, r *http.Request, savedSearchId openapi_types.UUID)
 
 	// (GET /search)
 	SearchMessages(w http.ResponseWriter, r *http.Request, params SearchMessagesParams)
@@ -1287,6 +1441,26 @@ func (_ Unimplemented) ReplaceMessageTags(w http.ResponseWriter, r *http.Request
 
 // (POST /messages/{messageId}/trash)
 func (_ Unimplemented) TrashMessage(w http.ResponseWriter, r *http.Request, messageId MessageId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /saved-searches)
+func (_ Unimplemented) ListSavedSearches(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /saved-searches)
+func (_ Unimplemented) CreateSavedSearch(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (DELETE /saved-searches/{savedSearchId})
+func (_ Unimplemented) DeleteSavedSearch(w http.ResponseWriter, r *http.Request, savedSearchId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PUT /saved-searches/{savedSearchId})
+func (_ Unimplemented) UpdateSavedSearch(w http.ResponseWriter, r *http.Request, savedSearchId openapi_types.UUID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -2381,6 +2555,86 @@ func (siw *ServerInterfaceWrapper) TrashMessage(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// ListSavedSearches operation middleware
+func (siw *ServerInterfaceWrapper) ListSavedSearches(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListSavedSearches(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateSavedSearch operation middleware
+func (siw *ServerInterfaceWrapper) CreateSavedSearch(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateSavedSearch(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteSavedSearch operation middleware
+func (siw *ServerInterfaceWrapper) DeleteSavedSearch(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "savedSearchId" -------------
+	var savedSearchId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "savedSearchId", chi.URLParam(r, "savedSearchId"), &savedSearchId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "savedSearchId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteSavedSearch(w, r, savedSearchId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateSavedSearch operation middleware
+func (siw *ServerInterfaceWrapper) UpdateSavedSearch(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "savedSearchId" -------------
+	var savedSearchId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "savedSearchId", chi.URLParam(r, "savedSearchId"), &savedSearchId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "savedSearchId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateSavedSearch(w, r, savedSearchId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // SearchMessages operation middleware
 func (siw *ServerInterfaceWrapper) SearchMessages(w http.ResponseWriter, r *http.Request) {
 
@@ -3010,6 +3264,18 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/saved-searches", wrapper.ListSavedSearches)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/saved-searches", wrapper.CreateSavedSearch)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/saved-searches/{savedSearchId}", wrapper.DeleteSavedSearch)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/saved-searches/{savedSearchId}", wrapper.UpdateSavedSearch)
+	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/events", wrapper.GetEvents)
 	})

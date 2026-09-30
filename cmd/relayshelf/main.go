@@ -301,6 +301,7 @@ func main() {
 		searchRepository := search.NewPostgreSQLRepository(db)
 		searchService := search.NewService(searchRepository, now)
 		searchHandler := search.NewHandler(searchService)
+		searchHandler.SetSavedRepository(db)
 		realtimeHandler := realtime.NewHandler(hub, authService)
 		scheduler := jobs.NewScheduler(db, jobRepo, uploadService, fileService, hub, id.UUIDv7{}, now, jobWake)
 		background.Add(1)

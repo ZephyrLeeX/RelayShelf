@@ -28,6 +28,8 @@ import type { RenameDeviceRequest } from '../models/RenameDeviceRequest';
 import type { ReplaceMessageTagsRequest } from '../models/ReplaceMessageTagsRequest';
 import type { ResetAdminUserPasswordRequest } from '../models/ResetAdminUserPasswordRequest';
 import type { RuntimeSettings } from '../models/RuntimeSettings';
+import type { SavedSearch } from '../models/SavedSearch';
+import type { SavedSearchRequest } from '../models/SavedSearchRequest';
 import type { SensitiveBody } from '../models/SensitiveBody';
 import type { SensitiveRequest } from '../models/SensitiveRequest';
 import type { Session } from '../models/Session';
@@ -49,6 +51,87 @@ import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class DefaultService {
+    /**
+     * @returns SavedSearch Saved search
+     * @throws ApiError
+     */
+    public static listSavedSearches(): CancelablePromise<Array<SavedSearch>> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/saved-searches',
+            errors: {
+                401: `API error`,
+                404: `API error`,
+                422: `API error`,
+            },
+        });
+    }
+    /**
+     * @param requestBody
+     * @returns SavedSearch Saved search
+     * @throws ApiError
+     */
+    public static createSavedSearch(
+        requestBody: SavedSearchRequest,
+    ): CancelablePromise<SavedSearch> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/saved-searches',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                401: `API error`,
+                404: `API error`,
+                422: `API error`,
+            },
+        });
+    }
+    /**
+     * @param savedSearchId
+     * @param requestBody
+     * @returns SavedSearch Saved search
+     * @throws ApiError
+     */
+    public static updateSavedSearch(
+        savedSearchId: string,
+        requestBody: SavedSearchRequest,
+    ): CancelablePromise<SavedSearch> {
+        return __request(OpenAPI, {
+            method: 'PUT',
+            url: '/saved-searches/{savedSearchId}',
+            path: {
+                'savedSearchId': savedSearchId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                401: `API error`,
+                404: `API error`,
+                422: `API error`,
+            },
+        });
+    }
+    /**
+     * @param savedSearchId
+     * @returns void
+     * @throws ApiError
+     */
+    public static deleteSavedSearch(
+        savedSearchId: string,
+    ): CancelablePromise<void> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/saved-searches/{savedSearchId}',
+            path: {
+                'savedSearchId': savedSearchId,
+            },
+            errors: {
+                401: `API error`,
+                404: `API error`,
+                422: `API error`,
+            },
+        });
+    }
     /**
      * Stream metadata-only RealtimeEvent SSE frames. Last-Event-ID is ignored; clients refetch truth after reconnect.
      * @returns string Realtime event stream

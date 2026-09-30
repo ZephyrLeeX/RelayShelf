@@ -131,6 +131,14 @@ type MessageTag struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type SavedSearch struct {
+	ID         pgtype.UUID
+	OwnerID    pgtype.UUID
+	Name       string
+	Conditions []byte
+	UpdatedAt  pgtype.Timestamptz
+}
+
 type Session struct {
 	ID                pgtype.UUID
 	UserID            pgtype.UUID

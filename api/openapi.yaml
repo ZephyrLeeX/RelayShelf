@@ -6,6 +6,68 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /saved-searches:
+    get:
+      operationId: listSavedSearches
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200':
+          description: Saved search
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/SavedSearch' } }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+    post:
+      operationId: createSavedSearch
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SavedSearchRequest' }
+      responses:
+        '201':
+          description: Saved search
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SavedSearch' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /saved-searches/{savedSearchId}:
+    parameters:
+      - name: savedSearchId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      operationId: updateSavedSearch
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SavedSearchRequest' }
+      responses:
+        '200':
+          description: Saved search
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SavedSearch' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: deleteSavedSearch
+      security: [{ cookieAuth: [] }]
+      responses:
+        '204':
+          description: Saved search
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
   /events:
     get:
       operationId: getEvents
@@ -676,6 +738,36 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
   schemas:
+    SearchConditions:
+      type: object
+      additionalProperties: false
+      required: [q, lifecycle, favorite, tagIds, type, time, from, to, timezone]
+      properties:
+        q: { type: string, maxLength: 1024 }
+        lifecycle: { type: string, enum: ['', TEMPORARY, PERMANENT], x-enum-varnames: [ALL, TEMPORARY, PERMANENT] }
+        favorite: { type: boolean }
+        tagIds: { type: array, maxItems: 100, items: { type: string, format: uuid } }
+        type: { type: string, enum: ['', TEXT, MARKDOWN, CODE], x-enum-varnames: [ALL, TEXT, MARKDOWN, CODE] }
+        time: { type: string, enum: [all, 24h, 7d, 30d, custom] }
+        from: { type: string, description: 'Local YYYY-MM-DDTHH:mm, inclusive start in timezone' }
+        to: { type: string, description: 'Local YYYY-MM-DDTHH:mm, exclusive end in timezone' }
+        timezone: { type: string, enum: [Asia/Shanghai, UTC] }
+    SavedSearchRequest:
+      type: object
+      additionalProperties: false
+      required: [name, conditions]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        conditions: { $ref: '#/components/schemas/SearchConditions' }
+    SavedSearch:
+      allOf:
+        - $ref: '#/components/schemas/SavedSearchRequest'
+        - type: object
+          required: [id, updatedAt, invalidReason]
+          properties:
+            id: { type: string, format: uuid }
+            updatedAt: { type: string, format: date-time }
+            invalidReason: { type: string, description: 'Nonempty when conditions are no longer valid; do not broaden search' }
     LoginRequest:
       type: object
       required: [username, password]
