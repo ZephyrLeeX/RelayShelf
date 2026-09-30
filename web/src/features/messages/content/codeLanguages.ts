@@ -1,3 +1,5 @@
+import languages from '../../../../../internal/messages/contenttype/languages.json'
+
 /**
  * Shared registry of code languages offered by the content type pickers.
  *
@@ -15,25 +17,7 @@ export interface CodeLanguage {
   aliases: string[]
 }
 
-export const CODE_LANGUAGES: CodeLanguage[] = [
-  { id: 'shell', label: 'Shell', shortLabel: 'SH', fenceLanguage: 'bash', aliases: ['sh', 'bash', 'zsh', 'console'] },
-  { id: 'python', label: 'Python', shortLabel: 'PY', fenceLanguage: 'python', aliases: ['py'] },
-  { id: 'java', label: 'Java', shortLabel: 'JAVA', fenceLanguage: 'java', aliases: [] },
-  { id: 'javascript', label: 'JavaScript', shortLabel: 'JS', fenceLanguage: 'javascript', aliases: ['js'] },
-  { id: 'typescript', label: 'TypeScript', shortLabel: 'TS', fenceLanguage: 'typescript', aliases: ['ts'] },
-  { id: 'json', label: 'JSON', shortLabel: 'JSON', fenceLanguage: 'json', aliases: [] },
-  { id: 'yaml', label: 'YAML', shortLabel: 'YML', fenceLanguage: 'yaml', aliases: ['yml'] },
-  { id: 'sql', label: 'SQL', shortLabel: 'SQL', fenceLanguage: 'sql', aliases: [] },
-  { id: 'go', label: 'Go', shortLabel: 'GO', fenceLanguage: 'go', aliases: ['golang'] },
-  { id: 'rust', label: 'Rust', shortLabel: 'RS', fenceLanguage: 'rust', aliases: ['rs'] },
-  { id: 'c', label: 'C', shortLabel: 'C', fenceLanguage: 'c', aliases: [] },
-  { id: 'cpp', label: 'C++', shortLabel: 'CPP', fenceLanguage: 'cpp', aliases: ['cxx', 'c++'] },
-  { id: 'csharp', label: 'C#', shortLabel: 'C#', fenceLanguage: 'csharp', aliases: ['cs', 'c#'] },
-  { id: 'powershell', label: 'PowerShell', shortLabel: 'PS', fenceLanguage: 'powershell', aliases: ['ps1', 'pwsh'] },
-  { id: 'dockerfile', label: 'Dockerfile', shortLabel: 'DOCKER', fenceLanguage: 'dockerfile', aliases: ['docker'] },
-  { id: 'html', label: 'HTML', shortLabel: 'HTML', fenceLanguage: 'html', aliases: [] },
-  { id: 'css', label: 'CSS', shortLabel: 'CSS', fenceLanguage: 'css', aliases: [] },
-]
+export const CODE_LANGUAGES: CodeLanguage[] = languages
 
 /** Resolves a fence token, detected language, or alias to a registry entry. */
 export function findCodeLanguage(token: string | null | undefined): CodeLanguage | null {

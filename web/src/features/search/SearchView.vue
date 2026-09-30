@@ -23,6 +23,7 @@ const appliedError = computed(() => {
   if (queryError(route.query)) return queryError(route.query)
   if (savedId.value && saved.error.value) return '无法读取保存视图，请重试；搜索已暂停'
   if (savedId.value && !saved.isPending.value && !current.value) return '保存视图已删除或不可用'
+  if (current.value && conditionError(current.value.conditions)) return current.value.invalidReason || conditionError(current.value.conditions)
   if (savedId.value && (opening.value > 0 || loadedId.value !== savedId.value || route.query.time === undefined)) return '正在读取保存视图…'
   if (current.value?.invalidReason) return current.value.invalidReason
   const invalid = conditionError(applied.value)
@@ -38,6 +39,12 @@ watch([savedId, () => saved.data.value, () => route.query], async () => {
   if (!savedId.value) { loadedId.value = ''; return }
   if (!current.value || (loadedId.value === savedId.value && route.query.time !== undefined)) return
   loadedId.value = savedId.value; name.value = current.value.name; now.value = Date.now()
+  if (conditionError(current.value.conditions)) {
+    // A fresh form is only a repair draft. No route/query is built from it
+    // until the user explicitly replaces the invalid persisted conditions.
+    Object.assign(form, readConditions({}))
+    return
+  }
   opening.value++
   try { await router.replace({ name: 'search', query: { ...conditionsQuery(current.value.conditions), saved: savedId.value } }) }
   finally { opening.value-- }
@@ -58,7 +65,7 @@ async function manage(action: 'create' | 'rename' | 'update' | 'delete') {
       await router.replace({ name: 'search', query: {} }); status.value = '视图已删除'
     } else {
       const value = action === 'rename' ? current.value?.conditions : conditions()
-      if (!value || (action !== 'rename' && conditionError(value))) throw new Error('请先修正筛选条件')
+      if (!value || conditionError(value)) throw new Error('请先修正筛选条件')
       if (!name.value.trim()) throw new Error('请输入视图名称')
       const request = { name: action === 'update' ? current.value!.name : name.value.trim(), conditions: value }
       const item = action === 'create' ? await DefaultService.createSavedSearch(request) : await DefaultService.updateSavedSearch(savedId.value, request)
@@ -211,7 +218,7 @@ async function manage(action: 'create' | 'rename' | 'update' | 'delete') {
         <template v-if="current">
           <button
             class="button"
-            :disabled="busy || !name.trim()"
+            :disabled="busy || !name.trim() || !!conditionError(current.conditions)"
             @click="manage('rename')"
           >
             重命名

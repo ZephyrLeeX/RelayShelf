@@ -1,0 +1,181 @@
+[
+  {
+    "name": "shell",
+    "typeId": "shell",
+    "text": "matching shell\nprint(\"``` embedded\")\n",
+    "body": "````bash\nmatching shell\nprint(\"``` embedded\")\n\n````",
+    "kind": "CODE"
+  },
+  {
+    "name": "python",
+    "typeId": "python",
+    "text": "matching python\nprint(\"``` embedded\")\n",
+    "body": "````python\nmatching python\nprint(\"``` embedded\")\n\n````",
+    "kind": "CODE"
+  },
+  {
+    "name": "java",
+    "typeId": "java",
+    "text": "matching java\nprint(\"``` embedded\")\n",
+    "body": "````java\nmatching java\nprint(\"``` embedded\")\n\n````",
+    "kind": "CODE"
+  },
+  {
+    "name": "javascript",
+    "typeId": "javascript",
+    "text": "matching javascript\nprint(\"``` embedded\")\n",
+    "body": "````javascript\nmatching javascript\nprint(\"``` embedded\")\n\n````",
+    "kind": "CODE"
+  },
+  {
+    "name": "typescript",
+    "typeId": "typescript",
+    "text": "matching typescript\nprint(\"``` embedded\")\n",
+    "body": "````typescript\nmatching typescript\nprint(\"``` embedded\")\n\n````",
+    "kind": "CODE"
+  },
+  {
+    "name": "json",
+    "typeId": "json",
+    "text": "matching json\nprint(\"``` embedded\")\n",
+    "body": "````json\nmatching json\nprint(\"``` embedded\")\n\n````",
+    "kind": "CODE"
+  },
+  {
+    "name": "yaml",
+    "typeId": "yaml",
+    "text": "matching yaml\nprint(\"``` embedded\")\n",
+    "body": "````yaml\nmatching yaml\nprint(\"``` embedded\")\n\n````",
+    "kind": "CODE"
+  },
+  {
+    "name": "sql",
+    "typeId": "sql",
+    "text": "matching sql\nprint(\"``` embedded\")\n",
+    "body": "````sql\nmatching sql\nprint(\"``` embedded\")\n\n````",
+    "kind": "CODE"
+  },
+  {
+    "name": "go",
+    "typeId": "go",
+    "text": "matching go\nprint(\"``` embedded\")\n",
+    "body": "````go\nmatching go\nprint(\"``` embedded\")\n\n````",
+    "kind": "CODE"
+  },
+  {
+    "name": "rust",
+    "typeId": "rust",
+    "text": "matching rust\nprint(\"``` embedded\")\n",
+    "body": "````rust\nmatching rust\nprint(\"``` embedded\")\n\n````",
+    "kind": "CODE"
+  },
+  {
+    "name": "c",
+    "typeId": "c",
+    "text": "matching c\nprint(\"``` embedded\")\n",
+    "body": "````c\nmatching c\nprint(\"``` embedded\")\n\n````",
+    "kind": "CODE"
+  },
+  {
+    "name": "cpp",
+    "typeId": "cpp",
+    "text": "matching cpp\nprint(\"``` embedded\")\n",
+    "body": "````cpp\nmatching cpp\nprint(\"``` embedded\")\n\n````",
+    "kind": "CODE"
+  },
+  {
+    "name": "csharp",
+    "typeId": "csharp",
+    "text": "matching csharp\nprint(\"``` embedded\")\n",
+    "body": "````csharp\nmatching csharp\nprint(\"``` embedded\")\n\n````",
+    "kind": "CODE"
+  },
+  {
+    "name": "powershell",
+    "typeId": "powershell",
+    "text": "matching powershell\nprint(\"``` embedded\")\n",
+    "body": "````powershell\nmatching powershell\nprint(\"``` embedded\")\n\n````",
+    "kind": "CODE"
+  },
+  {
+    "name": "dockerfile",
+    "typeId": "dockerfile",
+    "text": "matching dockerfile\nprint(\"``` embedded\")\n",
+    "body": "````dockerfile\nmatching dockerfile\nprint(\"``` embedded\")\n\n````",
+    "kind": "CODE"
+  },
+  {
+    "name": "html",
+    "typeId": "html",
+    "text": "matching html\nprint(\"``` embedded\")\n",
+    "body": "````html\nmatching html\nprint(\"``` embedded\")\n\n````",
+    "kind": "CODE"
+  },
+  {
+    "name": "css",
+    "typeId": "css",
+    "text": "matching css\nprint(\"``` embedded\")\n",
+    "body": "````css\nmatching css\nprint(\"``` embedded\")\n\n````",
+    "kind": "CODE"
+  },
+  {
+    "name": "aliases",
+    "body": " \n```C++\r\nmatching\r\n```\r\n",
+    "kind": "CODE"
+  },
+  {
+    "name": "longer close",
+    "body": "```py\nmatching\n`````",
+    "kind": "CODE"
+  },
+  {
+    "name": "unknown",
+    "body": "```unknown\nmatching\n```",
+    "kind": "MARKDOWN"
+  },
+  {
+    "name": "no language",
+    "body": "```\nmatching\n```",
+    "kind": "MARKDOWN"
+  },
+  {
+    "name": "prose",
+    "body": "# matching\n```bash\necho hi\n```",
+    "kind": "MARKDOWN"
+  },
+  {
+    "name": "after",
+    "body": "```bash\nmatching\n```\nexplanation",
+    "kind": "MARKDOWN"
+  },
+  {
+    "name": "two blocks",
+    "body": "```bash\nmatching\n```\n```bash\nsecond\n```",
+    "kind": "MARKDOWN"
+  },
+  {
+    "name": "early close",
+    "body": "```bash\nmatching\n```\nextra\n```",
+    "kind": "MARKDOWN"
+  },
+  {
+    "name": "unclosed",
+    "body": "```bash\nmatching",
+    "kind": "MARKDOWN"
+  },
+  {
+    "name": "tilde",
+    "body": "~~~bash\nmatching\n~~~",
+    "kind": "MARKDOWN"
+  },
+  {
+    "name": "Unicode surrounding whitespace",
+    "body": "﻿　```python\nmatching\n```\n ",
+    "kind": "CODE"
+  },
+  {
+    "name": "Unicode whitespace after close",
+    "body": "```python\nmatching\n```\n \n　",
+    "kind": "CODE"
+  }
+]

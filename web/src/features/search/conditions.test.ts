@@ -27,3 +27,14 @@ describe('saved search conditions', () => {
     expect(c.type).toBe(SearchConditions.type.MARKDOWN)
   })
 })
+
+it('rejects malformed saved structures before reading arrays or strings', () => {
+  const base = readConditions({})
+  for (const key of Object.keys(base)) {
+    const missing = { ...base } as Record<string, unknown>
+    delete missing[key]
+    expect(conditionError(missing as SearchConditions)).toContain('结构已失效')
+    expect(conditionError({ ...base, [key]: null })).toContain('结构已失效')
+  }
+  for (const tagIds of [{}, 'bad', [null], [42]]) expect(conditionError({ ...base, tagIds } as SearchConditions)).toContain('结构已失效')
+})

@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/ZephyrLeeX/RelayShelf/internal/messages"
+	"github.com/ZephyrLeeX/RelayShelf/internal/messages/contenttype"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -128,8 +129,23 @@ WHERE tag.user_id = $1 AND m.owner_id = $1 AND m.trashed_at IS NULL
 )`)
 	}
 	if query.DetectedType != nil {
-		sql.WriteString(" AND lower(m.detected_type) = ")
-		sql.WriteString(parameter(*query.DetectedType))
+		kind := strings.ToLower(*query.DetectedType)
+		switch kind {
+		case "markdown", "text", "code":
+			code := fmt.Sprintf(codeCondition, parameter(contenttype.Tokens()))
+			if kind == "code" {
+				sql.WriteString(" AND " + code)
+			} else {
+				format := "TEXT"
+				if kind == "markdown" {
+					format = "MARKDOWN"
+				}
+				sql.WriteString(" AND m.body_format = '" + format + "' AND NOT " + code)
+			}
+		default:
+			sql.WriteString(" AND lower(m.detected_type) = ")
+			sql.WriteString(parameter(kind))
+		}
 	}
 	if query.CreatedAfter != nil {
 		sql.WriteString(" AND m.created_at >= ")

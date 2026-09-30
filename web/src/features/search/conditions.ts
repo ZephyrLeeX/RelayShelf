@@ -26,10 +26,14 @@ export function localInstant(value: string, timezone: string): string | undefine
   return local === value ? date.toISOString() : undefined
 }
 export function conditionError(c: SearchConditions): string {
+  if (!c || typeof c !== 'object'
+    || ['q', 'lifecycle', 'type', 'time', 'from', 'to', 'timezone'].some(key => typeof (c as unknown as Record<string, unknown>)[key] !== 'string')
+    || typeof c.favorite !== 'boolean' || !Array.isArray(c.tagIds)
+    || c.tagIds.some(id => typeof id !== 'string')) return '保存的条件结构已失效，请重新选择筛选并更新视图，或删除视图'
   if (hasShortSearchToken(c.q)) return '每个搜索词至少 2 个字符'
   if (new TextEncoder().encode(c.q).length > 1024 || c.q.trim().split(/\s+/).filter(Boolean).length > 16 || c.q.trim().split(/\s+/).some(v => [...v].length > 128)) return '搜索词过长或数量过多'
   if (!['', 'TEMPORARY', 'PERMANENT'].includes(c.lifecycle) || !['', 'TEXT', 'MARKDOWN', 'CODE'].includes(c.type) || !['all', '24h', '7d', '30d', 'custom'].includes(c.time) || !['UTC', 'Asia/Shanghai'].includes(c.timezone)) return '筛选条件已失效，请重新选择后搜索或更新视图'
-  if (c.tagIds.length > 100 || c.tagIds.some(id => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))) return '标签条件已失效，请重新选择标签'
+  if (c.tagIds.length > 100 || c.tagIds.some(id => id === '00000000-0000-0000-0000-000000000000' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))) return '标签条件已失效，请重新选择标签'
   if (c.time === 'custom') {
     const from = localInstant(c.from, c.timezone), to = localInstant(c.to, c.timezone)
     if (!from || !to || from >= to) return '请填写有效日期范围，起始时间必须早于结束时间'

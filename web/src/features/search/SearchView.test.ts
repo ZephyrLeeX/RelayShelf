@@ -67,3 +67,31 @@ describe('SearchView saved views', () => {
     result.wrapper.unmount(); result.client.clear()
   })
 })
+
+it.each([null, undefined, 'invalid', [null]])('blocks malformed tagIds %s, then permits explicit repair or deletion', async tagIds => {
+  items[0]!.conditions.tagIds = tagIds as never
+  const { wrapper, router, client } = await render({ saved: id, q: 'attempted bypass', time: 'all' })
+  expect(wrapper.text()).toContain('结构已失效')
+  expect(wrapper.findComponent(Feed).exists()).toBe(false)
+  expect(router.currentRoute.value.query.q).toBe('attempted bypass')
+  await wrapper.get('.main-search input').setValue('repaired')
+  await wrapper.get('form').trigger('submit'); await flushPromises()
+  expect(wrapper.findComponent(Feed).exists()).toBe(false)
+  await wrapper.findAll('button').find(v => v.text() === '更新当前视图条件')!.trigger('click'); await flushPromises()
+  expect(DefaultService.updateSavedSearch).toHaveBeenCalledWith(id, expect.objectContaining({ conditions: expect.objectContaining({ q: 'repaired', tagIds: [] }) }))
+  expect(wrapper.findComponent(Feed).exists()).toBe(true)
+  await wrapper.findAll('button').find(v => v.text() === '删除视图')!.trigger('click'); await flushPromises()
+  expect(DefaultService.deleteSavedSearch).toHaveBeenCalledWith(id)
+  wrapper.unmount(); client.clear()
+})
+
+it('shows the backend invalid reason for an unreadable view and permits immediate deletion', async () => {
+  items[0]!.conditions = null as never
+  items[0]!.invalidReason = '保存的条件无法读取，请删除或更新视图。'
+  const { wrapper, client } = await render({ saved: id })
+  expect(wrapper.text()).toContain(items[0]!.invalidReason)
+  expect(wrapper.findComponent(Feed).exists()).toBe(false)
+  await wrapper.findAll('button').find(v => v.text() === '删除视图')!.trigger('click'); await flushPromises()
+  expect(DefaultService.deleteSavedSearch).toHaveBeenCalledWith(id)
+  wrapper.unmount(); client.clear()
+})

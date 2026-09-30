@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { alice, bob, login, marker } from './helpers'
+import { alice, bob, composeAndSend, login, marker } from './helpers'
 
 test('saved search desktop/mobile management, cross-device persistence and owner isolation', async ({ page, browser }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
@@ -58,3 +58,58 @@ test('saved search desktop/mobile management, cross-device persistence and owner
   await expect(page.getByRole('heading', { name: '保存搜索', exact: true })).toBeVisible()
   expect((await (await page.request.get('/api/v1/saved-searches')).json()).some((v: { id: string }) => v.id === savedId)).toBe(false)
 })
+
+
+test('editor code survives serialization and is exclusive from ordinary Markdown in search', async ({ page }) => {
+  await login(page, alice)
+  const keyword = marker('code-search')
+  const sent = page.waitForResponse(r => r.url().endsWith('/api/v1/messages') && r.request().method() === 'POST')
+  await composeAndSend(page, keyword + '\nprint("``` embedded")' , { contentType: 'Python', lifecycle: 'PERMANENT' })
+  const message = await (await sent).json()
+  expect(message.bodyFormat).toBe('MARKDOWN')
+  expect(message.body).toContain('````python')
+  await expect(page.locator('#composer-body')).toHaveValue('')
+  await composeAndSend(page, '# ' + keyword + ' prose\n```bash\necho hi\n```', { contentType: 'Markdown', lifecycle: 'PERMANENT' })
+  await expect(page.locator('#composer-body')).toHaveValue('')
+  await page.goto(`/search?q=${keyword}&type=CODE`)
+  await expect(page.locator('.message-card')).toHaveCount(1)
+  await expect(page.locator('.message-card')).toContainText('embedded')
+  await page.goto(`/search?q=${keyword}&type=MARKDOWN`)
+  await expect(page.locator('.message-card')).toHaveCount(1)
+  await expect(page.locator('.message-card')).toContainText('prose')
+})
+
+for (const missing of [false, true]) {
+  test(`malformed saved tags (${missing ? 'missing' : 'null'}) pause search and allow repair/delete`, async ({ page }) => {
+    await login(page, alice)
+    const id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+    const conditions: Record<string, unknown> = { q: 'restricted', lifecycle: '', favorite: false, type: 'CODE', time: 'all', from: '', to: '', timezone: 'UTC' }
+    if (!missing) conditions.tagIds = null
+    let views = [{ id, name: '异常视图', conditions, invalidReason: '保存的条件无法读取，请删除或更新视图。', updatedAt: '2026-09-30T00:00:00Z' }]
+    await page.route(/\/api\/v1\/saved-searches(?:\/[^?]+)?(?:\?.*)?$/, async route => {
+      const request = route.request()
+      if (request.method() === 'GET') await route.fulfill({ json: views })
+      else if (request.method() === 'PUT') {
+        views = [{ ...views[0]!, ...request.postDataJSON(), invalidReason: '' }]
+        await route.fulfill({ json: views[0] })
+      } else if (request.method() === 'DELETE') { views = []; await route.fulfill({ status: 204 }) }
+      else await route.continue()
+    })
+    let searchRequests = 0
+    page.on('request', r => { if (new URL(r.url()).pathname === '/api/v1/search') searchRequests++ })
+    await page.goto(`/search?saved=${id}`)
+    await expect(page.getByRole('alert').filter({ hasText: '保存的条件无法读取' })).toBeVisible()
+    expect(searchRequests).toBe(0)
+    await page.getByRole('textbox', { name: '搜索词' }).fill('repaired keyword')
+    await page.getByRole('button', { name: '搜索', exact: true }).click()
+    await expect(page.getByRole('alert').filter({ hasText: '保存的条件无法读取' })).toBeVisible()
+    expect(searchRequests).toBe(0)
+    const searched = page.waitForRequest(r => new URL(r.url()).pathname === '/api/v1/search')
+    await page.getByRole('button', { name: '更新当前视图条件' }).click()
+    expect(new URL((await searched).url()).searchParams.get('q')).toBe('repaired keyword')
+    expect(views[0]!.conditions.tagIds).toEqual([])
+    await page.getByRole('button', { name: '删除视图', exact: true }).click()
+    await expect(page.getByRole('heading', { name: '保存搜索', exact: true })).toBeVisible()
+    expect(views).toHaveLength(0)
+  })
+}
