@@ -359,12 +359,12 @@ describe('MessageComposer', () => {
     })
     const wrapper = mountComposer()
     await flushPromises()
-    expect(wrapper.get('.lifecycle-control select').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('.lifecycle-control button').attributes('disabled')).toBeUndefined()
     // Draft a tag selection while still sending to myself.
     await wrapper.get<HTMLInputElement>('.tag-options input').setValue(true)
 
     await pickRecipient(wrapper, 'bob')
-    expect(wrapper.get('.lifecycle-control select').attributes('disabled')).toBeDefined()
+    expect(wrapper.findAll('.lifecycle-control button').every(button => button.attributes('disabled') !== undefined)).toBe(true)
     expect(wrapper.text()).toContain('直发为独立临时副本')
     // The interactive picker is gone: a truly disabled button replaces it, so
     // pointer, keyboard, and programmatic invocation cannot open tag editing
@@ -380,7 +380,7 @@ describe('MessageComposer', () => {
     // Switching back to myself restores the interactive picker with the
     // untouched tag draft — direct mode disables the UI but never wipes it.
     await pickSelf(wrapper)
-    expect(wrapper.get('.lifecycle-control select').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('.lifecycle-control button').attributes('disabled')).toBeUndefined()
     expect(wrapper.find('details.tag-picker').exists()).toBe(true)
     expect(wrapper.get<HTMLInputElement>('.tag-options input').element.checked).toBe(true)
 
@@ -528,10 +528,26 @@ describe('MessageComposer', () => {
       body: 'expire later', lifecycle: Lifecycle.TEMPORARY,
     }))
   })
+  it.each([
+    [Lifecycle.TEMPORARY, 1, Lifecycle.PERMANENT],
+    [Lifecycle.PERMANENT, 0, Lifecycle.TEMPORARY],
+  ] as const)('switches from %s with one click and sends the intact draft', async (initial, index, expected) => {
+    const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
+    const wrapper = mountComposer(initial)
+    await wrapper.get('textarea').setValue('keep this draft')
+    const buttons = wrapper.findAll('.lifecycle-control button')
+    await buttons[index]!.trigger('click')
+    expect(buttons[index]!.attributes('aria-pressed')).toBe('true')
+    expect(buttons[1 - index]!.attributes('aria-pressed')).toBe('false')
+    expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('keep this draft')
+    await sendByKeyboard(wrapper)
+    await flushPromises()
+    expect(create).toHaveBeenCalledWith('key-a', expect.objectContaining({ body: 'keep this draft', lifecycle: expected }))
+  })
   it('preserves an explicitly selected lifecycle when the route default changes', async () => {
     const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
     const wrapper = mountComposer(Lifecycle.TEMPORARY)
-    await wrapper.get('select').setValue(Lifecycle.PERMANENT)
+    await wrapper.findAll('.lifecycle-control button')[1]!.trigger('click')
 
     await wrapper.setProps({ defaultLifecycle: Lifecycle.PERMANENT })
     await wrapper.setProps({ defaultLifecycle: Lifecycle.TEMPORARY })
@@ -630,7 +646,7 @@ describe('MessageComposer', () => {
 
     await wrapper.get('textarea').setValue('F2')
     await pickContentType(wrapper, 'Markdown')
-    await wrapper.get('select').setValue(Lifecycle.PERMANENT)
+    await wrapper.findAll('.lifecycle-control button')[1]!.trigger('click')
     await wrapper.get('button[aria-label="敏感内容"]').trigger('click')
     await wrapper.get('.tag-options input').setValue(true)
     await sendByKeyboard(wrapper)
@@ -641,7 +657,7 @@ describe('MessageComposer', () => {
 
     expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('F2')
     expect(wrapper.get('button[aria-label="内容类型"]').text()).toContain('Markdown')
-    expect(wrapper.get<HTMLSelectElement>('select').element.value).toBe(Lifecycle.PERMANENT)
+    expect(wrapper.findAll('.lifecycle-control button')[1]!.attributes('aria-pressed')).toBe('true')
     expect(wrapper.get('button[aria-label="敏感内容"]').attributes('aria-pressed')).toBe('true')
     expect(wrapper.get<HTMLInputElement>('.tag-options input').element.checked).toBe(true)
     expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.messages.root() })

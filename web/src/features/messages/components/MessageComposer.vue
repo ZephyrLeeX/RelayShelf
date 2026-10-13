@@ -299,17 +299,30 @@ function filesChanged(event: Event) {
         >{{ composer.selectedTags.value.length }}</span>
       </button>
 
-      <label class="lifecycle-control">
-        <span class="sr-only">保存位置</span>
-        <select
-          v-model="composer.lifecycle.value"
+      <div
+        class="lifecycle-control"
+        role="group"
+        aria-label="保存位置"
+      >
+        <button
+          type="button"
+          :aria-pressed="composer.directMode.value || composer.lifecycle.value === Lifecycle.TEMPORARY"
           :disabled="composer.directMode.value"
-          title="保存位置"
+          title="临时保存"
+          @click="composer.lifecycle.value = Lifecycle.TEMPORARY"
         >
-          <option :value="Lifecycle.TEMPORARY">临时</option>
-          <option :value="Lifecycle.PERMANENT">长期</option>
-        </select>
-      </label>
+          临时
+        </button>
+        <button
+          type="button"
+          :aria-pressed="!composer.directMode.value && composer.lifecycle.value === Lifecycle.PERMANENT"
+          :disabled="composer.directMode.value"
+          title="长期保存"
+          @click="composer.lifecycle.value = Lifecycle.PERMANENT"
+        >
+          长期
+        </button>
+      </div>
 
       <span
         class="bytes"
@@ -370,7 +383,7 @@ function filesChanged(event: Event) {
 .icon-tool{display:inline-grid;place-items:center;width:34px;height:34px;border:1px solid var(--border-default);border-radius:.6rem;background:var(--surface-raised);color:var(--text-secondary);cursor:pointer}.icon-tool svg{width:.95rem;height:.95rem}.icon-tool:hover{border-color:var(--border-strong);background:var(--surface-soft);color:var(--text-primary)}.icon-tool:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px}.icon-tool.on{border-color:var(--state-warning);color:var(--state-warning);background:color-mix(in srgb,var(--state-warning) 12%,var(--surface-raised))}
 .composer-toolbar{display:flex;align-items:center;gap:.3rem;padding:.65rem .8rem}
 .tool-button{display:inline-flex;align-items:center;justify-content:center;gap:.35rem;min-height:36px;border:0;border-radius:.55rem;padding:.4rem .55rem;background:transparent;color:var(--text-secondary);font-size:.8rem;font-weight:620;cursor:pointer}.tool-button>svg{width:1rem;height:1rem}.tool-button:hover{background:var(--surface-soft);color:var(--text-primary)}.tool-button:focus-visible{outline:2px solid var(--focus-ring);outline-offset:-2px}.tool-button:disabled{cursor:not-allowed;opacity:.55}
-.lifecycle-control select{min-height:36px;border:0;border-radius:.55rem;padding:.4rem .45rem;background:transparent;color:var(--text-secondary);font-size:.8rem;font-weight:620;appearance:auto;cursor:pointer}.lifecycle-control select:hover{background:var(--surface-soft);color:var(--text-primary)}.lifecycle-control select:disabled{cursor:not-allowed;opacity:.55}
+.lifecycle-control{display:inline-flex;flex-shrink:0;gap:2px;padding:3px;border:1px solid var(--border-default);border-radius:.65rem;background:var(--surface-soft)}.lifecycle-control button{min-width:48px;min-height:30px;border:0;border-radius:.45rem;padding:.3rem .55rem;background:transparent;color:var(--text-secondary);font-size:.8rem;font-weight:620;cursor:pointer}.lifecycle-control button:hover:not(:disabled){color:var(--text-primary);background:var(--surface-raised)}.lifecycle-control button[aria-pressed=true]{background:var(--accent-primary-soft);color:var(--accent-primary);box-shadow:inset 0 0 0 1px var(--accent-primary)}.lifecycle-control button:focus-visible{outline:2px solid var(--focus-ring);outline-offset:1px}.lifecycle-control button:disabled{cursor:not-allowed;opacity:.55}
 .count{display:grid;place-items:center;min-width:18px;height:18px;border-radius:999px;background:var(--accent-primary-soft);color:var(--accent-primary);font-size:.66rem}
 .popover{position:relative}.popover>summary{list-style:none;cursor:pointer}.popover>summary::-webkit-details-marker{display:none}.popover[open]>summary{background:var(--surface-soft);color:var(--text-primary)}
 .popover-panel{position:absolute;z-index:20;bottom:calc(100% + .55rem);left:0;width:max-content;min-width:210px;max-width:min(360px,calc(100vw - 2rem));padding:.65rem;border:1px solid var(--border-default);border-radius:var(--radius);background:var(--surface-raised);box-shadow:var(--shadow-floating)}
@@ -381,7 +394,7 @@ function filesChanged(event: Event) {
 .bytes{margin-left:auto;color:var(--text-tertiary);font-family:var(--font-mono);font-size:.65rem;white-space:nowrap}.bytes.error{color:var(--state-danger)}
 .send-button{display:inline-flex;align-items:center;gap:.35rem;min-height:38px;padding:.45rem .9rem;border-radius:.65rem}.send-button svg{width:.9rem;height:.9rem}
 .composer-feedback{display:grid;gap:.2rem;padding:0 .9rem}.composer-feedback:empty{display:none}.composer-feedback p{margin:0 0 .65rem;font-size:.76rem}.warning{color:var(--state-warning)}.direct-hint{color:var(--text-tertiary)}
-@media(max-width:700px){.composer-top{padding:.55rem .6rem 0}.title-input{margin-inline:.6rem}.composer-toolbar{flex-wrap:wrap;padding:.55rem .6rem}.tool-label{display:none}.tool-button,.lifecycle-control select{padding-inline:.55rem}.bytes{order:5;margin-left:auto}.send-button{order:6;padding-inline:.8rem}.popover-panel{position:fixed;left:1rem;right:1rem;bottom:calc(72px + env(safe-area-inset-bottom));width:auto;min-width:0;max-width:none}.new-tag{grid-template-columns:minmax(0,1fr) 38px auto}}
+@media(max-width:700px){.composer-top{padding:.55rem .6rem 0}.title-input{margin-inline:.6rem}.composer-toolbar{flex-wrap:wrap;padding:.55rem .6rem}.tool-label{display:none}.tool-button{padding-inline:.55rem}.lifecycle-control button{min-height:34px}.bytes{order:5;margin-left:auto}.send-button{order:6;padding-inline:.8rem}.popover-panel{position:fixed;left:1rem;right:1rem;bottom:calc(72px + env(safe-area-inset-bottom));width:auto;min-width:0;max-width:none}.new-tag{grid-template-columns:minmax(0,1fr) 38px auto}}
 @media(max-width:420px){.bytes{display:none}.send-button{margin-left:auto}}
 .tag-options{padding:1rem;border-radius:16px;max-height:65vh;overflow:auto}.tag-options label{padding:.6rem;border:1px solid transparent;border-radius:8px;cursor:pointer}.tag-options label:hover{background:var(--surface-soft)}.tag-options label:has(input:checked){border-color:var(--accent-primary);background:var(--accent-primary-soft)}.tag-options button:disabled{opacity:.5;cursor:not-allowed}.tag-options :focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px}
 @media(max-width:600px){.tag-picker .popover-panel{position:fixed;left:.75rem;right:.75rem;bottom:calc(.75rem + env(safe-area-inset-bottom));width:auto}}

@@ -40,7 +40,7 @@ export async function composeAndSend(page: Page, body: string, options: { sensit
   if (options.sensitive) {
     await page.getByRole('button', { name: '敏感内容', exact: true }).click()
   }
-  if (options.lifecycle === 'PERMANENT') await page.getByLabel('保存位置').selectOption('PERMANENT')
+  if (options.lifecycle === 'PERMANENT') await page.getByRole('group', { name: '保存位置' }).getByRole('button', { name: '长期', exact: true }).click()
   await page.getByRole('button', { name: '发送', exact: true }).click()
 }
 
