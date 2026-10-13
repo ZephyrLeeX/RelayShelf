@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, ref, useId } from 'vue'
+import { Bold, Eye, Italic, Link, List, Pencil, Quote, SquareCode } from '@lucide/vue'
 import SafeMarkdown from '../SafeMarkdown.vue'
 const props = withDefaults(defineProps<{ id?: string; code: boolean; markdown?: boolean; formatLocked?: boolean; required?: boolean; rows?: number; shortcut?: string }>(), { id: undefined, rows: 4, shortcut: '发送' })
 const body = defineModel<string>({ required: true })
@@ -8,7 +9,14 @@ const editorId = useId()
 const input = ref<HTMLTextAreaElement>()
 const preview = ref(false)
 const composing = ref(false)
-const formats = ['加粗', '斜体', '列表', '链接', '引用', '代码块']
+const formats = [
+  { label: '加粗', icon: Bold },
+  { label: '斜体', icon: Italic },
+  { label: '列表', icon: List },
+  { label: '链接', icon: Link },
+  { label: '引用', icon: Quote },
+  { label: '代码块', icon: SquareCode },
+]
 async function format(kind: string) {
   if (!input.value) return
   const start = input.value.selectionStart
@@ -44,20 +52,33 @@ function key(event: KeyboardEvent) {
       aria-label="文本格式"
     >
       <button
-        v-for="kind in formats"
-        :key="kind"
+        v-for="item in formats"
+        :key="item.label"
         type="button"
+        :aria-label="item.label"
+        :title="item.label"
         :disabled="preview"
-        @click="format(kind)"
+        @click="format(item.label)"
       >
-        {{ kind }}
+        <component
+          :is="item.icon"
+          :size="16"
+          aria-hidden="true"
+        />
       </button>
       <button
         type="button"
+        class="preview-button"
+        :aria-label="preview ? '继续编辑' : '预览'"
+        :title="preview ? '继续编辑' : '预览'"
         :aria-pressed="preview"
         @click="preview = !preview"
       >
-        {{ preview ? '继续编辑' : '预览' }}
+        <component
+          :is="preview ? Pencil : Eye"
+          :size="16"
+          aria-hidden="true"
+        />
       </button>
     </div>
     <label
@@ -94,9 +115,9 @@ function key(event: KeyboardEvent) {
 
 <style scoped>
 .editor{position:relative;min-width:0;border-bottom:1px solid var(--border-default)}
-.format-toolbar{display:flex;flex-wrap:wrap;gap:.25rem;padding:.5rem .75rem;background:var(--surface-soft);border-radius:8px}
-.format-toolbar button{border:0;border-radius:6px;padding:.4rem .5rem;background:transparent;color:var(--text-secondary);cursor:pointer}.format-toolbar button:hover,.format-toolbar button[aria-pressed=true]{background:var(--accent-primary-soft);color:var(--accent-primary)}.format-toolbar button:focus-visible,textarea:focus-visible{outline:2px solid var(--focus-ring);outline-offset:-2px}.format-toolbar button:disabled{opacity:.5}
+.format-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:.125rem;padding:.25rem .65rem;background:var(--surface-soft);border-radius:8px}
+.format-toolbar button{display:inline-grid;place-items:center;flex:0 0 auto;width:32px;height:32px;border:0;border-radius:6px;padding:0;background:transparent;color:var(--text-secondary);cursor:pointer}.format-toolbar button>svg{width:16px;height:16px}.format-toolbar .preview-button{margin-left:.375rem}.format-toolbar button:hover:not(:disabled),.format-toolbar button[aria-pressed=true]{background:var(--accent-primary-soft);color:var(--accent-primary)}.format-toolbar button:focus-visible,textarea:focus-visible{outline:2px solid var(--focus-ring);outline-offset:-2px}.format-toolbar button:disabled{opacity:.5;cursor:default}
 textarea{box-sizing:border-box;display:block;resize:vertical;width:100%;min-height:116px;border:0;padding:.9rem 1rem .8rem;background:transparent;line-height:1.55}.code{font-family:var(--font-mono);color:var(--content-code)}
 .editor-preview{padding:1rem;max-height:400px;overflow:auto}.editor-preview pre{white-space:pre-wrap;overflow-wrap:anywhere}small{display:block;padding:.35rem .85rem;color:var(--text-tertiary);font-size:.7rem}
-@media(max-width:600px){textarea{min-height:104px;padding:.8rem .85rem}.format-toolbar button{min-height:36px}}
+@media(max-width:600px){textarea{min-height:104px;padding:.8rem .85rem}.format-toolbar button{width:36px;height:36px}}
 </style>

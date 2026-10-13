@@ -191,7 +191,7 @@ describe('MessageComposer', () => {
     const input = wrapper.get('textarea')
     await input.setValue('格式内容')
     input.element.setSelectionRange(0, 4)
-    await wrapper.findAll('button').find(button => button.text() === '加粗')!.trigger('click')
+    await wrapper.get('button[aria-label="加粗"]').trigger('click')
     await sendByKeyboard(wrapper)
     await flushPromises()
     expect(create).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ body: '**格式内容**', bodyFormat: BodyFormat.MARKDOWN }))
