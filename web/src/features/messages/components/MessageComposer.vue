@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { LockKeyhole, LockOpen, Paperclip, RotateCcw, Send, Tags } from '@lucide/vue'
-import { computed, ref } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
+import { pendingShare, shareNotice } from '@/features/share/receive'
 import { Lifecycle } from '@/api/generated'
 import { formatBytes } from '@/shared/utils/bytes'
 import { isCodeContentType } from '../content/contentFormat'
 import { useMessageComposer } from '../composables/useMessageComposer'
+import { useComposerFileDrop } from '../composables/useComposerFileDrop'
 import ComposerEditor from './composer/ComposerEditor.vue'
 import ComposerAttachments from './composer/ComposerAttachments.vue'
 import ContentTypePicker from './ContentTypePicker.vue'
@@ -13,7 +15,42 @@ import RecipientPicker from './RecipientPicker.vue'
 const props = defineProps<{ defaultLifecycle: Lifecycle }>()
 const emit = defineEmits<{ sent: [] }>()
 const fileInput = ref<HTMLInputElement>()
+const tagPanel = ref<HTMLDetailsElement>()
+function dismissTags(event: Event) {
+  if (!tagPanel.value?.open) return
+  if (event instanceof KeyboardEvent) {
+    if (event.key !== 'Escape') return
+    event.preventDefault(); event.stopPropagation()
+    tagPanel.value.open = false
+    tagPanel.value.querySelector('summary')?.focus()
+  } else if (event.target instanceof Node && !tagPanel.value.contains(event.target)) tagPanel.value.open = false
+}
+onMounted(() => { document.addEventListener('pointerdown', dismissTags, true); document.addEventListener('keydown', dismissTags, true) })
+onBeforeUnmount(() => { document.removeEventListener('pointerdown', dismissTags, true); document.removeEventListener('keydown', dismissTags, true) })
 const composer = useMessageComposer(() => props.defaultLifecycle, () => emit('sent'))
+const composerDrop = useComposerFileDrop(composer.dragging, composer.dropFiles)
+const hasDraft = computed(() => Boolean(composer.title.value || composer.body.value || composer.selectedUploadClients.value.length))
+function protectDraft(event: BeforeUnloadEvent) {
+  if (!hasDraft.value && !pendingShare.value) return
+  event.preventDefault()
+  event.returnValue = ''
+}
+onMounted(() => window.addEventListener('beforeunload', protectDraft))
+onBeforeUnmount(() => window.removeEventListener('beforeunload', protectDraft))
+function applyShare(mode: 'merge' | 'replace') {
+  const share = pendingShare.value
+  if (!share || composer.sending.value) return
+  if (mode === 'replace' && hasDraft.value && !window.confirm('替换当前标题和正文？附件、敏感设置和接收人将保留。')) return
+  if (mode === 'replace') {
+    composer.title.value = share.title
+    composer.body.value = share.body
+    composer.contentType.value = 'text'
+  } else {
+    composer.body.value = [composer.body.value, share.title, share.body].filter(Boolean).join('\n\n')
+  }
+  pendingShare.value = null
+  shareNotice.value = '分享已带入编辑器。请检查内容、接收人和敏感设置，再点击发送。'
+}
 const isCode = computed(() => isCodeContentType(composer.contentType.value))
 
 function filesChanged(event: Event) {
@@ -27,7 +64,52 @@ function filesChanged(event: Event) {
   <section
     class="composer panel"
     aria-label="新内容"
+    @drop="composerDrop"
   >
+    <div
+      v-if="composer.dragging.value"
+      class="drop-prompt"
+    >
+      松开以添加到本条内容
+    </div>
+    <div class="share-intake">
+      <template v-if="pendingShare">
+        <p role="status">
+          收到系统分享。{{ hasDraft ? '已有未发送内容，请选择合并或替换标题和正文。' : '带入编辑器后由你确认发送。' }}
+        </p>
+        <button
+          v-if="hasDraft"
+          class="button"
+          type="button"
+          :disabled="composer.sending.value"
+          @click="applyShare('merge')"
+        >
+          合并到草稿
+        </button>
+        <button
+          class="button"
+          type="button"
+          :disabled="composer.sending.value"
+          @click="applyShare('replace')"
+        >
+          {{ hasDraft ? '替换标题和正文' : '带入编辑器' }}
+        </button>
+        <button
+          class="button"
+          type="button"
+          @click="pendingShare = null"
+        >
+          放弃分享
+        </button>
+      </template>
+      <p
+        v-if="shareNotice"
+        role="status"
+      >
+        {{ shareNotice }}
+      </p>
+      <details><summary>从其他应用分享</summary><p>在支持系统分享接收的平台安装 RelayShelf 后，可在其他应用的分享菜单中选择它。iOS / Safari、Firefox 或分享菜单中没有 RelayShelf 时，请复制文本或链接，粘贴到下方编辑器，再确认发送。仅接收文本和链接，不抓取网页内容。</p></details>
+    </div>
     <div class="composer-top">
       <ContentTypePicker v-model="composer.contentType.value" />
       <div class="composer-top-right">
@@ -47,13 +129,20 @@ function filesChanged(event: Event) {
       </div>
     </div>
 
+    <input
+      v-model="composer.title.value"
+      class="title-input"
+      maxlength="200"
+      placeholder="标题（可选）"
+      aria-label="标题（可选）"
+    >
+
     <ComposerEditor
+      id="composer-body"
       v-model="composer.body.value"
       :code="isCode"
-      :dragging="composer.dragging.value"
-      @dragstart="composer.dragging.value = true"
-      @dragend="composer.dragging.value = false"
-      @drop="composer.dropFiles"
+      :markdown="composer.contentType.value === 'markdown'"
+      @format="composer.contentType.value = 'markdown'"
       @paste="composer.pasteFiles"
       @keydown="composer.onKeydown"
     />
@@ -123,6 +212,7 @@ function filesChanged(event: Event) {
            sending to themselves. -->
       <details
         v-if="!composer.directMode.value"
+        ref="tagPanel"
         class="popover tag-picker"
       >
         <summary
@@ -136,8 +226,26 @@ function filesChanged(event: Event) {
           >{{ composer.selectedTags.value.length }}</span>
         </summary>
         <div class="popover-panel tag-options">
+          <strong>消息标签</strong>
           <p
-            v-if="!composer.tags.data.value?.length"
+            v-if="composer.tags.isPending.value"
+            role="status"
+          >
+            正在加载标签…
+          </p>
+          <p
+            v-else-if="composer.tags.isError.value"
+            role="alert"
+          >
+            标签加载失败。<button
+              type="button"
+              @click="composer.tags.refetch()"
+            >
+              重试
+            </button>
+          </p>
+          <p
+            v-if="!composer.tags.isPending.value && !composer.tags.isError.value && !composer.tags.data.value?.length"
             class="empty-note"
           >
             暂无标签，可在下方创建。
@@ -169,9 +277,10 @@ function filesChanged(event: Event) {
             <button
               class="button"
               type="button"
+              :disabled="composer.createTag.isPending.value || !composer.newTagName.value.trim()"
               @click="composer.addTag"
             >
-              添加
+              {{ composer.createTag.isPending.value ? '添加中…' : '添加' }}
             </button>
           </div>
         </div>
@@ -252,9 +361,12 @@ function filesChanged(event: Event) {
 </template>
 
 <style scoped>
+.share-intake{padding:.65rem .8rem;color:var(--text-secondary);font-size:.78rem}.share-intake p{margin:.3rem 0}.share-intake .button{margin:.25rem .3rem .25rem 0}.share-intake summary{cursor:pointer}
 .composer{position:relative;display:grid;border-radius:var(--radius-lg);box-shadow:var(--shadow-md);overflow:visible}
+.drop-prompt{position:absolute;inset:0;z-index:30;display:grid;place-items:center;padding:1rem;border:2px dashed var(--accent-primary);border-radius:inherit;background:color-mix(in srgb,var(--surface-raised) 90%,var(--accent-primary));color:var(--accent-primary-hover);font-size:.82rem;font-weight:650;text-align:center;pointer-events:none}
 .composer-top{display:flex;align-items:center;justify-content:space-between;gap:.5rem;padding:.65rem .8rem 0}
 .composer-top-right{display:flex;align-items:center;gap:.4rem}
+.title-input{min-width:0;margin:.55rem .8rem 0;border:0;border-bottom:1px solid var(--border-default);border-radius:0;padding:.5rem .1rem;background:transparent;color:var(--text-primary);font:inherit;font-size:.9rem;font-weight:650;outline:none}.title-input::placeholder{color:var(--text-tertiary);font-weight:500}.title-input:focus{border-color:var(--accent-primary)}
 .icon-tool{display:inline-grid;place-items:center;width:34px;height:34px;border:1px solid var(--border-default);border-radius:.6rem;background:var(--surface-raised);color:var(--text-secondary);cursor:pointer}.icon-tool svg{width:.95rem;height:.95rem}.icon-tool:hover{border-color:var(--border-strong);background:var(--surface-soft);color:var(--text-primary)}.icon-tool:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px}.icon-tool.on{border-color:var(--state-warning);color:var(--state-warning);background:color-mix(in srgb,var(--state-warning) 12%,var(--surface-raised))}
 .composer-toolbar{display:flex;align-items:center;gap:.3rem;padding:.65rem .8rem}
 .tool-button{display:inline-flex;align-items:center;justify-content:center;gap:.35rem;min-height:36px;border:0;border-radius:.55rem;padding:.4rem .55rem;background:transparent;color:var(--text-secondary);font-size:.8rem;font-weight:620;cursor:pointer}.tool-button>svg{width:1rem;height:1rem}.tool-button:hover{background:var(--surface-soft);color:var(--text-primary)}.tool-button:focus-visible{outline:2px solid var(--focus-ring);outline-offset:-2px}.tool-button:disabled{cursor:not-allowed;opacity:.55}
@@ -269,6 +381,8 @@ function filesChanged(event: Event) {
 .bytes{margin-left:auto;color:var(--text-tertiary);font-family:var(--font-mono);font-size:.65rem;white-space:nowrap}.bytes.error{color:var(--state-danger)}
 .send-button{display:inline-flex;align-items:center;gap:.35rem;min-height:38px;padding:.45rem .9rem;border-radius:.65rem}.send-button svg{width:.9rem;height:.9rem}
 .composer-feedback{display:grid;gap:.2rem;padding:0 .9rem}.composer-feedback:empty{display:none}.composer-feedback p{margin:0 0 .65rem;font-size:.76rem}.warning{color:var(--state-warning)}.direct-hint{color:var(--text-tertiary)}
-@media(max-width:700px){.composer-top{padding:.55rem .6rem 0}.composer-toolbar{flex-wrap:wrap;padding:.55rem .6rem}.tool-label{display:none}.tool-button,.lifecycle-control select{padding-inline:.55rem}.bytes{order:5;margin-left:auto}.send-button{order:6;padding-inline:.8rem}.popover-panel{position:fixed;left:1rem;right:1rem;bottom:calc(72px + env(safe-area-inset-bottom));width:auto;min-width:0;max-width:none}.new-tag{grid-template-columns:minmax(0,1fr) 38px auto}}
+@media(max-width:700px){.composer-top{padding:.55rem .6rem 0}.title-input{margin-inline:.6rem}.composer-toolbar{flex-wrap:wrap;padding:.55rem .6rem}.tool-label{display:none}.tool-button,.lifecycle-control select{padding-inline:.55rem}.bytes{order:5;margin-left:auto}.send-button{order:6;padding-inline:.8rem}.popover-panel{position:fixed;left:1rem;right:1rem;bottom:calc(72px + env(safe-area-inset-bottom));width:auto;min-width:0;max-width:none}.new-tag{grid-template-columns:minmax(0,1fr) 38px auto}}
 @media(max-width:420px){.bytes{display:none}.send-button{margin-left:auto}}
+.tag-options{padding:1rem;border-radius:16px;max-height:65vh;overflow:auto}.tag-options label{padding:.6rem;border:1px solid transparent;border-radius:8px;cursor:pointer}.tag-options label:hover{background:var(--surface-soft)}.tag-options label:has(input:checked){border-color:var(--accent-primary);background:var(--accent-primary-soft)}.tag-options button:disabled{opacity:.5;cursor:not-allowed}.tag-options :focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px}
+@media(max-width:600px){.tag-picker .popover-panel{position:fixed;left:.75rem;right:.75rem;bottom:calc(.75rem + env(safe-area-inset-bottom));width:auto}}
 </style>

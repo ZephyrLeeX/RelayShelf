@@ -3,6 +3,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { DefaultService, type AdminUser, type HealthState, type UpdateRuntimeSettingsRequest } from '@/api/generated'
 import { queryKeys } from '@/shared/api/queryKeys'
+import { toast } from '@/shared/ui/toast'
 import { displayError } from '@/shared/api/errors'
 import { bytesToUnit, formatBytes, unitToBytes } from '@/shared/utils/bytes'
 
@@ -46,15 +47,15 @@ const saveSettings = useMutation({
     maxFileSizeBytes: unitToBytes(settingsForm.maxFileSizeMB, MEBIBYTE), maxStorageBytes: settingsForm.maxStorageGB === '' ? null : unitToBytes(settingsForm.maxStorageGB, GIBIBYTE),
     auditRetentionDays: Number(settingsForm.auditRetentionDays), uploadRetentionHours: Number(settingsForm.uploadRetentionHours),
   } satisfies UpdateRuntimeSettingsRequest),
-  onSuccess: (value) => { client.setQueryData(queryKeys.admin.settings(), value); notice.value = '运行时设置已保存'; error.value = ''; void client.invalidateQueries({ queryKey: queryKeys.admin.status() }) },
-  onError: (cause) => { error.value = displayError(cause) },
+  onSuccess: (value) => { client.setQueryData(queryKeys.admin.settings(), value); notice.value = '运行时设置已保存'; toast.success(notice.value); error.value = ''; void client.invalidateQueries({ queryKey: queryKeys.admin.status() }) },
+  onError: (cause) => { error.value = displayError(cause); toast.error(error.value) },
 })
 
 const createForm = reactive({ username: '', displayName: '', password: '', isAdmin: false })
 const createUser = useMutation({
   mutationFn: () => DefaultService.createAdminUser({ ...createForm }),
-  onSuccess: () => { Object.assign(createForm, { username: '', displayName: '', password: '', isAdmin: false }); notice.value = '用户已创建'; error.value = ''; void client.invalidateQueries({ queryKey: queryKeys.admin.users() }) },
-  onError: (cause) => { error.value = displayError(cause) },
+  onSuccess: () => { Object.assign(createForm, { username: '', displayName: '', password: '', isAdmin: false }); notice.value = '用户已创建'; toast.success(notice.value); error.value = ''; void client.invalidateQueries({ queryKey: queryKeys.admin.users() }) },
+  onError: (cause) => { error.value = displayError(cause); toast.error(error.value) },
 })
 
 const pending = ref<{ action: UserAction, user: AdminUser } | null>(null)
@@ -68,12 +69,12 @@ const userMutation = useMutation({
     if (action === 'reset') await DefaultService.resetAdminUserPassword(user.id, { newPassword: resetPassword.value })
     if (action === 'delete') await DefaultService.deleteAdminUser(user.id)
   },
-  onSuccess: () => { notice.value = pending.value?.action === 'delete' ? '用户已永久删除' : '用户安全状态已更新'; error.value = ''; closeDialog(); void client.invalidateQueries({ queryKey: queryKeys.admin.users() }); void client.invalidateQueries({ queryKey: queryKeys.admin.status() }) },
-  onError: (cause) => { error.value = displayError(cause) },
+  onSuccess: () => { notice.value = pending.value?.action === 'delete' ? '用户已永久删除' : pending.value?.action === 'reset' ? '密码已重置，该用户需使用新密码重新登录' : '用户安全状态已更新'; error.value = ''; toast.success(notice.value); pending.value = null; resetPassword.value = ''; deletePhrase.value = ''; void client.invalidateQueries({ queryKey: queryKeys.admin.users() }); void client.invalidateQueries({ queryKey: queryKeys.admin.status() }) },
+  onError: (cause) => { error.value = displayError(cause); toast.error(error.value) },
 })
 
 function openAction(action: UserAction, user: AdminUser) { pending.value = { action, user }; resetPassword.value = ''; deletePhrase.value = ''; error.value = '' }
-function closeDialog() { pending.value = null; resetPassword.value = ''; deletePhrase.value = '' }
+function closeDialog() { if (userMutation.isPending.value) return; pending.value = null; resetPassword.value = ''; deletePhrase.value = '' }
 const actionAllowed = computed(() => {
   if (!pending.value) return false
   if (pending.value.action === 'reset') return resetPassword.value.length >= 10
@@ -438,6 +439,7 @@ function percent(used: number, total?: number | null) { return total ? Math.min(
             class="field"
           >新密码<input
             v-model="resetPassword"
+            :disabled="userMutation.isPending.value"
             type="password"
             minlength="10"
             autocomplete="new-password"
@@ -450,15 +452,16 @@ function percent(used: number, total?: number | null) { return total ? Math.min(
           ></label><footer>
             <button
               class="button"
+              :disabled="userMutation.isPending.value"
               @click="closeDialog"
             >
               取消
             </button><button
               class="button danger"
               :disabled="!actionAllowed || userMutation.isPending.value"
-              @click="userMutation.mutate()"
+              @click="!userMutation.isPending.value && actionAllowed && userMutation.mutate()"
             >
-              确认{{ pending.action === 'delete' ? '永久删除' : '操作' }}
+              {{ userMutation.isPending.value ? '处理中…' : pending.action === 'reset' ? '确认重置密码' : pending.action === 'delete' ? '确认永久删除' : '确认操作' }}
             </button>
           </footer>
         </section>

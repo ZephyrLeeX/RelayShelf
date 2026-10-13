@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/vue-query'
-import { DefaultService, type BodyFormat, type Message } from '@/api/generated'
+import { DefaultService, type BodyFormat, type EditMessageRequest, type Message, type MessageDeliveryReceipt } from '@/api/generated'
 import { apiCodes, toApiError } from '@/shared/api/errors'
 import { queryKeys } from '@/shared/api/queryKeys'
 
@@ -11,12 +11,17 @@ export type MessageCommand =
   | { type: 'restore'; message: Message }
   | { type: 'delete'; message: Message }
   | { type: 'sensitive'; message: Message; sensitive: boolean }
-  | { type: 'edit'; message: Message; body: string; bodyFormat: BodyFormat }
-  | { type: 'editSensitive'; message: Message; body: string }
+  | { type: 'edit'; message: Message; title: string; body?: string | null; bodyFormat?: BodyFormat }
+  | { type: 'editSensitive'; message: Message; title: string; body: string }
   | { type: 'tags'; message: Message; tagIds: string[] }
   | { type: 'forward'; message: Message; recipientUserId: string }
 
-async function execute(command: MessageCommand) {
+type MetadataCommand = Exclude<MessageCommand, { type: 'forward' | 'delete' }>
+export function executeMessageCommand(command: MetadataCommand): Promise<Message>
+export function executeMessageCommand(command: Extract<MessageCommand, { type: 'forward' }>): Promise<MessageDeliveryReceipt>
+export function executeMessageCommand(command: Extract<MessageCommand, { type: 'delete' }>): Promise<void>
+export function executeMessageCommand(command: MessageCommand): Promise<Message | MessageDeliveryReceipt | void>
+export async function executeMessageCommand(command: MessageCommand): Promise<Message | MessageDeliveryReceipt | void> {
   const { message } = command
   switch (command.type) {
     case 'permanent': return DefaultService.makeMessagePermanent(message.id, { expectedVersion: message.version })
@@ -26,8 +31,13 @@ async function execute(command: MessageCommand) {
     case 'restore': return DefaultService.restoreMessage(message.id, { expectedVersion: message.version })
     case 'delete': await DefaultService.permanentlyDeleteMessage(message.id); return undefined
     case 'sensitive': return DefaultService.setMessageSensitive(message.id, { expectedVersion: message.version, sensitive: command.sensitive })
-    case 'edit': return DefaultService.editMessage(message.id, { expectedVersion: message.version, body: command.body, bodyFormat: command.bodyFormat })
-    case 'editSensitive': return DefaultService.editSensitiveBody(message.id, { expectedVersion: message.version, body: command.body })
+    case 'edit': {
+      const payload: EditMessageRequest = { expectedVersion: message.version, title: command.title.trim() }
+      if (command.body !== undefined) payload.body = command.body
+      if (command.bodyFormat !== undefined) payload.bodyFormat = command.bodyFormat
+      return DefaultService.editMessage(message.id, payload)
+    }
+    case 'editSensitive': return DefaultService.editSensitiveBody(message.id, { expectedVersion: message.version, title: command.title.trim(), body: command.body })
     case 'tags': return DefaultService.replaceMessageTags(message.id, { expectedVersion: message.version, tagIds: command.tagIds })
     case 'forward': return DefaultService.forwardMessage(message.id, crypto.randomUUID(), { expectedVersion: message.version, recipientUserId: command.recipientUserId })
   }
@@ -43,7 +53,7 @@ export function invalidateMessageTruth(id: string, client = useQueryClient()) {
 export function useMessageMutation() {
   const client = useQueryClient()
   return useMutation({
-    mutationFn: execute,
+    mutationFn: executeMessageCommand,
     onSuccess: (_, command) => invalidateMessageTruth(command.message.id, client),
     onError: (error, command) => {
       if (toApiError(error).code === apiCodes.versionConflict) invalidateMessageTruth(command.message.id, client)

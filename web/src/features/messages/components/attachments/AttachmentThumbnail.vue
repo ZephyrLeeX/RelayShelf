@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { onUnmounted, ref } from 'vue'
+import { onUnmounted, ref, watch } from 'vue'
 import AttachmentIcon from './AttachmentIcon.vue'
 
-defineProps<{ id: string; mime: string; alt?: string }>()
+const props = defineProps<{ id: string; mime: string; alt?: string }>()
 const attempt = ref(0)
 const revision = ref(0)
 const failed = ref(false)
@@ -19,6 +19,10 @@ function thumbnailError() {
     revision.value++
   }, delays[attempt.value])
 }
+
+watch(() => props.id, () => {
+  window.clearTimeout(timer); attempt.value = 0; revision.value = 0; failed.value = false
+})
 
 onUnmounted(() => window.clearTimeout(timer))
 </script>

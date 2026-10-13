@@ -1,3 +1,4 @@
+import editorSamples from '../../../../../internal/search/testdata/editor_content.json'
 import { describe, expect, it } from 'vitest'
 import { BodyFormat } from '@/api/generated'
 import { findCodeLanguage } from './codeLanguages'
@@ -194,4 +195,15 @@ describe('fence helpers', () => {
     // A closing fence shorter than the opening run does not close the block.
     expect(extractSingleFencedCode('````bash\n```\n````')).toEqual({ language: 'bash', code: '```' })
   })
+})
+
+// SQL integration tests consume these same fixtures; verify them against the
+// real editor serializer and presentation classifier rather than hand-picked SQL.
+describe('search/editor content classification contract', () => {
+  for (const sample of editorSamples) {
+    it(sample.name, () => {
+      if ('typeId' in sample) expect(serializeContent(sample.text!, sample.typeId!)).toEqual({ body: sample.body, bodyFormat: BodyFormat.MARKDOWN })
+      expect(extractFenceLanguage(sample.body) ? 'CODE' : 'MARKDOWN').toBe(sample.kind)
+    })
+  }
 })

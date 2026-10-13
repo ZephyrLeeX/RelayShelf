@@ -2,6 +2,7 @@ import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AdminUser, DefaultService, HealthState, StorageThresholdState, type AdminStatus } from '@/api/generated'
+import { toast } from '@/shared/ui/toast'
 import AdminView from './AdminView.vue'
 
 const operationalStatus: AdminStatus = {
@@ -25,6 +26,31 @@ describe('admin operations', () => {
     vi.spyOn(DefaultService, 'getStorageStatus').mockResolvedValue(operationalStatus.storage)
     vi.spyOn(DefaultService, 'getRuntimeSettings').mockResolvedValue({ temporaryTtlHours:72,trashTtlHours:168,maxFileSizeBytes:100,maxStorageBytes:null,auditRetentionDays:90,uploadRetentionHours:24,updatedAt:'2026-08-28T00:00:00Z' })
     vi.spyOn(DefaultService, 'listAdminUsers').mockResolvedValue({ items: [{ id:'user-a',username:'alice',displayName:'Alice',isAdmin:false,status:AdminUser.status.ACTIVE,createdAt:'2026-08-28T00:00:00Z',updatedAt:'2026-08-28T00:00:00Z' }], nextCursor: null })
+  })
+
+  it('shows pending, success and failure feedback for password resets without duplicates', async () => {
+    toast.clear()
+    let resolve!: () => void
+    const reset = vi.spyOn(DefaultService, 'resetAdminUserPassword').mockImplementationOnce(() => new Promise<void>(done => { resolve = done }) as ReturnType<typeof DefaultService.resetAdminUserPassword>)
+    const wrapper = await render()
+    await wrapper.findAll('.admin-tabs button')[3].trigger('click'); await flushPromises()
+    await wrapper.findAll('.actions button').find(button => button.text() === '重置密码')!.trigger('click')
+    await wrapper.get('.confirm input').setValue('new-password-123')
+    await wrapper.get('.confirm .danger').trigger('click'); await flushPromises()
+    expect(wrapper.get('.confirm .danger').text()).toBe('处理中…')
+    expect(wrapper.get('.confirm .danger').attributes('disabled')).toBeDefined()
+    await wrapper.get('.confirm .danger').trigger('click')
+    expect(reset).toHaveBeenCalledTimes(1)
+    resolve(); await flushPromises()
+    expect(wrapper.find('.confirm').exists()).toBe(false)
+    expect(toast.items.value.at(-1)?.message).toContain('密码已重置')
+    reset.mockRejectedValueOnce(new Error('reset failed'))
+    await wrapper.findAll('.actions button').find(button => button.text() === '重置密码')!.trigger('click')
+    await wrapper.get('.confirm input').setValue('new-password-456')
+    await wrapper.get('.confirm .danger').trigger('click'); await flushPromises()
+    expect(wrapper.find('.confirm').exists()).toBe(true)
+    expect(toast.items.value.at(-1)?.type).toBe('error')
+    wrapper.unmount(); toast.clear()
   })
 
   it('presents operational status and explicitly states the privacy boundary', async () => {

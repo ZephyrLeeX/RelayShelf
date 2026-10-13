@@ -46,7 +46,15 @@ func TestSecurityHeadersPolicyShape(t *testing.T) {
 	if sources := directives["base-uri"]; sources != "'none'" {
 		t.Fatalf("base-uri must be 'none', got %s", sources)
 	}
+	// Markdown images are loaded only after an explicit preview click. Remote
+	// sources are allowed for image elements, never scripts, frames or fetch.
+	if sources := directives["img-src"]; sources != "'self' https: http:" {
+		t.Fatalf("unexpected image sources: %s", sources)
+	}
 	for name, sources := range directives {
+		if name == "img-src" {
+			continue
+		}
 		for _, source := range strings.Fields(sources) {
 			if strings.HasPrefix(source, "http:") || strings.HasPrefix(source, "https:") || strings.HasPrefix(source, "//") || source == "*" {
 				t.Fatalf("%s must not allow remote origins or wildcards: %s", name, source)
@@ -129,4 +137,25 @@ func TestRequestLogPreservesFlusher(t *testing.T) {
 	if !recorder.Flushed {
 		t.Fatal("flush did not reach the underlying recorder")
 	}
+}
+
+func TestRecoveryPreservesStreamAbort(t *testing.T) {
+	var logged strings.Builder
+	handler := Recovery(log.New(&logged, "", 0))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ZIP bytes"))
+		panic(http.ErrAbortHandler)
+	}))
+	response := httptest.NewRecorder()
+	defer func() {
+		if got := recover(); got != http.ErrAbortHandler {
+			t.Fatalf("abort=%v", got)
+		}
+		if response.Body.String() != "ZIP bytes" {
+			t.Fatal("JSON appended to broken stream")
+		}
+		if logged.Len() != 0 {
+			t.Fatal("abort logged as recovered panic")
+		}
+	}()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/archive", nil))
 }

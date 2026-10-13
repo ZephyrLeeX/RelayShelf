@@ -9,7 +9,7 @@ export const authFixture: AuthBootstrap = {
 
 export function messageFixture(overrides: Partial<MessageSummary> = {}): MessageSummary {
   return {
-    id: 'message-1', body: 'hello', bodyPreview: 'hello', bodyTruncated: false,
+    id: 'message-1', title: null, body: 'hello', bodyPreview: 'hello', bodyTruncated: false,
     bodyFormat: BodyFormat.TEXT, sensitive: false, lifecycle: Lifecycle.TEMPORARY,
     favorite: false, version: 1, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
     tags: [], attachments: [], attachmentCount: 0, ...overrides,

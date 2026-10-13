@@ -92,7 +92,7 @@ func (q *Queries) GetMessageSettings(ctx context.Context) (GetMessageSettingsRow
 }
 
 const getOwnedMessage = `-- name: GetOwnedMessage :one
-SELECT id, owner_id, body_plaintext, body_ciphertext, body_nonce, body_encryption_version, body_format, detected_type, detected_language, sensitive, lifecycle, is_favorite, expires_at, trashed_at, purge_at, source_user_id, source_message_id, created_device_id, version, created_at, updated_at FROM messages WHERE id = $1 AND owner_id = $2
+SELECT id, owner_id, body_plaintext, body_ciphertext, body_nonce, body_encryption_version, body_format, detected_type, detected_language, sensitive, lifecycle, is_favorite, expires_at, trashed_at, purge_at, source_user_id, source_message_id, created_device_id, version, created_at, updated_at, title FROM messages WHERE id = $1 AND owner_id = $2
 `
 
 type GetOwnedMessageParams struct {
@@ -125,6 +125,7 @@ func (q *Queries) GetOwnedMessage(ctx context.Context, arg GetOwnedMessageParams
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Title,
 	)
 	return i, err
 }
@@ -141,15 +142,16 @@ func (q *Queries) GetRecipientStatus(ctx context.Context, id pgtype.UUID) (strin
 }
 
 const insertMessage = `-- name: InsertMessage :exec
-INSERT INTO messages(id,owner_id,body_plaintext,body_ciphertext,body_nonce,body_encryption_version,
+INSERT INTO messages(id,owner_id,title,body_plaintext,body_ciphertext,body_nonce,body_encryption_version,
  body_format,detected_type,detected_language,sensitive,lifecycle,is_favorite,expires_at,trashed_at,
  purge_at,source_user_id,source_message_id,created_device_id,version,created_at,updated_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
 `
 
 type InsertMessageParams struct {
 	ID                    pgtype.UUID
 	OwnerID               pgtype.UUID
+	Title                 pgtype.Text
 	BodyPlaintext         pgtype.Text
 	BodyCiphertext        []byte
 	BodyNonce             []byte
@@ -175,6 +177,7 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) er
 	_, err := q.db.Exec(ctx, insertMessage,
 		arg.ID,
 		arg.OwnerID,
+		arg.Title,
 		arg.BodyPlaintext,
 		arg.BodyCiphertext,
 		arg.BodyNonce,
@@ -250,7 +253,7 @@ func (q *Queries) InsertPermanentDeleteAudit(ctx context.Context, arg InsertPerm
 }
 
 const listActiveMessages = `-- name: ListActiveMessages :many
-SELECT m.id, m.owner_id, m.body_plaintext, m.body_ciphertext, m.body_nonce, m.body_encryption_version, m.body_format, m.detected_type, m.detected_language, m.sensitive, m.lifecycle, m.is_favorite, m.expires_at, m.trashed_at, m.purge_at, m.source_user_id, m.source_message_id, m.created_device_id, m.version, m.created_at, m.updated_at FROM messages m
+SELECT m.id, m.owner_id, m.body_plaintext, m.body_ciphertext, m.body_nonce, m.body_encryption_version, m.body_format, m.detected_type, m.detected_language, m.sensitive, m.lifecycle, m.is_favorite, m.expires_at, m.trashed_at, m.purge_at, m.source_user_id, m.source_message_id, m.created_device_id, m.version, m.created_at, m.updated_at, m.title FROM messages m
 WHERE m.owner_id=$1
  AND m.trashed_at IS NULL
  AND (m.lifecycle='PERMANENT' OR m.expires_at>$2)
@@ -316,6 +319,7 @@ func (q *Queries) ListActiveMessages(ctx context.Context, arg ListActiveMessages
 			&i.Version,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Title,
 		); err != nil {
 			return nil, err
 		}
@@ -385,7 +389,7 @@ func (q *Queries) ListMessageTags(ctx context.Context, messageID pgtype.UUID) ([
 }
 
 const listTrashedMessages = `-- name: ListTrashedMessages :many
-SELECT m.id, m.owner_id, m.body_plaintext, m.body_ciphertext, m.body_nonce, m.body_encryption_version, m.body_format, m.detected_type, m.detected_language, m.sensitive, m.lifecycle, m.is_favorite, m.expires_at, m.trashed_at, m.purge_at, m.source_user_id, m.source_message_id, m.created_device_id, m.version, m.created_at, m.updated_at FROM messages m
+SELECT m.id, m.owner_id, m.body_plaintext, m.body_ciphertext, m.body_nonce, m.body_encryption_version, m.body_format, m.detected_type, m.detected_language, m.sensitive, m.lifecycle, m.is_favorite, m.expires_at, m.trashed_at, m.purge_at, m.source_user_id, m.source_message_id, m.created_device_id, m.version, m.created_at, m.updated_at, m.title FROM messages m
 WHERE m.owner_id=$1 AND m.trashed_at IS NOT NULL
  AND ($2::timestamptz IS NULL OR (m.trashed_at,m.id)<($2,$3::uuid))
 ORDER BY m.trashed_at DESC,m.id DESC LIMIT $4
@@ -434,6 +438,7 @@ func (q *Queries) ListTrashedMessages(ctx context.Context, arg ListTrashedMessag
 			&i.Version,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Title,
 		); err != nil {
 			return nil, err
 		}
@@ -446,7 +451,7 @@ func (q *Queries) ListTrashedMessages(ctx context.Context, arg ListTrashedMessag
 }
 
 const lockOwnedMessage = `-- name: LockOwnedMessage :one
-SELECT id, owner_id, body_plaintext, body_ciphertext, body_nonce, body_encryption_version, body_format, detected_type, detected_language, sensitive, lifecycle, is_favorite, expires_at, trashed_at, purge_at, source_user_id, source_message_id, created_device_id, version, created_at, updated_at FROM messages WHERE id = $1 AND owner_id = $2 FOR UPDATE
+SELECT id, owner_id, body_plaintext, body_ciphertext, body_nonce, body_encryption_version, body_format, detected_type, detected_language, sensitive, lifecycle, is_favorite, expires_at, trashed_at, purge_at, source_user_id, source_message_id, created_device_id, version, created_at, updated_at, title FROM messages WHERE id = $1 AND owner_id = $2 FOR UPDATE
 `
 
 type LockOwnedMessageParams struct {
@@ -479,20 +484,22 @@ func (q *Queries) LockOwnedMessage(ctx context.Context, arg LockOwnedMessagePara
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Title,
 	)
 	return i, err
 }
 
 const saveMessage = `-- name: SaveMessage :execrows
-UPDATE messages SET body_plaintext=$3,body_ciphertext=$4,body_nonce=$5,body_encryption_version=$6,
- body_format=$7,detected_type=$8,detected_language=$9,sensitive=$10,lifecycle=$11,is_favorite=$12,
- expires_at=$13,trashed_at=$14,purge_at=$15,version=$16,updated_at=$17
+UPDATE messages SET title=$3,body_plaintext=$4,body_ciphertext=$5,body_nonce=$6,body_encryption_version=$7,
+ body_format=$8,detected_type=$9,detected_language=$10,sensitive=$11,lifecycle=$12,is_favorite=$13,
+ expires_at=$14,trashed_at=$15,purge_at=$16,version=$17,updated_at=$18
 WHERE id=$1 AND owner_id=$2
 `
 
 type SaveMessageParams struct {
 	ID                    pgtype.UUID
 	OwnerID               pgtype.UUID
+	Title                 pgtype.Text
 	BodyPlaintext         pgtype.Text
 	BodyCiphertext        []byte
 	BodyNonce             []byte
@@ -514,6 +521,7 @@ func (q *Queries) SaveMessage(ctx context.Context, arg SaveMessageParams) (int64
 	result, err := q.db.Exec(ctx, saveMessage,
 		arg.ID,
 		arg.OwnerID,
+		arg.Title,
 		arg.BodyPlaintext,
 		arg.BodyCiphertext,
 		arg.BodyNonce,

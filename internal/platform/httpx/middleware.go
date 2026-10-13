@@ -46,7 +46,7 @@ func contextWithTrace(r *http.Request, value string) context.Context {
 //   - base-uri 'none': the app never uses <base>, so any injection is a bug.
 //
 // Any future relaxation must be minimal, justified here, and covered by a test.
-const ContentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; media-src 'self'; frame-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+const ContentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: http:; font-src 'self'; connect-src 'self'; media-src 'self'; frame-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 
 const ReferrerPolicy = "same-origin"
 
@@ -72,6 +72,11 @@ func Recovery(logger *log.Logger) func(http.Handler) http.Handler {
 				value := recover()
 				if value == nil {
 					return
+				}
+				// Streaming handlers use this sentinel to terminate a response.
+				// Preserve net/http's abort semantics; never append JSON to it.
+				if value == http.ErrAbortHandler {
+					panic(value)
 				}
 				if errors.Is(r.Context().Err(), context.Canceled) {
 					// The client went away mid-handler; nothing to report.

@@ -12,16 +12,19 @@ const allowedHosts = (process.env.RELAY_SHELF_DEV_ALLOWED_HOSTS || '')
 export default defineConfig({
   plugins: [vue(), VitePWA({
     registerType: 'prompt',
-    includeAssets: ['favicon.svg', 'icons/pwa-192x192.png', 'icons/pwa-512x512.png'],
+    includeAssets: ['share-target.js', 'favicon.svg', 'icons/pwa-192x192.png', 'icons/pwa-512x512.png'],
     manifest: {
       name: 'RelayShelf', short_name: 'RelayShelf', display: 'standalone', start_url: '/', scope: '/',
       theme_color: '#5b56d6', background_color: '#f5f6fa',
+      launch_handler: { client_mode: 'navigate-new' },
+      share_target: { action: '/share', method: 'POST', enctype: 'multipart/form-data', params: { title: 'title', text: 'text', url: 'url' } },
       icons: [
         { src: '/icons/pwa-192x192.png', sizes: '192x192', type: 'image/png' },
         { src: '/icons/pwa-512x512.png', sizes: '512x512', type: 'image/png' },
       ],
     },
     workbox: {
+      importScripts: ['/share-target.js'],
       globPatterns: ['**/*.{js,css,html,ico,png,svg,webmanifest}'],
       navigateFallback: '/index.html',
       navigateFallbackDenylist: [/^\/api\/v1\//],

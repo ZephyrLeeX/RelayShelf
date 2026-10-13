@@ -111,6 +111,7 @@ type Message struct {
 	Version               int64
 	CreatedAt             pgtype.Timestamptz
 	UpdatedAt             pgtype.Timestamptz
+	Title                 pgtype.Text
 }
 
 type MessageAttachment struct {
@@ -128,6 +129,14 @@ type MessageTag struct {
 	MessageID pgtype.UUID
 	TagID     pgtype.UUID
 	CreatedAt pgtype.Timestamptz
+}
+
+type SavedSearch struct {
+	ID         pgtype.UUID
+	OwnerID    pgtype.UUID
+	Name       string
+	Conditions []byte
+	UpdatedAt  pgtype.Timestamptz
 }
 
 type Session struct {

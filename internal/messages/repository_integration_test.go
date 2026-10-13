@@ -79,6 +79,68 @@ func (f *fixture) create(t *testing.T, owner, device uuid.UUID, key, body, lifec
 	return m
 }
 
+func TestMessageTitleCreateEditDirectSendAndForward(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	title := "  OpenWrt Sunshine 部署  "
+	created, err := f.service.Create(ctx, f.alice, f.aliceDevice, messages.CreateCommand{Title: &title, Body: "body", BodyFormat: messages.Text, Lifecycle: messages.Permanent, IdempotencyKey: "title-create"})
+	if err != nil || created.Title == nil || *created.Title != "OpenWrt Sunshine 部署" {
+		t.Fatalf("create title=%v err=%v", created.Title, err)
+	}
+	var stored *string
+	if err = f.db.QueryRow(ctx, `SELECT title FROM messages WHERE id=$1`, created.ID).Scan(&stored); err != nil || stored == nil || *stored != "OpenWrt Sunshine 部署" {
+		t.Fatalf("stored title=%v err=%v", stored, err)
+	}
+
+	blank := "   "
+	withoutTitle, err := f.service.Create(ctx, f.alice, f.aliceDevice, messages.CreateCommand{Title: &blank, Body: "body", BodyFormat: messages.Text, Lifecycle: messages.Permanent, IdempotencyKey: "title-blank"})
+	if err != nil || withoutTitle.Title != nil {
+		t.Fatalf("blank title=%v err=%v", withoutTitle.Title, err)
+	}
+
+	replacement := "  新标题  "
+	edited, err := f.service.Edit(ctx, f.alice, created.ID, messages.EditCommand{ExpectedVersion: created.Version, Title: messages.OptionalString{Set: true, Value: &replacement}})
+	if err != nil || edited.Title == nil || *edited.Title != "新标题" {
+		t.Fatalf("edit title=%v err=%v", edited.Title, err)
+	}
+	if _, err = f.service.Edit(ctx, f.alice, created.ID, messages.EditCommand{ExpectedVersion: created.Version, Title: messages.OptionalString{Set: true, Value: &replacement}}); !errors.Is(err, messages.ErrVersionConflict) {
+		t.Fatalf("title version conflict=%v", err)
+	}
+	newBody := "updated body"
+	bodyEdited, err := f.service.Edit(ctx, f.alice, created.ID, messages.EditCommand{ExpectedVersion: edited.Version, Body: &newBody})
+	if err != nil || bodyEdited.Title == nil || *bodyEdited.Title != "新标题" {
+		t.Fatalf("omitted title was modified: title=%v err=%v", bodyEdited.Title, err)
+	}
+	cleared, err := f.service.Edit(ctx, f.alice, created.ID, messages.EditCommand{ExpectedVersion: bodyEdited.Version, Title: messages.OptionalString{Set: true, Value: &blank}})
+	if err != nil || cleared.Title != nil {
+		t.Fatalf("clear title=%v err=%v", cleared.Title, err)
+	}
+
+	directTitle := " Direct 标题 "
+	receipt, err := f.service.DirectSend(ctx, f.alice, f.aliceDevice, messages.DirectSendCommand{Title: &directTitle, RecipientID: f.bob, Body: "direct body", BodyFormat: messages.Text, IdempotencyKey: "title-direct"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	received, err := f.service.Detail(ctx, f.bob, receipt.MessageID)
+	if err != nil || received.Title == nil || *received.Title != "Direct 标题" {
+		t.Fatalf("direct title=%v err=%v", received.Title, err)
+	}
+
+	forwardTitle := "Forward 标题"
+	source, err := f.service.Create(ctx, f.alice, f.aliceDevice, messages.CreateCommand{Title: &forwardTitle, Body: "forward body", BodyFormat: messages.Text, Lifecycle: messages.Permanent, IdempotencyKey: "title-forward-source"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	forwarded, err := f.service.Forward(ctx, f.alice, f.aliceDevice, messages.ForwardCommand{SourceID: source.ID, RecipientID: f.bob, ExpectedVersion: source.Version, IdempotencyKey: "title-forward"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination, err := f.service.Detail(ctx, f.bob, forwarded.MessageID)
+	if err != nil || destination.Title == nil || *destination.Title != forwardTitle {
+		t.Fatalf("forward title=%v err=%v", destination.Title, err)
+	}
+}
+
 func (f *fixture) authenticatedRequest(method, path string, body []byte) *http.Request {
 	request := httptest.NewRequest(method, path, bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
@@ -625,7 +687,7 @@ func TestDirectSendForwardSensitiveAndIdempotency(t *testing.T) {
 		t.Fatal(err)
 	}
 	updatedBody := "receiver changed secret"
-	received, err = f.service.EditSensitive(ctx, f.bob, received.ID, received.Version, updatedBody)
+	received, err = f.service.EditSensitive(ctx, f.bob, received.ID, received.Version, messages.OptionalString{}, updatedBody)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -683,7 +745,7 @@ func TestDirectSendForwardSensitiveAndIdempotency(t *testing.T) {
 	if err != nil || replayed.MessageID != destination.MessageID || !replayed.CreatedAt.Equal(destination.CreatedAt) || !replayed.ExpiresAt.Equal(destination.ExpiresAt) {
 		t.Fatalf("forward replay=%+v %v", replayed, err)
 	}
-	destinationMessage, err = f.service.EditSensitive(ctx, f.bob, destinationMessage.ID, destinationMessage.Version, "receiver changed forward")
+	destinationMessage, err = f.service.EditSensitive(ctx, f.bob, destinationMessage.ID, destinationMessage.Version, messages.OptionalString{}, "receiver changed forward")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -763,7 +825,7 @@ func TestSensitiveToggleEditTagsFavoriteExpiryAndTrashList(t *testing.T) {
 	if err != nil || noOp.Version != secret.Version {
 		t.Fatalf("same sensitive bumped: %+v %v", noOp, err)
 	}
-	edited, err := f.service.EditSensitive(ctx, f.alice, m.ID, secret.Version, "new secret")
+	edited, err := f.service.EditSensitive(ctx, f.alice, m.ID, secret.Version, messages.OptionalString{}, "new secret")
 	if err != nil || edited.Version != secret.Version+1 {
 		t.Fatal(err)
 	}

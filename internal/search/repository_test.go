@@ -19,4 +19,7 @@ func TestSearchResultProjectionIsBoundedWithoutBoundingMatch(t *testing.T) {
 	if !strings.Contains(querySQL, "m.body_plaintext ILIKE") {
 		t.Fatal("body matching no longer checks the complete body column")
 	}
+	if strings.Count(querySQL, "m.title") < 2 {
+		t.Fatal("title matching is missing from token query")
+	}
 }

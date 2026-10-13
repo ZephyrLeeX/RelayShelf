@@ -1,16 +1,19 @@
 import { VueQueryPlugin, QueryClient } from '@tanstack/vue-query'
-import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
+import { mount, flushPromises, enableAutoUnmount, type VueWrapper } from '@vue/test-utils'
 import { createPinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BodyFormat, DefaultService, Lifecycle, StorageRuntimeStatus, UploadStatus, type UploadSession } from '@/api/generated'
 import { queryKeys } from '@/shared/api/queryKeys'
 import { messageFixture } from '@/test/fixtures'
+import { clearShare, pendingShare } from '@/features/share/receive'
 import MessageComposer from './MessageComposer.vue'
 import { uploadManager } from '@/features/uploads/manager'
 import { ResumeLedger } from '@/features/uploads/resumeLedger'
 import { uploadState } from '@/features/uploads/store'
 import type { UploadItem } from '@/features/uploads/types'
 import { setStorageRuntimeStatus } from '@/features/storage/runtime'
+
+enableAutoUnmount(afterEach)
 
 const bob = { id: '11111111-1111-4111-8111-111111111111', username: 'bob', displayName: 'Bob' }
 const carol = { id: '22222222-2222-4222-8222-222222222222', username: 'carol', displayName: 'Carol' }
@@ -31,7 +34,7 @@ function uploadItem(clientId: string, status: UploadItem['status'], session = up
 
 function mountComposer(lifecycle = Lifecycle.TEMPORARY) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
-  return mount(MessageComposer, { props: { defaultLifecycle: lifecycle }, global: { plugins: [createPinia(), [VueQueryPlugin, { queryClient: client }]] } })
+  return mount(MessageComposer, { attachTo: document.body, props: { defaultLifecycle: lifecycle }, global: { plugins: [createPinia(), [VueQueryPlugin, { queryClient: client }]] } })
 }
 
 async function pickContentType(wrapper: VueWrapper, label: string) {
@@ -62,6 +65,7 @@ function sendByKeyboard(wrapper: VueWrapper) {
 
 describe('MessageComposer', () => {
   beforeEach(() => {
+    clearShare()
     uploadState.items = []
     setStorageRuntimeStatus(undefined)
     vi.spyOn(DefaultService, 'listTags').mockResolvedValue([])
@@ -69,6 +73,105 @@ describe('MessageComposer', () => {
       items: [bob, carol].filter((user) => !query || user.username.includes(query) || user.displayName.toLowerCase().includes(query.toLowerCase())),
     }) as never)
     vi.stubGlobal('crypto', { randomUUID: vi.fn().mockReturnValueOnce('key-a').mockReturnValueOnce('key-b') })
+  })
+  it('warns before a navigation can discard an unsent draft', async () => {
+    const wrapper = mountComposer()
+    const empty = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(empty)
+    expect(empty.defaultPrevented).toBe(false)
+    await wrapper.get('textarea').setValue('未发送内容')
+    const dirty = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(dirty)
+    expect(dirty.defaultPrevented).toBe(true)
+  })
+  it('requires intake and an explicit send, protecting an existing draft', async () => {
+    const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
+    const wrapper = mountComposer()
+    await wrapper.get('textarea').setValue('原草稿')
+    pendingShare.value = { title: '分享标题', body: '分享正文' }
+    await flushPromises()
+    expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('原草稿')
+    expect(create).not.toHaveBeenCalled()
+    await wrapper.findAll('button').find((button) => button.text() === '合并到草稿')!.trigger('click')
+    expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('原草稿\n\n分享标题\n\n分享正文')
+    expect(create).not.toHaveBeenCalled()
+    await wrapper.get('button.primary').trigger('click')
+    await flushPromises()
+    expect(create).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ body: '原草稿\n\n分享标题\n\n分享正文' }))
+  })
+  it('requires confirmation before replacing a draft and preserves sensitive settings', async () => {
+    const wrapper = mountComposer()
+    await wrapper.get('textarea').setValue('原草稿')
+    await wrapper.get('button[aria-label="敏感内容"]').trigger('click')
+    pendingShare.value = { title: '分享标题', body: '分享正文' }
+    await flushPromises()
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true)
+    const replace = wrapper.findAll('button').find((button) => button.text() === '替换标题和正文')!
+    await replace.trigger('click')
+    expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('原草稿')
+    expect(pendingShare.value).not.toBeNull()
+    await replace.trigger('click')
+    expect(confirm).toHaveBeenCalledTimes(2)
+    expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('分享正文')
+    expect(wrapper.get('button[aria-label="敏感内容"]').attributes('aria-pressed')).toBe('true')
+    expect(pendingShare.value).toBeNull()
+  })
+  function drag(target: EventTarget, type: string, dataTransfer = { types: ['Files'], items: [{ kind: 'file' }], files: [new File(['a'], 'a.txt'), new File(['b'], 'b.txt')] }) {
+    const event = new Event(type, { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'dataTransfer', { value: dataTransfer })
+    target.dispatchEvent(event)
+    return event
+  }
+  it.each(['textarea', '.composer-top', '.composer-toolbar', '.composer-feedback'])('accepts files once from %s', async (selector) => {
+    const add = vi.spyOn(uploadManager, 'addFiles').mockResolvedValue([])
+    const wrapper = mountComposer()
+    expect(drag(wrapper.get(selector).element, 'drop').defaultPrevented).toBe(true)
+    await flushPromises()
+    expect(add).toHaveBeenCalledTimes(1)
+    expect(Array.from(add.mock.calls[0]![0]).map((file) => file.name)).toEqual(['a.txt', 'b.txt'])
+    expect(wrapper.find('.drop-prompt').exists()).toBe(false)
+  })
+  it('guards outside drops and keeps the overlay stable across child transitions', async () => {
+    const add = vi.spyOn(uploadManager, 'addFiles').mockResolvedValue([])
+    const wrapper = mountComposer()
+    drag(document.body, 'dragenter')
+    drag(wrapper.element, 'dragenter')
+    drag(document.body, 'dragleave')
+    drag(wrapper.get('textarea').element, 'dragenter')
+    drag(wrapper.element, 'dragleave')
+    await flushPromises()
+    expect(wrapper.find('.drop-prompt').exists()).toBe(true)
+    expect(drag(document.body, 'dragover').defaultPrevented).toBe(true)
+    expect(drag(document.body, 'drop').defaultPrevented).toBe(true)
+    await flushPromises()
+    expect(add).not.toHaveBeenCalled()
+    expect(wrapper.find('.drop-prompt').exists()).toBe(false)
+    drag(document.body, 'dragenter')
+    drag(document.body, 'dragleave')
+    await flushPromises()
+    expect(wrapper.find('.drop-prompt').exists()).toBe(false)
+    wrapper.unmount()
+    expect(drag(document.body, 'dragover').defaultPrevented).toBe(false)
+  })
+  it.each(['text/plain', 'text/uri-list'])('does not intercept %s drags inside or outside', async (type) => {
+    const wrapper = mountComposer()
+    for (const target of [document.body, wrapper.get('textarea').element]) {
+      for (const event of ['dragenter', 'dragover', 'drop']) {
+        expect(drag(target, event, { types: [type], items: [{ kind: 'string' }], files: [] }).defaultPrevented).toBe(false)
+      }
+    }
+    await flushPromises()
+    expect(wrapper.find('.drop-prompt').exists()).toBe(false)
+  })
+  it('recognizes file items without Files types and blocks uploads while degraded', async () => {
+    setStorageRuntimeStatus({ healthy: false, reason: StorageRuntimeStatus.reason.NAS_TIMEOUT, lastCheckedAt: null, changedAt: '2026-09-03T00:00:00Z' })
+    const add = vi.spyOn(uploadManager, 'addFiles').mockResolvedValue([])
+    const wrapper = mountComposer()
+    expect(drag(wrapper.get('.composer-top').element, 'drop', { types: [], items: [{ kind: 'file' }], files: [new File(['a'], 'a.txt')] }).defaultPrevented).toBe(true)
+    await flushPromises()
+    expect(add).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('存储服务暂时不可用')
+    expect(wrapper.find('.drop-prompt').exists()).toBe(false)
   })
   it('disables only attachments while degraded and still sends text', async () => {
     uploadState.items.push(uploadItem('completed', 'COMPLETED', uploadSession({ id: 'upload-completed', status: UploadStatus.COMPLETED })))
@@ -82,6 +185,18 @@ describe('MessageComposer', () => {
     await flushPromises()
     expect(create).toHaveBeenCalledWith('key-a', expect.objectContaining({ body: 'text still works', uploadIds: [] }))
   })
+  it('promotes formatting to Markdown and sends the formatted body', async () => {
+    const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
+    const wrapper = mountComposer()
+    const input = wrapper.get('textarea')
+    await input.setValue('格式内容')
+    input.element.setSelectionRange(0, 4)
+    await wrapper.findAll('button').find(button => button.text() === '加粗')!.trigger('click')
+    await sendByKeyboard(wrapper)
+    await flushPromises()
+    expect(create).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ body: '**格式内容**', bodyFormat: BodyFormat.MARKDOWN }))
+  })
+
   it('keeps Enter as a newline and sends on Ctrl/Cmd+Enter', async () => {
     const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
     const wrapper = mountComposer()
@@ -96,6 +211,57 @@ describe('MessageComposer', () => {
     await textarea.trigger('keydown', { key: 'Enter', metaKey: true })
     await flushPromises()
     expect(create).toHaveBeenLastCalledWith('key-b', expect.objectContaining({ body: 'line two' }))
+  })
+  it('trims and sends an optional title, treats blank as null, and clears it after success', async () => {
+    const create = vi.spyOn(DefaultService, 'createMessage').mockResolvedValue(messageFixture())
+    const wrapper = mountComposer()
+    const title = wrapper.get<HTMLInputElement>('input[aria-label="标题（可选）"]')
+    await title.setValue('  OpenWrt Sunshine 部署  ')
+    await wrapper.get('textarea').setValue('测试正文')
+    await sendByKeyboard(wrapper)
+    await flushPromises()
+    expect(create).toHaveBeenCalledWith('key-a', expect.objectContaining({ title: 'OpenWrt Sunshine 部署', body: '测试正文' }))
+    expect(title.element.value).toBe('')
+
+    await title.setValue('   ')
+    await wrapper.get('textarea').setValue('无标题正文')
+    await sendByKeyboard(wrapper)
+    await flushPromises()
+    expect(create).toHaveBeenLastCalledWith('key-b', expect.objectContaining({ title: null }))
+  })
+  it('includes title changes in retry identity and preserves the failed title draft', async () => {
+    const create = vi.spyOn(DefaultService, 'createMessage')
+      .mockRejectedValueOnce(new TypeError('offline'))
+      .mockRejectedValueOnce(new TypeError('offline again'))
+    const wrapper = mountComposer()
+    const title = wrapper.get<HTMLInputElement>('input[aria-label="标题（可选）"]')
+    await title.setValue('First title')
+    await wrapper.get('textarea').setValue('retry body')
+    await sendByKeyboard(wrapper)
+    await flushPromises()
+    expect(create.mock.calls[0][0]).toBe('key-a')
+    expect(title.element.value).toBe('First title')
+
+    await sendByKeyboard(wrapper)
+    await flushPromises()
+    expect(create.mock.calls[1][0]).toBe('key-a')
+
+    await title.setValue('Changed title')
+    await sendByKeyboard(wrapper)
+    await flushPromises()
+    expect(create.mock.calls[2][0]).toBe('key-b')
+  })
+  it('sends the title through Direct Send', async () => {
+    const direct = vi.spyOn(DefaultService, 'directSendMessage').mockResolvedValue({
+      messageId: 'message-direct', createdAt: '2026-08-31T00:00:00Z', expiresAt: '2026-09-01T00:00:00Z',
+    })
+    const wrapper = mountComposer()
+    await pickRecipient(wrapper, 'bob')
+    await wrapper.get('input[aria-label="标题（可选）"]').setValue('  Direct title  ')
+    await wrapper.get('textarea').setValue('direct body')
+    await sendByKeyboard(wrapper)
+    await flushPromises()
+    expect(direct).toHaveBeenCalledWith('key-a', expect.objectContaining({ title: 'Direct title', recipientUserId: bob.id }))
   })
   it('exposes no UUID input and no More menu anywhere in the composer', () => {
     const wrapper = mountComposer()
@@ -153,6 +319,7 @@ describe('MessageComposer', () => {
     expect(create).not.toHaveBeenCalled()
     expect(direct).toHaveBeenCalledWith('key-a', {
       recipientUserId: bob.id,
+      title: null,
       body: 'send once', bodyFormat: BodyFormat.TEXT, sensitive: false, uploadIds: [],
     })
     expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('')
@@ -225,6 +392,7 @@ describe('MessageComposer', () => {
     expect(createTag).not.toHaveBeenCalled()
     expect(direct).toHaveBeenCalledWith('key-a', {
       recipientUserId: bob.id,
+      title: null,
       body: 'direct with drafted tag', bodyFormat: BodyFormat.TEXT, sensitive: false, uploadIds: [],
     })
   })

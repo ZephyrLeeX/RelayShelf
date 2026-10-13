@@ -80,7 +80,7 @@ func int2p(v pgtype.Int2) *int16 {
 }
 
 func domainMessage(r generated.Message) Message {
-	return Message{ID: uuid.UUID(r.ID.Bytes), OwnerID: uuid.UUID(r.OwnerID.Bytes), BodyPlaintext: stringp(r.BodyPlaintext), BodyCiphertext: r.BodyCiphertext, BodyNonce: r.BodyNonce, BodyEncryptionVersion: int2p(r.BodyEncryptionVersion), BodyFormat: r.BodyFormat, DetectedType: stringp(r.DetectedType), DetectedLanguage: stringp(r.DetectedLanguage), Sensitive: r.Sensitive, Lifecycle: r.Lifecycle, Favorite: r.IsFavorite, ExpiresAt: timep(r.ExpiresAt), TrashedAt: timep(r.TrashedAt), PurgeAt: timep(r.PurgeAt), SourceUserID: uuidp(r.SourceUserID), SourceMessageID: uuidp(r.SourceMessageID), CreatedDeviceID: uuidp(r.CreatedDeviceID), Version: r.Version, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time}
+	return Message{ID: uuid.UUID(r.ID.Bytes), OwnerID: uuid.UUID(r.OwnerID.Bytes), Title: stringp(r.Title), BodyPlaintext: stringp(r.BodyPlaintext), BodyCiphertext: r.BodyCiphertext, BodyNonce: r.BodyNonce, BodyEncryptionVersion: int2p(r.BodyEncryptionVersion), BodyFormat: r.BodyFormat, DetectedType: stringp(r.DetectedType), DetectedLanguage: stringp(r.DetectedLanguage), Sensitive: r.Sensitive, Lifecycle: r.Lifecycle, Favorite: r.IsFavorite, ExpiresAt: timep(r.ExpiresAt), TrashedAt: timep(r.TrashedAt), PurgeAt: timep(r.PurgeAt), SourceUserID: uuidp(r.SourceUserID), SourceMessageID: uuidp(r.SourceMessageID), CreatedDeviceID: uuidp(r.CreatedDeviceID), Version: r.Version, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time}
 }
 func domainTag(r generated.Tag) Tag {
 	return Tag{ID: uuid.UUID(r.ID.Bytes), Name: r.Name, Color: r.Color, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time}
@@ -140,14 +140,14 @@ func (r *PostgreSQLRepository) Get(ctx context.Context, ownerID, id uuid.UUID) (
 }
 
 func insertParams(m Message) generated.InsertMessageParams {
-	return generated.InsertMessageParams{ID: pgu(m.ID), OwnerID: pgu(m.OwnerID), BodyPlaintext: pgs(m.BodyPlaintext), BodyCiphertext: m.BodyCiphertext, BodyNonce: m.BodyNonce, BodyEncryptionVersion: pg2(m.BodyEncryptionVersion), BodyFormat: m.BodyFormat, DetectedType: pgs(m.DetectedType), DetectedLanguage: pgs(m.DetectedLanguage), Sensitive: m.Sensitive, Lifecycle: m.Lifecycle, IsFavorite: m.Favorite, ExpiresAt: pgtp(m.ExpiresAt), TrashedAt: pgtp(m.TrashedAt), PurgeAt: pgtp(m.PurgeAt), SourceUserID: pgup(m.SourceUserID), SourceMessageID: pgup(m.SourceMessageID), CreatedDeviceID: pgup(m.CreatedDeviceID), Version: m.Version, CreatedAt: pgt(m.CreatedAt), UpdatedAt: pgt(m.UpdatedAt)}
+	return generated.InsertMessageParams{ID: pgu(m.ID), OwnerID: pgu(m.OwnerID), Title: pgs(m.Title), BodyPlaintext: pgs(m.BodyPlaintext), BodyCiphertext: m.BodyCiphertext, BodyNonce: m.BodyNonce, BodyEncryptionVersion: pg2(m.BodyEncryptionVersion), BodyFormat: m.BodyFormat, DetectedType: pgs(m.DetectedType), DetectedLanguage: pgs(m.DetectedLanguage), Sensitive: m.Sensitive, Lifecycle: m.Lifecycle, IsFavorite: m.Favorite, ExpiresAt: pgtp(m.ExpiresAt), TrashedAt: pgtp(m.TrashedAt), PurgeAt: pgtp(m.PurgeAt), SourceUserID: pgup(m.SourceUserID), SourceMessageID: pgup(m.SourceMessageID), CreatedDeviceID: pgup(m.CreatedDeviceID), Version: m.Version, CreatedAt: pgt(m.CreatedAt), UpdatedAt: pgt(m.UpdatedAt)}
 }
 func insertMessage(ctx context.Context, tx pgx.Tx, m Message) error {
 	return generated.New(tx).InsertMessage(ctx, insertParams(m))
 }
 func saveMessage(ctx context.Context, tx pgx.Tx, m Message) error {
 	p := insertParams(m)
-	rows, err := generated.New(tx).SaveMessage(ctx, generated.SaveMessageParams{ID: p.ID, OwnerID: p.OwnerID, BodyPlaintext: p.BodyPlaintext, BodyCiphertext: p.BodyCiphertext, BodyNonce: p.BodyNonce, BodyEncryptionVersion: p.BodyEncryptionVersion, BodyFormat: p.BodyFormat, DetectedType: p.DetectedType, DetectedLanguage: p.DetectedLanguage, Sensitive: p.Sensitive, Lifecycle: p.Lifecycle, IsFavorite: p.IsFavorite, ExpiresAt: p.ExpiresAt, TrashedAt: p.TrashedAt, PurgeAt: p.PurgeAt, Version: p.Version, UpdatedAt: p.UpdatedAt})
+	rows, err := generated.New(tx).SaveMessage(ctx, generated.SaveMessageParams{ID: p.ID, OwnerID: p.OwnerID, Title: p.Title, BodyPlaintext: p.BodyPlaintext, BodyCiphertext: p.BodyCiphertext, BodyNonce: p.BodyNonce, BodyEncryptionVersion: p.BodyEncryptionVersion, BodyFormat: p.BodyFormat, DetectedType: p.DetectedType, DetectedLanguage: p.DetectedLanguage, Sensitive: p.Sensitive, Lifecycle: p.Lifecycle, IsFavorite: p.IsFavorite, ExpiresAt: p.ExpiresAt, TrashedAt: p.TrashedAt, PurgeAt: p.PurgeAt, Version: p.Version, UpdatedAt: p.UpdatedAt})
 	if err == nil && rows != 1 {
 		return ErrNotFound
 	}

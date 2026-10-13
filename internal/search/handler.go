@@ -10,7 +10,10 @@ import (
 	"github.com/ZephyrLeeX/RelayShelf/internal/messages"
 )
 
-type Handler struct{ service *Service }
+type Handler struct {
+	service *Service
+	saved   *SavedRepository
+}
 
 func NewHandler(service *Service) *Handler { return &Handler{service: service} }
 

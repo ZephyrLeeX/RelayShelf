@@ -52,6 +52,40 @@ func TestMigrationsAndCompatibility(t *testing.T) {
 	}
 }
 
+func TestMessageTitleMigration(t *testing.T) {
+	ctx := context.Background()
+	db := postgresutil.NewEmptyDatabase(t)
+	if err := database.Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	var nullable, constraintDefinition, method, opclass string
+	if err := db.QueryRow(ctx, `SELECT is_nullable FROM information_schema.columns WHERE table_schema='public' AND table_name='messages' AND column_name='title'`).Scan(&nullable); err != nil || nullable != "YES" {
+		t.Fatalf("title column nullable=%q err=%v", nullable, err)
+	}
+	if err := db.QueryRow(ctx, `SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname='messages_title_valid'`).Scan(&constraintDefinition); err != nil || !strings.Contains(constraintDefinition, "char_length(title)") || !strings.Contains(constraintDefinition, "btrim(title)") {
+		t.Fatalf("title constraint=%q err=%v", constraintDefinition, err)
+	}
+	if err := db.QueryRow(ctx, `SELECT access_method.amname, operator_class.opcname
+FROM pg_class index_class
+JOIN pg_am access_method ON access_method.oid=index_class.relam
+JOIN pg_index index ON index.indexrelid=index_class.oid
+JOIN pg_opclass operator_class ON operator_class.oid=index.indclass[0]
+WHERE index_class.relname='messages_title_trgm_idx'`).Scan(&method, &opclass); err != nil || method != "gin" || opclass != "gin_trgm_ops" {
+		t.Fatalf("title index method=%q opclass=%q err=%v", method, opclass, err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO users(id,username,display_name,password_hash,status) VALUES('00000000-0000-4000-8000-000000000001','title-test','Title Test','unused','ACTIVE')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO messages(id,owner_id,title,body_format,sensitive,lifecycle) VALUES('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000001',NULL,'TEXT',false,'PERMANENT')`); err != nil {
+		t.Fatalf("NULL title rejected: %v", err)
+	}
+	for _, invalid := range []string{" padded ", strings.Repeat("界", 201)} {
+		if _, err := db.Exec(ctx, `INSERT INTO messages(id,owner_id,title,body_format,sensitive,lifecycle) VALUES(gen_random_uuid(),'00000000-0000-4000-8000-000000000001',$1,'TEXT',false,'PERMANENT')`, invalid); err == nil {
+			t.Fatalf("invalid title accepted: %q", invalid)
+		}
+	}
+}
+
 func TestPhase5UploadHandoffIndexMigrations(t *testing.T) {
 	ctx := context.Background()
 
@@ -71,7 +105,7 @@ func TestPhase5UploadHandoffIndexMigrations(t *testing.T) {
 		if err := database.Migrate(ctx, db); err != nil {
 			t.Fatalf("migrate fresh database: %v", err)
 		}
-		assertVersion(t, ctx, db, 7)
+		assertVersion(t, ctx, db, 8)
 		assertPhase5Indexes(t, ctx, db)
 
 		var businessTables int
@@ -107,8 +141,8 @@ CREATE INDEX upload_sessions_handoff_file_idx
 func TestPhase6SearchIndexMigrations(t *testing.T) {
 	ctx := context.Background()
 	latest, err := database.LatestVersion()
-	if err != nil || latest != 7 {
-		t.Fatalf("latest migration version=%d want=7 err=%v", latest, err)
+	if err != nil || latest != 8 {
+		t.Fatalf("latest migration version=%d want=8 err=%v", latest, err)
 	}
 
 	t.Run("existing clean v3 database", func(t *testing.T) {
@@ -120,12 +154,12 @@ func TestPhase6SearchIndexMigrations(t *testing.T) {
 		if err := database.Migrate(ctx, db); err != nil {
 			t.Fatalf("migrate v3 to v4: %v", err)
 		}
-		assertVersion(t, ctx, db, 7)
+		assertVersion(t, ctx, db, 8)
 		assertPhase6Indexes(t, ctx, db)
 		if err := database.Migrate(ctx, db); err != nil {
 			t.Fatalf("repeat migration: %v", err)
 		}
-		assertVersion(t, ctx, db, 7)
+		assertVersion(t, ctx, db, 8)
 		assertPhase6Indexes(t, ctx, db)
 	})
 
@@ -134,7 +168,7 @@ func TestPhase6SearchIndexMigrations(t *testing.T) {
 		if err := database.Migrate(ctx, db); err != nil {
 			t.Fatalf("migrate fresh database: %v", err)
 		}
-		assertVersion(t, ctx, db, 7)
+		assertVersion(t, ctx, db, 8)
 		assertPhase5Indexes(t, ctx, db)
 		assertPhase6Indexes(t, ctx, db)
 	})
@@ -169,7 +203,7 @@ func TestPhase7JobMigration(t *testing.T) {
 	if err := database.Migrate(ctx, db); err != nil {
 		t.Fatalf("migrate v4 to v5: %v", err)
 	}
-	assertVersion(t, ctx, db, 7)
+	assertVersion(t, ctx, db, 8)
 	if err := database.Migrate(ctx, db); err != nil {
 		t.Fatalf("repeat migrate: %v", err)
 	}

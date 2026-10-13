@@ -6,6 +6,68 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /saved-searches:
+    get:
+      operationId: listSavedSearches
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200':
+          description: Saved search
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/SavedSearch' } }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+    post:
+      operationId: createSavedSearch
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SavedSearchRequest' }
+      responses:
+        '201':
+          description: Saved search
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SavedSearch' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /saved-searches/{savedSearchId}:
+    parameters:
+      - name: savedSearchId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      operationId: updateSavedSearch
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SavedSearchRequest' }
+      responses:
+        '200':
+          description: Saved search
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SavedSearch' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: deleteSavedSearch
+      security: [{ cookieAuth: [] }]
+      responses:
+        '204':
+          description: Saved search
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
   /events:
     get:
       operationId: getEvents
@@ -371,6 +433,16 @@ paths:
       parameters: [{ $ref: '#/components/parameters/MessageId' }, { $ref: '#/components/parameters/AttachmentId' }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/VersionRequest' } } } }
       responses: { '200': { description: Updated message, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }, '404': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' }, '422': { $ref: '#/components/responses/Error' } }
+  /messages/{messageId}/attachments/download:
+    get:
+      operationId: downloadMessageAttachments
+      description: Stream this owned message's complete attachments as a store ZIP. No Range support. Storage failures before streaming return JSON; failures during streaming abort the response without completing the ZIP.
+      security: [{ cookieAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/MessageId' }]
+      responses:
+        '200': { description: Complete message attachment archive, content: { application/zip: { schema: { type: string, format: binary } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
   /attachments/{attachmentId}/download:
     get:
       operationId: downloadAttachment
@@ -676,6 +748,36 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
   schemas:
+    SearchConditions:
+      type: object
+      additionalProperties: false
+      required: [q, lifecycle, favorite, tagIds, type, time, from, to, timezone]
+      properties:
+        q: { type: string, maxLength: 1024 }
+        lifecycle: { type: string, enum: ['', TEMPORARY, PERMANENT], x-enum-varnames: [ALL, TEMPORARY, PERMANENT] }
+        favorite: { type: boolean }
+        tagIds: { type: array, maxItems: 100, items: { type: string, format: uuid } }
+        type: { type: string, enum: ['', TEXT, MARKDOWN, CODE], x-enum-varnames: [ALL, TEXT, MARKDOWN, CODE] }
+        time: { type: string, enum: [all, 24h, 7d, 30d, custom] }
+        from: { type: string, description: 'Local YYYY-MM-DDTHH:mm, inclusive start in timezone' }
+        to: { type: string, description: 'Local YYYY-MM-DDTHH:mm, exclusive end in timezone' }
+        timezone: { type: string, enum: [Asia/Shanghai, UTC] }
+    SavedSearchRequest:
+      type: object
+      additionalProperties: false
+      required: [name, conditions]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        conditions: { $ref: '#/components/schemas/SearchConditions' }
+    SavedSearch:
+      allOf:
+        - $ref: '#/components/schemas/SavedSearchRequest'
+        - type: object
+          required: [id, updatedAt, invalidReason]
+          properties:
+            id: { type: string, format: uuid }
+            updatedAt: { type: string, format: date-time }
+            invalidReason: { type: string, description: 'Nonempty when conditions are no longer valid; do not broaden search' }
     LoginRequest:
       type: object
       required: [username, password]
@@ -811,6 +913,7 @@ components:
       type: object
       additionalProperties: false
       properties:
+        title: { type: [string, 'null'], maxLength: 200 }
         body: { type: [string, 'null'], minLength: 1, maxLength: 1048576 }
         bodyFormat: { $ref: '#/components/schemas/BodyFormat', default: TEXT }
         lifecycle: { $ref: '#/components/schemas/Lifecycle', default: TEMPORARY }
@@ -823,6 +926,7 @@ components:
       required: [expectedVersion]
       properties:
         expectedVersion: { type: integer, format: int64, minimum: 1 }
+        title: { type: string, maxLength: 200, description: "Omit to keep the current title; blank or whitespace-only clears it." }
         body: { type: [string, 'null'], minLength: 1, maxLength: 1048576 }
         bodyFormat: { $ref: '#/components/schemas/BodyFormat' }
         detectedType: { type: [string, 'null'], maxLength: 64 }
@@ -858,13 +962,17 @@ components:
       type: object
       additionalProperties: false
       required: [expectedVersion, body]
-      properties: { expectedVersion: { type: integer, format: int64, minimum: 1 }, body: { type: string, minLength: 1, maxLength: 1048576 } }
+      properties:
+        expectedVersion: { type: integer, format: int64, minimum: 1 }
+        title: { type: string, maxLength: 200, description: "Omit to keep the current title; blank or whitespace-only clears it." }
+        body: { type: string, minLength: 1, maxLength: 1048576 }
     DirectSendRequest:
       type: object
       additionalProperties: false
       required: [recipientUserId]
       properties:
         recipientUserId: { type: string, format: uuid }
+        title: { type: [string, 'null'], maxLength: 200 }
         body: { type: [string, 'null'], minLength: 1, maxLength: 1048576 }
         bodyFormat: { $ref: '#/components/schemas/BodyFormat', default: TEXT }
         sensitive: { type: boolean, default: false }
@@ -902,9 +1010,10 @@ components:
         updatedAt: { type: string, format: date-time }
     Message:
       type: object
-      required: [id, body, bodyFormat, sensitive, lifecycle, favorite, version, createdAt, updatedAt, tags, attachments]
+      required: [id, title, body, bodyFormat, sensitive, lifecycle, favorite, version, createdAt, updatedAt, tags, attachments]
       properties:
         id: { type: string, format: uuid }
+        title: { type: [string, 'null'] }
         body: { type: [string, 'null'] }
         bodyFormat: { $ref: '#/components/schemas/BodyFormat' }
         detectedType: { type: [string, 'null'] }
