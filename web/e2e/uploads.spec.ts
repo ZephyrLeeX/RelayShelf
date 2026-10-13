@@ -39,11 +39,12 @@ test.describe('upload journey', () => {
 
     const card = page.locator('.message-card', { hasText: name })
     await expect(card).toBeVisible()
-    await expect(card.getByText(/个附件/)).toBeVisible()
+    await expect(card.getByText('3 个附件').or(card.getByText(/个附件/))).toBeVisible()
 
     // The attachment downloads back byte-identical content through the
     // viewer's real download link.
-    const detail = card.locator('.message-inspector')
+    await card.getByRole('button', { name: /打开内容/ }).click()
+    const detail = page.getByRole('dialog', { name: '内容详情' })
     await expect(detail).toBeVisible()
     await detail.locator('.attachment', { hasText: name }).click()
     const viewer = page.locator('.viewer')

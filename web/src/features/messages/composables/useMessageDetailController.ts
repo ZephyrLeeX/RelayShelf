@@ -1,7 +1,7 @@
 import { computed, onUnmounted, ref, toValue, watch, type MaybeRefOrGetter } from 'vue'
 import { useQueryClient } from '@tanstack/vue-query'
 import { useRoute, useRouter } from 'vue-router'
-import { BodyFormat, DefaultService, type MessageSummary, type RecipientUser } from '@/api/generated'
+import { BodyFormat, DefaultService, type RecipientUser } from '@/api/generated'
 import { displayError } from '@/shared/api/errors'
 import { uploadManager } from '@/features/uploads/manager'
 import { visibleUploads } from '@/features/uploads/store'
@@ -18,14 +18,10 @@ interface RevealedBody {
   body: string
 }
 
-export function useMessageDetailController(messageId: MaybeRefOrGetter<string>, summary?: MaybeRefOrGetter<MessageSummary | undefined>) {
+export function useMessageDetailController(messageId: MaybeRefOrGetter<string>) {
   const route = useRoute()
   const router = useRouter()
-  const needsFullMessage = (item: MessageSummary) => item.bodyTruncated || item.attachmentCount > item.attachments.length
-  const detail = useMessageDetail(messageId, () => {
-    const item = summary ? toValue(summary) : undefined
-    return !item || needsFullMessage(item)
-  })
+  const detail = useMessageDetail(messageId)
   const mutation = useMessageMutation()
   const queryClient = useQueryClient()
   const { copied, copyText } = useClipboardFeedback()
@@ -43,14 +39,7 @@ export function useMessageDetailController(messageId: MaybeRefOrGetter<string>, 
   const attachmentInput = ref<HTMLInputElement>()
   const detailUploadClients = ref<string[]>([])
   const attachmentMutationPending = ref(false)
-  const message = computed(() => {
-    const item = summary ? toValue(summary) : undefined
-    const full = detail.data.value
-    if (!item) return full
-    if (full && full.version >= item.version) return full
-    if (needsFullMessage(item)) return undefined
-    return { ...item, body: item.sensitive ? null : item.bodyPreview }
-  })
+  const message = computed(() => detail.data.value)
   const detailUploads = computed(() => detailUploadClients.value.flatMap((id) => {
     const item = visibleUploads.value.find((candidate) => candidate.clientId === id)
     return item ? [item] : []
@@ -76,7 +65,7 @@ export function useMessageDetailController(messageId: MaybeRefOrGetter<string>, 
   }
 
   watch(message, (value) => {
-    if (!value || editing.value) return
+    if (!value) return
     // Editing state derives from stored content: a Markdown body that is one
     // recognized fenced block edits as that code language with the fence
     // stripped; plain TEXT always edits as 纯文本 (detectedLanguage is a
@@ -88,10 +77,7 @@ export function useMessageDetailController(messageId: MaybeRefOrGetter<string>, 
   }, { immediate: true })
   watch(
     () => [message.value?.id, message.value?.version, message.value?.sensitive] as const,
-    (current, previous) => {
-      if (previous && current.every((value, index) => value === previous[index])) return
-      clearRevealedBody(); editBody.value = ''; editing.value = false
-    },
+    () => { clearRevealedBody(); editBody.value = ''; editing.value = false },
   )
   onUnmounted(clearRevealedBody)
 

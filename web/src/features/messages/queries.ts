@@ -30,10 +30,9 @@ export function useMessageFeed(filters: MaybeRefOrGetter<MessageFilters>, enable
   })
 }
 
-export function useMessageDetail(id: MaybeRefOrGetter<string>, enabled: MaybeRefOrGetter<boolean> = true) {
+export function useMessageDetail(id: MaybeRefOrGetter<string>) {
   return useQuery({
     queryKey: computed(() => queryKeys.messages.detail(toValue(id))),
     queryFn: () => DefaultService.getMessage(toValue(id)),
-    enabled: computed(() => toValue(enabled)),
   })
 }

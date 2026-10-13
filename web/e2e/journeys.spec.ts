@@ -38,7 +38,8 @@ test.describe('send text journey', () => {
     await page.reload()
     await expect(page.locator('.message-card', { hasText: body })).toBeVisible()
 
-    const detail = card.locator('.message-inspector')
+    await card.getByRole('button', { name: new RegExp(`打开内容`) }).click()
+    const detail = page.getByRole('dialog', { name: '内容详情' })
     await expect(detail).toBeVisible()
     await expect(detail.locator('.body-section')).toContainText(body)
   })
@@ -176,7 +177,8 @@ test.describe('direct send and forward journey', () => {
 
       await composeAndSend(alicePage, body)
       const card = alicePage.locator('.message-card', { hasText: body })
-      const detail = card.locator('.message-inspector')
+      await card.getByRole('button', { name: /打开内容/ }).click()
+      const detail = alicePage.getByRole('dialog', { name: '内容详情' })
       await expect(detail.getByPlaceholder('接收者用户 ID（UUID）')).toHaveCount(0)
       await detail.getByRole('button', { name: '转发', exact: true }).click()
       await detail.getByLabel('接收人').click()
@@ -186,7 +188,8 @@ test.describe('direct send and forward journey', () => {
       await expect(detail.getByText('已转发', { exact: true })).toBeVisible()
 
       await expect(bobPage.locator('.message-card', { hasText: body })).toBeVisible({ timeout: 20_000 })
-      // The sender's original stays in the same feed.
+      // Sender keeps the original: close the detail route and return to the feed.
+      await alicePage.getByRole('button', { name: '关闭详情' }).click()
       await expect(alicePage).toHaveURL(/\/temporary$/)
       await expect(alicePage.locator('.message-card', { hasText: body }).first()).toBeVisible()
     } finally {
@@ -203,7 +206,6 @@ test.describe('trash and restore journey', () => {
     await composeAndSend(page, body)
 
     const card = page.locator('.message-card', { hasText: body })
-    await card.getByRole('button', { name: '更多操作', exact: true }).click()
     await card.getByRole('button', { name: '删除', exact: true }).click()
     await expect(page.locator('.message-card', { hasText: body })).toHaveCount(0)
 
@@ -231,7 +233,8 @@ test.describe('sensitive reveal and copy journey', () => {
     await expect(card).toContainText('敏感内容已锁定')
     await expect(page.locator('.message-card pre', { hasText: secret })).toHaveCount(0)
 
-    const detail = card.locator('.message-inspector')
+    await card.getByRole('button', { name: /打开内容/ }).click()
+    const detail = page.getByRole('dialog', { name: '内容详情' })
     await expect(detail).toBeVisible()
     // Not revealed yet.
     await expect(detail.locator('pre')).toHaveCount(0)
