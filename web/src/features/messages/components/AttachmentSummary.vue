@@ -32,6 +32,7 @@ onUnmounted(() => clearTimeout(timer))
     class="attachment"
     :class="{ compact }"
     type="button"
+    :aria-label="`预览 ${file.originalFilename}`"
     @click="emit('view', file.id)"
   >
     <img

@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, watch } from 'vue'
-import { useDetailSelection } from './composables/useDetailSelection'
 import { useQuery } from '@tanstack/vue-query'
 import { useRoute, useRouter } from 'vue-router'
 import { DefaultService } from '@/api/generated'
@@ -13,7 +12,6 @@ import AppTopbar from './shell/AppTopbar.vue'
 import MobileHeader from './shell/MobileHeader.vue'
 import MobileBottomNav from './shell/MobileBottomNav.vue'
 import MobileMoreMenu from './shell/MobileMoreMenu.vue'
-import MessageDetailSurface from '@/features/messages/components/detail/MessageDetailSurface.vue'
 import { useAuthStore } from '@/features/auth/store'
 import SessionsPanel from '@/features/sessions/SessionsPanel.vue'
 import UploadQueue from '@/features/uploads/components/UploadQueue.vue'
@@ -28,7 +26,6 @@ const auth = useAuthStore()
 const ui = useUiStore()
 const route = useRoute()
 const router = useRouter()
-const { selectedMessageId } = useDetailSelection()
 const uploadCount = computed(() => visibleUploads.value.filter((item) => item.status !== 'COMPLETED').length)
 const shellMode = computed(() => route.meta.shell === 'full' ? 'full' : 'workspace')
 const devices = useQuery({ queryKey: queryKeys.sessions.devices(), queryFn: () => DefaultService.listDevices() })
@@ -123,10 +120,7 @@ function openMobileMore() {
             class="content-frame"
             :class="{ constrained: shellMode === 'workspace' }"
           >
-            <MessageDetailSurface v-if="shellMode === 'workspace'" />
-            <div v-show="shellMode !== 'workspace' || !selectedMessageId">
-              <RouterView />
-            </div>
+            <RouterView />
           </div>
         </main>
       </div>

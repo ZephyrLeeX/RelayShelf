@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ArrowLeft, Archive, CalendarPlus, Check, Copy, Forward, LockKeyhole, MoreHorizontal, Paperclip, Pencil, Star, Trash2 } from '@lucide/vue'
-import { defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
-import { BodyFormat } from '@/api/generated'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
+import { BodyFormat, type MessageSummary } from '@/api/generated'
 import { formatBytes } from '@/shared/utils/bytes'
 import TagChip from '@/shared/ui/TagChip.vue'
 import AttachmentList from '../AttachmentList.vue'
@@ -14,11 +14,13 @@ import { useMessageImages } from '../../composables/useMessageImages'
 import { previewURL, safeRasterMIMEs } from '@/features/files/preview'
 import ComposerEditor from '../composer/ComposerEditor.vue'
 import ContentTypePicker from '../ContentTypePicker.vue'
+import { relativeExpiry } from '@/shared/utils/expiry'
+import { extractFenceLanguage } from '../../content/contentFormat'
 import { isCodeContentType } from '../../content/contentFormat'
 import { useMessageDetailController } from '../../composables/useMessageDetailController'
 
 const AttachmentViewer = defineAsyncComponent(() => import('@/features/files/AttachmentViewer.vue'))
-const props = defineProps<{ id: string }>()
+const props = defineProps<{ id: string; inline?: boolean; summary?: MessageSummary; batchMode?: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 const extendOpen = ref(false)
 const moreOpen = ref(false)
@@ -29,7 +31,16 @@ const {
   storageAvailable,
   clearRevealedBody, reveal, copy, run, forward, startEdit, saveBody, removeForever,
   openViewer, closeViewer, selectViewer, chooseDetailFiles, addAttachments, addRestored, removeAttachment,
-} = useMessageDetailController(() => props.id)
+} = useMessageDetailController(() => props.id, props.inline ? () => props.summary : undefined)
+
+const typeLabel = computed(() => {
+  const item = message.value
+  if (!item) return ''
+  if (item.sensitive) return '敏感'
+  return item.bodyFormat === BodyFormat.MARKDOWN
+    ? extractFenceLanguage(item.body ?? '')?.shortLabel ?? 'MD'
+    : item.detectedLanguage?.toUpperCase() ?? (item.body ? '文本' : '文件')
+})
 
 const gallery = useMessageImages(
   () => detail.isError.value || message.value?.id !== props.id || message.value?.bodyFormat !== BodyFormat.MARKDOWN
@@ -63,14 +74,17 @@ function onKey(event: KeyboardEvent) {
     return
   }
   if (document.querySelector('.viewer, .backdrop, .queue-backdrop, .more-backdrop')) return
-  emit('close')
+  if (!props.inline) emit('close')
 }
 onMounted(() => document.addEventListener('keydown', onKey))
 onUnmounted(() => document.removeEventListener('keydown', onKey))
 </script>
 
 <template>
-  <div class="message-inspector">
+  <div
+    class="message-inspector"
+    :class="{ inline: inline }"
+  >
     <ImagePreview
       v-if="gallery.current.value"
       :images="gallery.images.value"
@@ -80,17 +94,35 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
     />
     <header class="detail-header">
       <div>
-        <h1 id="detail-title">
+        <div
+          v-if="inline && message"
+          class="headline"
+        >
+          <span class="type-badge">{{ typeLabel }}</span>
+          <span
+            v-if="message.lifecycle === 'TEMPORARY' && message.expiresAt"
+            class="expiry-badge"
+          >{{ relativeExpiry(message.expiresAt) }}</span>
+          <span
+            v-else-if="message.favorite"
+            class="favorite-badge"
+          >收藏</span>
+        </div>
+        <h1
+          v-if="!inline"
+          id="detail-title"
+        >
           内容详情
         </h1>
         <p
           v-if="message"
           class="muted"
         >
-          {{ new Date(message.createdAt).toLocaleString() }} · v{{ message.version }}
+          {{ new Date(message.createdAt).toLocaleString() }} · v{{ message.version }}<span v-if="message.attachments.length"> · {{ message.attachments.length }} 个附件</span>
         </p>
       </div>
       <button
+        v-if="!inline"
         class="button back-button"
         type="button"
         aria-label="关闭详情"
@@ -101,13 +133,13 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
       </button>
     </header>
     <div
-      v-if="detail.isPending.value"
+      v-if="!message && detail.isPending.value"
       class="state"
     >
       正在加载…
     </div>
     <div
-      v-else-if="detail.isError.value"
+      v-else-if="!message && detail.isError.value"
       class="state error"
     >
       详情加载失败。<button
@@ -158,6 +190,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
         </div>
         <SafeMarkdown
           v-else-if="!editing && message.bodyFormat === BodyFormat.MARKDOWN"
+          class="feed-markdown"
           :source="message.body ?? ''"
         />
         <pre
@@ -231,10 +264,10 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
             >无标签</span>
           </div>
           <MessageTagPicker
-            v-if="!message.trashedAt"
+            v-if="!batchMode && !message.trashedAt"
             :message="message"
-            label="编辑标签"
-            icon-only
+            :label="inline && !message.tags.length ? '添加标签' : '编辑标签'"
+            :icon-only="!inline"
           />
         </div>
       </section>
@@ -246,7 +279,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
         <div class="section-heading">
           <h2>附件 ({{ message.attachments.length }})</h2>
           <button
-            v-if="!message.trashedAt"
+            v-if="!batchMode && !message.trashedAt"
             class="icon-button"
             type="button"
             aria-label="添加附件"
@@ -281,7 +314,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
           v-if="message.attachments.length"
           :files="message.attachments"
           interactive
-          :removable="!message.trashedAt"
+          :removable="!batchMode && !message.trashedAt"
           @view="viewAttachment"
           @remove="removeAttachment"
         />
@@ -292,7 +325,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
           暂无附件
         </p>
         <div
-          v-if="!message.trashedAt && detailUploads.length"
+          v-if="!batchMode && !message.trashedAt && detailUploads.length"
           class="add-files compact-popover"
           aria-label="附件上传状态"
         >
@@ -313,7 +346,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
           </button>
         </div>
         <details
-          v-if="!message.trashedAt && storageAvailable && restorableUploads.length"
+          v-if="!batchMode && !message.trashedAt && storageAvailable && restorableUploads.length"
           class="restored compact-popover"
         >
           <summary>已完成的上传 ({{ restorableUploads.length }})</summary>
@@ -335,7 +368,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
       </section>
 
       <section
-        v-if="!message.trashedAt"
+        v-if="!batchMode && !message.trashedAt"
         class="quick-actions"
         aria-label="快捷操作"
       >
@@ -366,7 +399,10 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
         </div>
       </section>
 
-      <div class="actions">
+      <div
+        v-if="!batchMode"
+        class="actions"
+      >
         <template v-if="message.trashedAt">
           <button
             class="button"
@@ -382,8 +418,10 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
         </template>
         <template v-else>
           <button
+            v-if="message.sensitive || message.body"
             class="button action-button"
             type="button"
+            :aria-label="copied ? '已复制' : '复制正文'"
             :title="copied ? '已复制' : '复制正文'"
             @click="copy"
           >
@@ -437,7 +475,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
             title="转为长期"
             @click="run({ type: 'permanent', message })"
           >
-            <Archive aria-hidden="true" />长期
+            <Archive aria-hidden="true" />{{ inline ? '转为长期' : '长期' }}
           </button>
           <button
             v-else
@@ -504,6 +542,9 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
 </template>
 
 <style scoped>
+.headline{display:flex;align-items:center;flex-wrap:wrap;gap:.4rem;margin-bottom:.35rem}.type-badge,.expiry-badge,.favorite-badge{padding:.2rem .5rem;border-radius:999px;font-size:.7rem;background:var(--surface-soft);color:var(--text-secondary)}.expiry-badge{color:var(--state-warning)}.favorite-badge{color:var(--accent-primary)}
+.inline{min-height:0;padding:1rem 1.2rem}.inline .detail-header{position:static;margin:0;padding:0 0 .65rem;min-height:0;background:transparent;backdrop-filter:none}.inline .body-section{padding:.8rem 0 1rem}.inline .actions{background:var(--surface-raised);backdrop-filter:none}
+
 .message-inspector{display:grid;align-content:start;gap:0;min-width:0;min-height:100%;padding:1.15rem 1.2rem;color:var(--text-primary)}.message-inspector>*{min-width:0}.back-button{display:inline-flex;align-items:center;gap:.35rem;white-space:nowrap;font-size:.8rem}.back-button svg{width:1rem;height:1rem}.detail-header{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;position:sticky;top:-1.15rem;z-index:5;min-width:0;margin:-1.15rem -1.2rem 0;padding:1.15rem 1.2rem .9rem;background:color-mix(in srgb,var(--surface-raised) 94%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--border-default)}h1,h2,p{margin:.2rem 0}h1{font-size:1.12rem}h2{font-size:.78rem}.detail-header p{font-size:.7rem;overflow-wrap:anywhere}.icon-button{display:inline-grid;place-items:center;flex:0 0 auto;width:34px;height:34px;padding:0;border:0;border-radius:9px;background:transparent;color:var(--text-secondary)}.icon-button:hover{background:var(--surface-soft);color:var(--text-primary)}.icon-button svg,.action-button svg,.compact-action svg,.sensitive-title svg{width:1rem;height:1rem}
 .body-section{min-width:0;padding:1.15rem 0 1.25rem}.message-title{min-width:0;max-width:100%;margin:0 0 .85rem;color:var(--text-primary);font-size:1.08rem;font-weight:760;line-height:1.4;overflow-wrap:anywhere;word-break:break-word}.body-section pre{max-width:100%;box-sizing:border-box;margin:0;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.65}.code{font-family:var(--font-mono);background:var(--surface-soft);padding:.9rem;border-radius:var(--radius)}.sensitive{display:grid;gap:.75rem;padding:1rem;box-shadow:none}.sensitive-title{display:inline-flex;align-items:center;gap:.4rem}.sensitive .button{justify-self:start}.edit{display:grid;gap:.7rem}.edit-toolbar{display:flex;align-items:center;gap:.55rem;flex-wrap:wrap}.edit-toolbar small{color:var(--text-tertiary);font-size:.72rem}.edit textarea{resize:vertical}.edit textarea.code{font-family:var(--font-mono);color:var(--content-code)}.edit>div:not(.editor){display:flex;gap:.45rem}
 .compact-section{position:relative;padding:.8rem 0;border-top:1px solid var(--border-default)}.section-heading{display:flex;align-items:center;justify-content:space-between;gap:.75rem;min-height:34px}.tags{display:flex;flex-wrap:wrap;gap:.35rem}.empty-inline{color:var(--text-tertiary);font-size:.75rem}.compact-popover{margin-top:.55rem;padding:.65rem;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--surface-soft)}
