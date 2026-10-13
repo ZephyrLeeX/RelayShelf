@@ -23,7 +23,8 @@ describe('MessageDetailSurface', () => {
       },
     })
 
-    expect(wrapper.text()).toContain('选择一条内容查看详情')
+    expect(wrapper.find('.detail-sheet').exists()).toBe(false)
+    expect(wrapper.get('.detail-surface').isVisible()).toBe(false)
     expect(getMessage).not.toHaveBeenCalled()
 
     await router.push({ query: { q: 'nginx', detail: 'message-1' } })
@@ -31,7 +32,7 @@ describe('MessageDetailSurface', () => {
     expect(getMessage).toHaveBeenCalledTimes(1)
     expect(getMessage).toHaveBeenCalledWith('message-1')
     expect(wrapper.find('.detail-sheet').exists()).toBe(true)
-    expect(wrapper.get('.detail-sheet').attributes('aria-modal')).toBeUndefined()
+    expect(wrapper.get('.detail-sheet').attributes('aria-modal')).toBe('true')
     wrapper.unmount()
   })
 
@@ -58,6 +59,7 @@ describe('MessageDetailSurface', () => {
     await router.push({ query: { q: 'nginx', detail: 'message-1' } })
     await flushPromises()
     expect(document.activeElement).toBe(wrapper.get('.detail-sheet').element)
+    expect(document.body.style.overflow).toBe('hidden')
 
     const nestedViewer = document.createElement('div')
     nestedViewer.className = 'viewer'
@@ -72,6 +74,7 @@ describe('MessageDetailSurface', () => {
     await flushPromises()
     expect(router.currentRoute.value.query).toEqual({ q: 'nginx' })
     expect(document.activeElement).toBe(opener)
+    expect(document.body.style.overflow).toBe('')
     wrapper.unmount()
   })
 

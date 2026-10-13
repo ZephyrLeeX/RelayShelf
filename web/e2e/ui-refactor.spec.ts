@@ -4,7 +4,7 @@ import { alice, composeAndSend, login, marker } from './helpers'
 test.describe('desktop UI integration', () => {
   test.use({ viewport: { width: 1440, height: 900 } })
 
-  test('keeps the composer in the content column and detail in the inspector', async ({ page }) => {
+  test('keeps detail hidden and opens a modal drawer without resizing the content', async ({ page }) => {
     const body = marker('desktop-layout')
     await login(page, alice)
     await composeAndSend(page, body)
@@ -14,22 +14,44 @@ test.describe('desktop UI integration', () => {
     await expect(page.locator('.mobile-bottom-nav')).toBeHidden()
     const contentBox = await page.locator('main.content').boundingBox()
     const composerBox = await page.locator('.composer-shell').boundingBox()
-    const detailBox = await page.locator('.detail-surface').boundingBox()
+    await expect(page.locator('.detail-surface')).toBeHidden()
+    await expect(page.locator('.column-resizer')).toHaveCount(0)
     expect(contentBox).not.toBeNull()
     expect(composerBox).not.toBeNull()
-    expect(detailBox).not.toBeNull()
     expect(composerBox!.x).toBeGreaterThan(contentBox!.x)
     expect(composerBox!.width).toBeLessThan(contentBox!.width)
-    expect(detailBox!.x).toBeGreaterThan(contentBox!.x)
 
     const card = page.locator('.message-card', { hasText: body })
     await card.getByRole('button', { name: '复制正文' }).click()
     await expect(page).not.toHaveURL(/(?:\?|&)detail=/)
-    await card.getByRole('button', { name: /打开内容/ }).click()
+    const opener = card.getByRole('button', { name: /打开内容/ })
+    await opener.click()
     await expect(page).toHaveURL(/(?:\?|&)detail=/)
-    await expect(page.getByRole('dialog', { name: '内容详情' })).toBeVisible()
+    const drawer = page.getByRole('dialog', { name: '内容详情' })
+    await expect(drawer).toBeVisible()
+    await expect(drawer).toHaveAttribute('aria-modal', 'true')
+    await expect(page.locator('main.content')).toHaveAttribute('inert', '')
+    expect(await page.locator('main.content').boundingBox()).toEqual(contentBox)
+    await expect(drawer.locator('.body-section')).toContainText(body)
+    const close = drawer.getByRole('button', { name: '关闭详情', exact: true })
+    await close.focus()
+    await page.keyboard.press('Shift+Tab')
+    await expect(drawer.getByRole('button', { name: '更多操作', exact: true })).toBeFocused()
+    await page.keyboard.press('Tab')
+    await expect(close).toBeFocused()
     await page.keyboard.press('Escape')
     await expect(page).not.toHaveURL(/(?:\?|&)detail=/)
+    await expect(opener).toBeFocused()
+    await expect(page.locator('.detail-surface')).toBeHidden()
+    await opener.click()
+    await page.reload()
+    await expect(drawer).toBeVisible()
+    await page.locator('.detail-scrim').click({ position: { x: 10, y: 100 } })
+    await expect(page.locator('.detail-surface')).toBeHidden()
+    await opener.click()
+    await close.click()
+    await expect(page.locator('.detail-surface')).toBeHidden()
+    await expect(page.locator('main.content')).not.toHaveAttribute('inert', '')
   })
 
   test('persists explicit themes and follows system preference changes', async ({ page }) => {
@@ -118,19 +140,16 @@ test.describe('desktop topbar constraints', () => {
 test.describe('wide desktop workspace', () => {
   test.use({ viewport: { width: 2048, height: 1152 } })
 
-  test('bounds the content frame, composer, and inspector without horizontal overflow', async ({ page }) => {
+  test('bounds the content frame and composer with no reserved detail column', async ({ page }) => {
     await login(page, alice)
 
     const frame = await page.locator('.content-frame.constrained').boundingBox()
     const composer = await page.locator('.composer-shell').boundingBox()
-    const inspector = await page.locator('.detail-surface').boundingBox()
+    await expect(page.locator('.detail-surface')).toBeHidden()
     expect(frame).not.toBeNull()
     expect(composer).not.toBeNull()
-    expect(inspector).not.toBeNull()
     expect(frame!.width).toBeLessThanOrEqual(1041)
     expect(composer!.width).toBeLessThanOrEqual(761)
-    expect(inspector!.width).toBeGreaterThanOrEqual(360)
-    expect(inspector!.width).toBeLessThanOrEqual(401)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
   })
 })
@@ -197,7 +216,6 @@ for (const viewport of [
       await expect(button).toBeVisible()
 
       if (viewport.width >= 1180) {
-        const resizer = page.getByRole('separator', { name: '调整内容详情栏宽度' })
         const expectButtonInContent = async () => {
           const content = await page.locator('main.content').boundingBox()
           const action = await button.boundingBox()
@@ -206,15 +224,6 @@ for (const viewport of [
           expect(action!.x).toBeGreaterThanOrEqual(content!.x)
           expect(content!.x + content!.width - (action!.x + action!.width)).toBeCloseTo(20, 0)
         }
-        for (const key of ['End', 'Home']) {
-          await resizer.press(key)
-          await expectButtonInContent()
-        }
-        const handle = await resizer.boundingBox()
-        await page.mouse.move(handle!.x + handle!.width / 2, handle!.y + 100)
-        await page.mouse.down()
-        await page.mouse.move(handle!.x - 160, handle!.y + 100, { steps: 8 })
-        await page.mouse.up()
         await expectButtonInContent()
       }
 

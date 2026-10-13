@@ -1,41 +1,58 @@
 <script setup lang="ts">
-import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { nextTick, onUnmounted, ref, watch } from 'vue'
 import { useDetailSelection } from '@/app/composables/useDetailSelection'
 import MessageInspector from './MessageInspector.vue'
 
 const { selectedMessageId, closeDetail } = useDetailSelection()
 const detailSheet = ref<HTMLElement>()
-const compact = ref(false)
 let returnFocusTo: HTMLElement | null = null
-let compactMedia: MediaQueryList | undefined
+let previousBodyOverflow: string | undefined
+
+function restoreScroll() {
+  if (previousBodyOverflow === undefined) return
+  document.body.style.overflow = previousBodyOverflow
+  previousBodyOverflow = undefined
+}
+
+function trapFocus(event: KeyboardEvent) {
+  if (event.key !== 'Tab' || !detailSheet.value) return
+  if (document.querySelector('.viewer, .backdrop, .queue-backdrop, .more-backdrop')) return
+  const controls = [...detailSheet.value.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex="0"]')]
+    .filter(element => element.getClientRects().length > 0)
+  const first = controls[0], last = controls.at(-1)
+  if (!first || !last) { event.preventDefault(); detailSheet.value.focus(); return }
+  if (event.shiftKey && (document.activeElement === first || document.activeElement === detailSheet.value)) {
+    event.preventDefault(); last.focus()
+  } else if (!event.shiftKey && (document.activeElement === last || document.activeElement === detailSheet.value)) {
+    event.preventDefault(); first.focus()
+  }
+}
 
 watch(selectedMessageId, async (id, previousId) => {
   if (id) {
-    if (!previousId) returnFocusTo = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    if (!previousId) {
+      returnFocusTo = document.activeElement instanceof HTMLElement ? document.activeElement : null
+      previousBodyOverflow = document.body.style.overflow
+      document.body.style.overflow = 'hidden'
+    }
     await nextTick()
-    detailSheet.value?.focus()
+    detailSheet.value?.focus({ preventScroll: true })
     return
   }
   if (previousId) {
-    returnFocusTo?.focus()
+    restoreScroll()
+    await nextTick()
+    returnFocusTo?.focus({ preventScroll: true })
     returnFocusTo = null
   }
 }, { immediate: true })
 
-function onCompactChange(event: MediaQueryListEvent) { compact.value = event.matches }
-
-onMounted(() => {
-  compactMedia = window.matchMedia?.('(max-width: 1179px)')
-  compact.value = compactMedia?.matches ?? false
-  compactMedia?.addEventListener('change', onCompactChange)
-})
-onUnmounted(() => {
-  compactMedia?.removeEventListener('change', onCompactChange)
-})
+onUnmounted(restoreScroll)
 </script>
 
 <template>
   <aside
+    v-show="selectedMessageId"
     class="detail-surface"
     :class="{ selected: selectedMessageId }"
     aria-label="内容详情"
@@ -45,6 +62,7 @@ onUnmounted(() => {
       class="detail-scrim"
       type="button"
       aria-label="关闭内容详情"
+      tabindex="-1"
       @click="closeDetail"
     />
     <section
@@ -52,9 +70,10 @@ onUnmounted(() => {
       ref="detailSheet"
       class="detail-sheet"
       role="dialog"
-      :aria-modal="compact ? 'true' : undefined"
+      aria-modal="true"
       aria-labelledby="detail-title"
       tabindex="-1"
+      @keydown="trapFocus"
     >
       <div
         class="drag-handle"
@@ -66,21 +85,12 @@ onUnmounted(() => {
         @close="closeDetail"
       />
     </section>
-    <div
-      v-else
-      class="detail-empty"
-    >
-      <div aria-hidden="true">
-        ⌁
-      </div>
-      <strong>选择一条内容查看详情</strong>
-      <p>正文、附件与内容操作会显示在这里。</p>
-    </div>
   </aside>
 </template>
 
 <style scoped>
-.detail-surface{position:relative;min-width:0;max-width:100%;overflow:hidden;background:var(--surface-raised)}.detail-sheet{min-width:0;height:100%;overflow:auto}.detail-scrim,.drag-handle{display:none}.detail-empty{display:grid;place-content:center;justify-items:center;min-width:0;height:100%;padding:clamp(1rem,4vw,2rem);color:var(--text-tertiary);text-align:center}.detail-empty>div{display:grid;place-items:center;width:48px;height:48px;margin-bottom:.8rem;border:1px solid var(--border-default);border-radius:14px;background:var(--surface-soft);color:var(--accent-primary);font-size:1.4rem}.detail-empty strong{color:var(--text-secondary);font-size:.85rem}.detail-empty p{max-width:min(16rem,100%);margin:.35rem 0;font-size:.75rem;line-height:1.5;overflow-wrap:anywhere}
-@media(max-width:1179px){.detail-surface{display:none}.detail-surface.selected{position:fixed;inset:0;z-index:60;display:block;overflow:hidden;border:0;background:transparent}.detail-scrim{display:block;position:absolute;inset:0;width:100%;height:100%;border:0;background:rgb(10 14 24 / .5)}.detail-sheet{position:absolute;left:0;right:0;bottom:0;height:min(86vh,820px);overflow:auto;border-radius:22px 22px 0 0;background:var(--surface-raised);box-shadow:var(--shadow-floating)}.drag-handle{position:sticky;top:0;z-index:4;display:block;width:42px;height:4px;margin:8px auto -4px;border-radius:999px;background:var(--border-strong)}.detail-empty{display:none}}
+.detail-surface{display:none}.detail-surface.selected{position:fixed;inset:0;z-index:60;display:block;overflow:hidden;background:transparent}.detail-scrim{position:absolute;inset:0;width:100%;height:100%;border:0;background:rgb(10 14 24 / .5)}.detail-sheet{position:absolute;top:0;right:0;bottom:0;width:min(560px,100vw);min-width:0;overflow:auto;overscroll-behavior:contain;border-left:1px solid var(--border-default);background:var(--surface-raised);box-shadow:var(--shadow-floating)}.drag-handle{display:none}
+@media(max-width:1179px){.detail-sheet{top:auto;left:0;width:100%;height:min(86dvh,820px);border:0;border-radius:22px 22px 0 0}.drag-handle{position:sticky;top:0;z-index:4;display:block;width:42px;height:4px;margin:8px auto -4px;border-radius:999px;background:var(--border-strong)}}
+@media(prefers-reduced-motion:no-preference){.detail-sheet{animation:drawer-in .18s ease-out}@keyframes drawer-in{from{transform:translateX(24px);opacity:.8}}}
 @media(prefers-reduced-motion:no-preference) and (max-width:1179px){.detail-sheet{animation:sheet-in .18s ease-out}@keyframes sheet-in{from{transform:translateY(24px);opacity:.8}}}
 </style>
