@@ -61,5 +61,5 @@ function jump() {
 .return-to-composer svg{width:1.15rem;height:1.15rem}
 .return-to-composer:hover{border-color:var(--accent-primary);background:var(--accent-primary-soft);color:var(--accent-primary-hover)}
 .return-to-composer:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px}
-@media(min-width:1180px){.return-to-composer{right:calc(400px + 1.75rem);bottom:1.25rem}}
+@media(min-width:1180px){.return-to-composer{right:calc(var(--detail-width,400px) + 1.75rem);bottom:1.25rem}}
 </style>

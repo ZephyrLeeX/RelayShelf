@@ -196,6 +196,28 @@ for (const viewport of [
       await page.locator('.message-card').last().scrollIntoViewIfNeeded()
       await expect(button).toBeVisible()
 
+      if (viewport.width >= 1180) {
+        const resizer = page.getByRole('separator', { name: '调整内容详情栏宽度' })
+        const expectButtonInContent = async () => {
+          const content = await page.locator('main.content').boundingBox()
+          const action = await button.boundingBox()
+          expect(content).not.toBeNull()
+          expect(action).not.toBeNull()
+          expect(action!.x).toBeGreaterThanOrEqual(content!.x)
+          expect(content!.x + content!.width - (action!.x + action!.width)).toBeCloseTo(20, 0)
+        }
+        for (const key of ['End', 'Home']) {
+          await resizer.press(key)
+          await expectButtonInContent()
+        }
+        const handle = await resizer.boundingBox()
+        await page.mouse.move(handle!.x + handle!.width / 2, handle!.y + 100)
+        await page.mouse.down()
+        await page.mouse.move(handle!.x - 160, handle!.y + 100, { steps: 8 })
+        await page.mouse.up()
+        await expectButtonInContent()
+      }
+
       await button.click()
       await expect(page.locator('.composer')).toBeVisible()
       await expect(page.locator('#composer-body')).toBeFocused()
