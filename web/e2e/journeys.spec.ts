@@ -223,11 +223,14 @@ test.describe('trash and restore journey', () => {
 test.describe('sensitive reveal and copy journey', () => {
   test('plaintext stays hidden until explicitly revealed', async ({ page }) => {
     const secret = marker('sensitive')
+    const title = marker('sensitive-title')
     await login(page, alice)
+    await page.getByLabel('标题（可选）').fill(title)
     await composeAndSend(page, secret, { sensitive: true })
 
-    const card = page.locator('.message-card', { hasText: '敏感内容已锁定' }).first()
+    const card = page.locator('.message-card', { hasText: title })
     await expect(card).toBeVisible()
+    await expect(card).toContainText('敏感内容已锁定')
     await expect(page.locator('.message-card pre', { hasText: secret })).toHaveCount(0)
 
     await card.getByRole('button', { name: /打开内容/ }).click()
