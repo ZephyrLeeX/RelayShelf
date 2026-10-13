@@ -7,7 +7,7 @@ for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 })
     await login(page, alice)
     const session = await (await page.request.get('/api/v1/auth/session')).json()
-    const headers = { 'X-CSRF-Token': session.csrfToken, Origin: 'http://127.0.0.1:8080' }
+    const headers = { 'X-CSRF-Token': session.csrfToken, Origin: new URL(page.url()).origin }
     const prefix = marker('batch')
     const createTag = async (name: string) => {
       const response = await page.request.post('/api/v1/tags', { headers, data: { name, color: '#456789' } })

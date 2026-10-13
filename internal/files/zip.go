@@ -114,7 +114,7 @@ func streamArchive(ctx context.Context, dst io.Writer, items []Download, open fu
 		err = func() error {
 			stop := context.AfterFunc(ctx, func() { _ = f.Close() })
 			defer stop()
-			defer f.Close()
+			defer func() { _ = f.Close() }()
 			// Read before writing this entry's header, catching first-read outages.
 			reader := io.LimitReader(f, d.Size)
 			n, firstErr := reader.Read(buf)

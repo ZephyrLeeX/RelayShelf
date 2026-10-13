@@ -118,7 +118,9 @@ func TestStreamArchiveContentsAndFailures(t *testing.T) {
 						t.Fatal(e)
 					}
 					got, e := io.ReadAll(r)
-					r.Close()
+					if closeErr := r.Close(); closeErr != nil {
+						t.Fatal(closeErr)
+					}
 					if e != nil || !bytes.Equal(got, data) {
 						t.Fatal("wrong bytes", e)
 					}

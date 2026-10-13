@@ -61,7 +61,7 @@ for (const mobile of [false, true]) {
       await composer.getByRole('button', { name: '发送', exact: true }).click()
       const message = await (await sent).json()
       const session = await (await page.request.get('/api/v1/auth/session')).json()
-      const headers = { 'X-CSRF-Token': session.csrfToken, Origin: 'http://127.0.0.1:8080' }
+      const headers = { 'X-CSRF-Token': session.csrfToken, Origin: new URL(page.url()).origin }
       const assertMetadataRefresh = async () => {
         const style = await dialog.locator('img').getAttribute('style')
         const scale = await percentage(dialog)
@@ -176,7 +176,7 @@ for (const mobile of [false, true]) {
 test('removing the current image and relocking sensitive body clears its preview', async ({ page }) => {
   await login(page, alice)
   const session = await (await page.request.get('/api/v1/auth/session')).json()
-  const headers = { 'X-CSRF-Token': session.csrfToken, Origin: 'http://127.0.0.1:8080' }
+  const headers = { 'X-CSRF-Token': session.csrfToken, Origin: new URL(page.url()).origin }
   const response = await page.request.post('/api/v1/messages', {
     headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() },
     data: { title: marker('image-boundaries'), bodyFormat: 'MARKDOWN', body: '![one](https://image.test/one.png) ![two](https://image.test/two.png)', lifecycle: 'TEMPORARY' },

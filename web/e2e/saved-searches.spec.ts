@@ -143,7 +143,7 @@ for (const missing of [false, true]) {
 test('a delayed cached-view refresh cannot overwrite a later sidebar view', async ({ page }) => {
   await login(page, alice)
   const session = await (await page.request.get('/api/v1/auth/session')).json()
-  const headers = { 'X-CSRF-Token': session.csrfToken, Origin: 'http://127.0.0.1:8080' }
+  const headers = { 'X-CSRF-Token': session.csrfToken, Origin: new URL(page.url()).origin }
   const create = async (suffix: string) => {
     const response = await page.request.post('/api/v1/saved-searches', { headers, data: {
       name: marker(`refresh-${suffix}`), conditions: { q: `keyword ${suffix}`, lifecycle: '', favorite: false, tagIds: [], type: '', time: '7d', from: '', to: '', timezone: 'UTC' },

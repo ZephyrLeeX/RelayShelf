@@ -265,7 +265,7 @@ test.describe('security headers in the real browser', () => {
     await login(page, alice)
     await page.goto('/permanent')
     await page.goto('/search')
-    await expect(page.getByRole('heading', { name: '搜索' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '搜索', exact: true })).toBeVisible()
     expect(violations).toEqual([])
   })
 })

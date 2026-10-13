@@ -4,6 +4,8 @@ WORKDIR /src/web
 COPY web/package.json web/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY web/ ./
+COPY internal/messages/contenttype/languages.json /src/internal/messages/contenttype/languages.json
+COPY internal/search/testdata/editor_content.json /src/internal/search/testdata/editor_content.json
 RUN pnpm build
 
 FROM docker.io/library/golang:1.26.0 AS build

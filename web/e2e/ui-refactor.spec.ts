@@ -186,7 +186,9 @@ for (const viewport of [
     test('reveals the floating button only after the composer scrolls away', async ({ page }) => {
       await login(page, alice)
       for (let index = 0; index < 8; index += 1) {
-        await composeAndSend(page, marker(`return-${viewport.width}-${index}`))
+        const body = marker(`return-${viewport.width}-${index}`)
+        await composeAndSend(page, body)
+        await expect(page.locator('.message-card', { hasText: body })).toBeVisible()
       }
 
       const button = page.getByRole('button', { name: '回到发送框' })
