@@ -125,7 +125,7 @@ describe('compact detail inspector', () => {
 
     expect(wrapper.find('.add-files').exists()).toBe(false)
     expect(wrapper.find('.forward').exists()).toBe(false)
-    expect(wrapper.get('button[aria-label="关闭详情"]').attributes('title')).toBe('返回列表')
+    expect(wrapper.get('button[aria-label="关闭详情"]').attributes('title')).toBe('关闭详情')
     expect(wrapper.get('button[aria-label="编辑标签"]').attributes('title')).toBe('编辑标签')
     expect(wrapper.get('button[aria-label="添加附件"]').attributes('title')).toBe('添加附件')
     expect(wrapper.get('button[aria-label="更多操作"]').attributes('title')).toBe('更多操作')
