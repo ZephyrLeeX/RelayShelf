@@ -7,6 +7,7 @@ import { messageFixture } from '@/test/fixtures'
 import MessageDetailSurface from './MessageDetailSurface.vue'
 
 describe('MessageDetailSurface', () => {
+  beforeEach(() => { vi.spyOn(window, 'scrollTo').mockImplementation(() => {}) })
   it('queries only the message selected by the detail URL', async () => {
     const getMessage = vi.spyOn(DefaultService, 'getMessage').mockResolvedValue(messageFixture())
     vi.spyOn(DefaultService, 'listTags').mockResolvedValue([])
@@ -23,7 +24,8 @@ describe('MessageDetailSurface', () => {
       },
     })
 
-    expect(wrapper.text()).toContain('选择一条内容查看详情')
+    expect(wrapper.find('.detail-sheet').exists()).toBe(false)
+    expect(wrapper.get('.detail-surface').isVisible()).toBe(false)
     expect(getMessage).not.toHaveBeenCalled()
 
     await router.push({ query: { q: 'nginx', detail: 'message-1' } })
@@ -207,7 +209,10 @@ describe('MessageDetailSurface', () => {
   describe('message editing validation', () => {
     const attachment = { id:'a1', originalFilename:'notes.txt', clientMime:'text/plain', detectedMime:'text/plain', sizeBytes:12, displayOrder:0 }
 
-    beforeEach(() => vi.restoreAllMocks())
+    beforeEach(() => {
+      vi.restoreAllMocks()
+      vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
+    })
 
     async function renderEditor(overrides = {}) {
       vi.spyOn(DefaultService, 'getMessage').mockResolvedValue(messageFixture({ attachments: [attachment], attachmentCount: 1, ...overrides }))
