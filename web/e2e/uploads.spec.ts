@@ -73,6 +73,7 @@ test.describe('upload journey', () => {
     await page.setViewportSize({ width: 390, height: 844 })
     await expect(page.getByRole('alert').filter({ hasText: '存储服务暂时不可用' })).toBeVisible()
     await viewer.getByRole('button', { name: '关闭' }).click()
+    await detail.getByRole('button', { name: '关闭详情' }).click()
     await expect(page.getByRole('button', { name: '附件', exact: true })).toBeDisabled()
     await expect(page.locator('#composer-body')).toBeEnabled()
 
